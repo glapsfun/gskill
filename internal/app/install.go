@@ -132,11 +132,15 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		return AddResult{}, err
 	}
 
+	allWarnings := make([]string, 0, len(warnings)+len(skill.Warnings)+len(result.Warnings))
+	allWarnings = append(allWarnings, warnings...)
+	allWarnings = append(allWarnings, skill.Warnings...)
+	allWarnings = append(allWarnings, result.Warnings...)
 	return AddResult{
 		Name:        name,
 		ContentHash: result.ContentHash,
 		Targets:     result.Targets,
-		Warnings:    append(warnings, skill.Warnings...),
+		Warnings:    allWarnings,
 	}, nil
 }
 

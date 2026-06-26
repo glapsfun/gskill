@@ -36,6 +36,8 @@ type rootCLI struct {
 	Update   updateCmd   `cmd:"" help:"Advance skills within their version constraints."`
 	Lock     lockCmd     `cmd:"" help:"Recompute the lockfile from the manifest."`
 	Remove   removeCmd   `cmd:"" help:"Uninstall skills and clean up."`
+	Sync     syncCmd     `cmd:"" help:"Make disk exactly match the lockfile (--prune removes orphans)."`
+	Repair   repairCmd   `cmd:"" help:"Re-materialize broken installs and clean up staging."`
 
 	List       listCmd       `cmd:"" help:"List installed skills and their status."`
 	Info       infoCmd       `cmd:"" help:"Show details for one skill."`

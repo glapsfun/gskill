@@ -44,6 +44,7 @@ type Result struct {
 	Mode          Mode
 	Agents        []string
 	Targets       map[string]string // agentID -> recorded dir (relative for project scope)
+	Warnings      []string
 }
 
 // Installer runs the staging-verify-activate transaction over the store, cache,
@@ -77,6 +78,11 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 			errs.ErrInvalidManifest, req.Name, skill.Frontmatter.Name)
 	}
 
+	warnings, err := validateContent(skill.Dir)
+	if err != nil {
+		return Result{}, err
+	}
+
 	hashes, err := integrity.HashDir(skill.Dir)
 	if err != nil {
 		return Result{}, err
@@ -103,6 +109,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		Mode:          mode,
 		Agents:        agentIDs(req.Agents),
 		Targets:       targets,
+		Warnings:      warnings,
 	}, nil
 }
 
