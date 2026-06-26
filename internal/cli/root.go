@@ -36,6 +36,15 @@ type rootCLI struct {
 	Update   updateCmd   `cmd:"" help:"Advance skills within their version constraints."`
 	Lock     lockCmd     `cmd:"" help:"Recompute the lockfile from the manifest."`
 	Remove   removeCmd   `cmd:"" help:"Uninstall skills and clean up."`
+
+	List       listCmd       `cmd:"" help:"List installed skills and their status."`
+	Info       infoCmd       `cmd:"" help:"Show details for one skill."`
+	Diff       diffCmd       `cmd:"" help:"Show manifest/lock/disk differences."`
+	Doctor     doctorCmd     `cmd:"" help:"Check the environment and declared requirements."`
+	Cache      cacheCmd      `cmd:"" help:"Manage the content cache."`
+	ConfigCmd  configCmd     `cmd:"" name:"config" help:"Inspect layered configuration."`
+	Completion completionCmd `cmd:"" help:"Print a shell completion script."`
+	TUI        tuiCmd        `cmd:"" name:"tui" help:"Launch the interactive dashboard."`
 }
 
 // projectRoot is the resolved working directory, bound for command use.

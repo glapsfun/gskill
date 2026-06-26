@@ -1,0 +1,23 @@
+{
+  "skills": [
+    {
+      "agents": [
+        "claude-code",
+        "codex"
+      ],
+      "name": "kubernetes-expert",
+      "source": "github.com/acme/widgets",
+      "status": "installed",
+      "version": "2.1.3"
+    },
+    {
+      "agents": [
+        "claude-code"
+      ],
+      "name": "shell-helper",
+      "source": "github.com/acme/shell",
+      "status": "missing",
+      "version": "1.0.0"
+    }
+  ]
+}
