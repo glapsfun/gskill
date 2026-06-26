@@ -18,7 +18,9 @@ type addCmd struct {
 	Agent   []string `help:"Target agent ID (repeatable)."`
 	Force   bool     `help:"Overwrite an existing declaration and re-resolve."`
 	Global  bool     `help:"Install into the user-global location."`
+	Project bool     `help:"Install into the project (default)."`
 	Copy    bool     `help:"Copy instead of symlinking."`
+	Symlink bool     `help:"Symlink instead of copying (default)."`
 }
 
 // Run executes `gskill add`.
@@ -32,7 +34,7 @@ func (c addCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRo
 		Agents:  c.Agent,
 		Force:   c.Force,
 		Scope:   scopeFlag(c.Global),
-		Mode:    modeFlag(c.Copy),
+		Mode:    modeFromFlags(c.Copy, c.Symlink),
 	})
 	if err != nil {
 		return err
@@ -65,4 +67,16 @@ func modeFlag(copyMode bool) string {
 		return string(installer.ModeCopy)
 	}
 	return ""
+}
+
+// modeFromFlags resolves --copy/--symlink to an install-mode string ("" default).
+func modeFromFlags(copyMode, symlinkMode bool) string {
+	switch {
+	case copyMode:
+		return string(installer.ModeCopy)
+	case symlinkMode:
+		return string(installer.ModeSymlink)
+	default:
+		return ""
+	}
 }

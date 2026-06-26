@@ -42,7 +42,7 @@ func (a *App) installFrozen(ctx context.Context, req InstallRequest) (InstallRes
 			if reqErr != nil {
 				return reqErr
 			}
-			if _, instErr := a.installerFor(p).Install(ctx, ireq); instErr != nil {
+			if _, instErr := a.installerForScope(p, string(ireq.Scope)).Install(ctx, ireq); instErr != nil {
 				return instErr
 			}
 			out.Skills = append(out.Skills, SkillChange{

@@ -13,5 +13,7 @@ func NewDefaultRegistry() *Registry {
 	// Registration cannot fail for distinct built-in IDs.
 	_ = reg.Register(NewClaudeCode())
 	_ = reg.Register(NewCodex())
+	_ = reg.Register(NewCursor())
+	_ = reg.Register(NewGeminiCLI())
 	return reg
 }

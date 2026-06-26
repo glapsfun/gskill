@@ -104,7 +104,8 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	}
 
 	ireq := a.installRequest(req.Root, ref, rev, agents, req.Scope, modeOr(req.Mode, m.Defaults.InstallMode))
-	skill, err := a.installerFor(p).Discover(ctx, ireq)
+	inst := a.installerForScope(p, string(ireq.Scope))
+	skill, err := inst.Discover(ctx, ireq)
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -117,7 +118,7 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 
 	var result installer.Result
 	err = a.withLock(ctx, p, func() error {
-		result, err = a.installerFor(p).Install(ctx, ireq)
+		result, err = inst.Install(ctx, ireq)
 		if err != nil {
 			return err
 		}
@@ -225,7 +226,7 @@ func (a *App) installOne(ctx context.Context, p *project, lf *lockfile.Lockfile,
 	ireq := a.installRequest(p.root, ref, rev, agents, req.Scope, modeOr(req.Mode, ms.InstallMode))
 	ireq.Name = name
 	ireq.Offline = req.Offline
-	result, err := a.installerFor(p).Install(ctx, ireq)
+	result, err := a.installerForScope(p, string(ireq.Scope)).Install(ctx, ireq)
 	if err != nil {
 		return SkillChange{}, err
 	}
