@@ -9,6 +9,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
+	"github.com/glapsfun/gskill/internal/git"
 )
 
 // App holds the injected dependencies shared by every use-case. Business logic
@@ -17,6 +18,7 @@ type App struct {
 	cfg    *config.Config
 	log    *slog.Logger
 	agents *agent.Registry
+	git    git.Runner
 }
 
 // Options configures New. Nil dependencies are replaced with safe defaults.
@@ -24,6 +26,7 @@ type Options struct {
 	Config *config.Config
 	Logger *slog.Logger
 	Agents *agent.Registry
+	Git    git.Runner
 }
 
 // New builds an App from opts, filling in defaults for any nil dependency.
@@ -40,7 +43,11 @@ func New(opts Options) *App {
 	if agents == nil {
 		agents = agent.NewRegistry()
 	}
-	return &App{cfg: cfg, log: logger, agents: agents}
+	gitRunner := opts.Git
+	if gitRunner == nil {
+		gitRunner = git.NewSystemRunner()
+	}
+	return &App{cfg: cfg, log: logger, agents: agents, git: gitRunner}
 }
 
 // Config returns the resolved configuration.

@@ -97,6 +97,26 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 	}, nil
 }
 
+// Discover materializes the source and discovers the skill without activating
+// it, for pre-flight checks such as learning the skill name or detecting a
+// manifest conflict. Materialized git content is cached, so a following Install
+// reuses it.
+func (i *Installer) Discover(ctx context.Context, req Request) (discovery.Skill, error) {
+	material, err := i.materialize(ctx, req)
+	if err != nil {
+		return discovery.Skill{}, err
+	}
+	skill, err := discovery.Discover(material, req.Path)
+	if err != nil {
+		return discovery.Skill{}, err
+	}
+	if req.Name != "" && skill.Frontmatter.Name != req.Name {
+		return discovery.Skill{}, fmt.Errorf("%w: declared %q but SKILL.md name is %q",
+			errs.ErrInvalidManifest, req.Name, skill.Frontmatter.Name)
+	}
+	return skill, nil
+}
+
 // materialize returns a directory holding the source tree: the local path for
 // local sources, or a cached/fetched checkout for git sources.
 func (i *Installer) materialize(ctx context.Context, req Request) (string, error) {

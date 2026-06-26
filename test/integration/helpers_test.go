@@ -1,0 +1,93 @@
+package integration_test
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/glapsfun/gskill/internal/agent"
+	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/cli"
+)
+
+// newApp builds an App with a discard logger for tests.
+func newApp() *app.App {
+	return app.New(app.Options{
+		Agents: agent.NewDefaultRegistry(),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+}
+
+// runGskill runs the CLI against root and returns stdout, stderr, and exit code.
+func runGskill(t *testing.T, root string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+
+	full := append([]string{"-C", root}, args...)
+	var out, errb bytes.Buffer
+	code = cli.Run(context.Background(), full, &out, &errb, newApp())
+	return out.String(), errb.String(), code
+}
+
+// newProject creates a project dir with a Claude Code marker so detection works.
+func newProject(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// gitRepo creates a local git repo with a skill at subdir "skill" containing
+// skillBody, an initial commit, and the given tags. It returns the repo path.
+func gitRepo(t *testing.T, skillBody string, tags ...string) string {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repo := t.TempDir()
+	gitRun(t, repo, "init", "--quiet", "-b", "main")
+
+	skillDir := filepath.Join(repo, "skill")
+	if err := os.MkdirAll(skillDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	gitRun(t, repo, "add", ".")
+	gitRun(t, repo, "commit", "--quiet", "-m", "initial")
+	for _, tag := range tags {
+		gitRun(t, repo, "tag", tag)
+	}
+	return repo
+}
+
+// gitRun runs a git command in dir, failing the test on error.
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+
+	cmd := exec.CommandContext(context.Background(), "git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// validSkill returns a valid SKILL.md body for a skill named name.
+func validSkill(name string) string {
+	return "---\nname: " + name + "\ndescription: a demo skill\n---\n# " + name + "\n"
+}
