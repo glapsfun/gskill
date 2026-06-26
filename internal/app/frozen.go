@@ -10,8 +10,6 @@ import (
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
-	"github.com/glapsfun/gskill/internal/resolver"
-	"github.com/glapsfun/gskill/internal/source"
 )
 
 // installFrozen restores skills exactly from the lockfile without re-resolving
@@ -68,26 +66,8 @@ func (a *App) frozenRequest(p *project, name string, locked lockfile.LockedSkill
 		return installer.Request{}, err
 	}
 
-	ref := source.Ref{
-		Type:     source.Type(locked.Source.Type),
-		Original: locked.Source.Original,
-		URL:      locked.Source.URL,
-		Owner:    locked.Source.Owner,
-		Repo:     locked.Source.Repo,
-		Path:     locked.Source.Path,
-	}
-	if ref.Type == source.TypeLocal {
-		ref.LocalPath = locked.Source.Original
-	}
-
-	rev := resolver.Revision{
-		RefKind:    resolver.RefKind(locked.Resolved.RefKind),
-		Version:    locked.Resolved.Version,
-		Tag:        locked.Resolved.Tag,
-		Branch:     locked.Resolved.Branch,
-		Commit:     locked.Resolved.Commit,
-		MutableRef: locked.Resolved.MutableRef,
-	}
+	ref := refFromLock(locked.Source)
+	rev := revFromLock(locked.Resolved)
 
 	home, _ := os.UserHomeDir()
 	return installer.Request{

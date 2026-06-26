@@ -374,6 +374,34 @@ func promoteLocalGit(ref source.Ref) source.Ref {
 	return ref
 }
 
+// refFromLock reconstructs a source.Ref from a locked source record.
+func refFromLock(src lockfile.Source) source.Ref {
+	ref := source.Ref{
+		Type:     source.Type(src.Type),
+		Original: src.Original,
+		URL:      src.URL,
+		Owner:    src.Owner,
+		Repo:     src.Repo,
+		Path:     src.Path,
+	}
+	if ref.Type == source.TypeLocal {
+		ref.LocalPath = src.Original
+	}
+	return ref
+}
+
+// revFromLock reconstructs a resolver.Revision from a locked resolution record.
+func revFromLock(res lockfile.Resolved) resolver.Revision {
+	return resolver.Revision{
+		RefKind:    resolver.RefKind(res.RefKind),
+		Version:    res.Version,
+		Tag:        res.Tag,
+		Branch:     res.Branch,
+		Commit:     res.Commit,
+		MutableRef: res.MutableRef,
+	}
+}
+
 // loadOrNewLock loads the lockfile at path, or returns a fresh one if absent.
 func loadOrNewLock(path string) (*lockfile.Lockfile, error) {
 	if _, err := os.Stat(path); err != nil {

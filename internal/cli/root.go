@@ -26,12 +26,16 @@ type rootCLI struct {
 	Verbose       bool   `short:"v" help:"Enable verbose diagnostics."`
 	Dir           string `short:"C" help:"Run as if gskill started in this directory." type:"path"`
 
-	Version versionCmd `cmd:"" default:"1" help:"Print the gskill version."`
-	Init    initCmd    `cmd:"" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
-	Add     addCmd     `cmd:"" help:"Add and install a new skill."`
-	Install installCmd `cmd:"" help:"Install all declared skills (additive, idempotent)."`
-	Verify  verifyCmd  `cmd:"" help:"Re-hash installed content against the lockfile."`
-	Check   checkCmd   `cmd:"" help:"Report fast drift status."`
+	Version  versionCmd  `cmd:"" default:"1" help:"Print the gskill version."`
+	Init     initCmd     `cmd:"" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
+	Add      addCmd      `cmd:"" help:"Add and install a new skill."`
+	Install  installCmd  `cmd:"" help:"Install all declared skills (additive, idempotent)."`
+	Verify   verifyCmd   `cmd:"" help:"Re-hash installed content against the lockfile."`
+	Check    checkCmd    `cmd:"" help:"Report fast drift status."`
+	Outdated outdatedCmd `cmd:"" help:"Show skills with newer versions available."`
+	Update   updateCmd   `cmd:"" help:"Advance skills within their version constraints."`
+	Lock     lockCmd     `cmd:"" help:"Recompute the lockfile from the manifest."`
+	Remove   removeCmd   `cmd:"" help:"Uninstall skills and clean up."`
 }
 
 // projectRoot is the resolved working directory, bound for command use.
