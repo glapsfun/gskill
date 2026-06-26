@@ -30,6 +30,8 @@ type rootCLI struct {
 	Init    initCmd    `cmd:"" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
 	Add     addCmd     `cmd:"" help:"Add and install a new skill."`
 	Install installCmd `cmd:"" help:"Install all declared skills (additive, idempotent)."`
+	Verify  verifyCmd  `cmd:"" help:"Re-hash installed content against the lockfile."`
+	Check   checkCmd   `cmd:"" help:"Report fast drift status."`
 }
 
 // projectRoot is the resolved working directory, bound for command use.
