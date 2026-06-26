@@ -31,6 +31,9 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# Project-local pinned dev tools (installed by scripts/bootstrap.sh)
+/bin/
+
 # SDD
 specs
 .specify
