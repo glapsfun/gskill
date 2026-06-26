@@ -3,6 +3,7 @@ module github.com/glapsfun/gskill
 go 1.26
 
 require (
+	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/alecthomas/kong v1.15.0
 	github.com/gofrs/flock v0.13.0
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.1
