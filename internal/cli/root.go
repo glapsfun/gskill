@@ -35,6 +35,14 @@ type rootCLI struct {
 // projectRoot is the resolved working directory, bound for command use.
 type projectRoot string
 
+// Globals carries the persistent flag values that commands consume.
+type Globals struct {
+	Offline bool
+	NoCache bool
+	DryRun  bool
+	Yes     bool
+}
+
 // resolveDir defaults Dir to the current working directory when unset.
 func (r *rootCLI) resolveDir() {
 	if r.Dir != "" {
@@ -88,6 +96,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	kctx.BindTo(ctx, (*context.Context)(nil))
 	kctx.Bind(application)
 	kctx.Bind(projectRoot(root.Dir))
+	kctx.Bind(Globals{Offline: root.Offline, NoCache: root.NoCache, DryRun: root.DryRun, Yes: root.Yes})
 
 	if runErr := kctx.Run(out); runErr != nil {
 		out.Diag("error: %v", runErr)

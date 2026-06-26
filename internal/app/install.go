@@ -141,9 +141,13 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 
 // InstallRequest describes an `install` invocation over the existing manifest.
 type InstallRequest struct {
-	Root  string
-	Scope string
-	Mode  string
+	Root           string
+	Scope          string
+	Mode           string
+	Frozen         bool
+	Offline        bool
+	NoCache        bool
+	UpdateLockfile bool
 }
 
 // SkillChange records the per-skill outcome of an install.
@@ -162,6 +166,10 @@ type InstallResult struct {
 // Install materializes every declared skill, additively and idempotently,
 // updating the lockfile only when resolved content changes (FR-022).
 func (a *App) Install(ctx context.Context, req InstallRequest) (InstallResult, error) {
+	if req.Frozen {
+		return a.installFrozen(ctx, req)
+	}
+
 	p := openProject(req.Root)
 	if !p.manifestExists() {
 		return InstallResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
@@ -216,6 +224,7 @@ func (a *App) installOne(ctx context.Context, p *project, lf *lockfile.Lockfile,
 
 	ireq := a.installRequest(p.root, ref, rev, agents, req.Scope, modeOr(req.Mode, ms.InstallMode))
 	ireq.Name = name
+	ireq.Offline = req.Offline
 	result, err := a.installerFor(p).Install(ctx, ireq)
 	if err != nil {
 		return SkillChange{}, err

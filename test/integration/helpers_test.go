@@ -26,11 +26,39 @@ func newApp() *app.App {
 // runGskill runs the CLI against root and returns stdout, stderr, and exit code.
 func runGskill(t *testing.T, root string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
+	return runGskillWithApp(t, newApp(), root, args...)
+}
+
+// runGskillWithApp runs the CLI against root using a caller-provided App.
+func runGskillWithApp(t *testing.T, a *app.App, root string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
 
 	full := append([]string{"-C", root}, args...)
 	var out, errb bytes.Buffer
-	code = cli.Run(context.Background(), full, &out, &errb, newApp())
+	code = cli.Run(context.Background(), full, &out, &errb, a)
 	return out.String(), errb.String(), code
+}
+
+// readFile reads a project file, failing the test on error.
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+
+	data, err := os.ReadFile(path) //nolint:gosec // test-controlled path
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return data
+}
+
+// localSkillDir creates a plain (non-git) local skill directory named name.
+func localSkillDir(t *testing.T, name string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(validSkill(name)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 // newProject creates a project dir with a Claude Code marker so detection works.

@@ -9,16 +9,22 @@ import (
 
 // installCmd installs all declared skills.
 type installCmd struct {
-	Global bool `help:"Install into the user-global location."`
-	Copy   bool `help:"Copy instead of symlinking."`
+	Global         bool `help:"Install into the user-global location."`
+	Copy           bool `help:"Copy instead of symlinking."`
+	FrozenLockfile bool `name:"frozen-lockfile" help:"Restore exactly from the lockfile; never modify it."`
+	UpdateLockfile bool `name:"update-lockfile" help:"Allow the lockfile to be rewritten."`
 }
 
-// Run executes `gskill install`.
-func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+// Run executes `gskill install`. The --offline and --no-cache flags are global.
+func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
 	res, err := a.Install(ctx, app.InstallRequest{
-		Root:  string(root),
-		Scope: scopeFlag(c.Global),
-		Mode:  modeFlag(c.Copy),
+		Root:           string(root),
+		Scope:          scopeFlag(c.Global),
+		Mode:           modeFlag(c.Copy),
+		Frozen:         c.FrozenLockfile,
+		Offline:        g.Offline,
+		NoCache:        g.NoCache,
+		UpdateLockfile: c.UpdateLockfile,
 	})
 	if err != nil {
 		return err

@@ -29,6 +29,11 @@ type Request struct {
 	ModePref    string // symlink | copy | auto
 	ProjectRoot string
 	Home        string
+	// Offline forbids network fetches; material must already be cached (FR-026).
+	Offline bool
+	// ExpectContentHash, when set, must equal the materialized content hash or
+	// the install fails closed (used by frozen restore, FR-015/FR-037).
+	ExpectContentHash string
 }
 
 // Result is the outcome of a successful install, sufficient to build a lock entry.
@@ -75,6 +80,10 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 	hashes, err := integrity.HashDir(skill.Dir)
 	if err != nil {
 		return Result{}, err
+	}
+	if req.ExpectContentHash != "" && hashes.ContentHash != req.ExpectContentHash {
+		return Result{}, fmt.Errorf("%w: content %s does not match locked %s",
+			errs.ErrIntegrity, hashes.ContentHash, req.ExpectContentHash)
 	}
 
 	storePath, err := i.stageAndVerify(hashes.ContentHash, skill.Dir)
@@ -130,6 +139,9 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 	}
 	if i.cache.Has(commit) {
 		return i.cache.Path(commit), nil
+	}
+	if req.Offline {
+		return "", fmt.Errorf("%w: offline and commit %s is not cached", errs.ErrSourceUnavailable, commit)
 	}
 	if i.git == nil {
 		return "", fmt.Errorf("%w: no git runner configured", errs.ErrSourceUnavailable)
