@@ -1,0 +1,17 @@
+# gitleaks configuration for GSKILL.
+# Extends the bundled default ruleset and excludes gitignored tooling/docs
+# directories (AI skills, SDD specs, design docs) that are never committed and
+# legitimately contain example secrets in their documentation.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore non-committed tooling, skills, and design/spec docs"
+paths = [
+  '''^\.agents/''',
+  '''^\.claude/''',
+  '''^\.docs/''',
+  '''^\.specify/''',
+  '''^specs/''',
+  '''^bin/''',
+]

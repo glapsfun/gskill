@@ -1,0 +1,5 @@
+# Pinned dev-tool versions. Read by scripts/bootstrap.sh and CI.
+# Format: NAME=version (go-install pseudo-version or tag).
+GOLANGCI_LINT=v2.4.0
+GOVULNCHECK=v1.1.4
+GITLEAKS=v8.21.2
