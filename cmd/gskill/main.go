@@ -30,7 +30,7 @@ func main() {
 	application := app.New(app.Options{
 		Config: cfg,
 		Logger: logger,
-		Agents: agent.NewRegistry(),
+		Agents: agent.NewDefaultRegistry(),
 	})
 
 	code := cli.Run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, application)
