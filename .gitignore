@@ -33,6 +33,7 @@ go.work.sum
 
 # SDD
 .specify
+.docs
 
 # AI
 .claude
