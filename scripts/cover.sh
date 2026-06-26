@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Enforce a minimum total coverage from coverage.out. Floor: $COVERAGE_MIN (default 0).
 set -euo pipefail
+# shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 profile="${repo_root}/coverage.out"

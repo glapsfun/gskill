@@ -1,0 +1,4 @@
+# Resolve sourced files relative to each script's own directory (scripts/),
+# and allow shellcheck to follow them so dynamically-sourced lib.sh is analyzed.
+source-path=SCRIPTDIR
+external-sources=true

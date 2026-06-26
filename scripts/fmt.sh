@@ -2,6 +2,7 @@
 # Format Go code with golangci-lint's bundled formatters (gofmt + gofumpt).
 # Usage: fmt.sh [--check]   (--check fails if files are not formatted; no writes)
 set -euo pipefail
+# shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need_tool golangci-lint
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install pinned dev tools into ./bin and activate pre-commit hooks.
 set -euo pipefail
+# shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 section "bootstrap: installing pinned tools into ${repo_root}/bin"

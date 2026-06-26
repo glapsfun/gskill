@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Scan the working tree for committed secrets.
 set -euo pipefail
+# shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need_tool gitleaks
 

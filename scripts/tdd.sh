@@ -2,6 +2,7 @@
 # Inner TDD loop: re-run tests whenever a .go file changes.
 # Uses entr if available, otherwise falls back to a polling loop.
 set -euo pipefail
+# shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 run_tests() { go test -shuffle=on ./... || true; }

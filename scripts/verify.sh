@@ -3,6 +3,7 @@
 # first failure. Exit 0 means the work is correct. Used by the agent, pre-push,
 # and CI.
 set -euo pipefail
+# shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 cd "$repo_root"

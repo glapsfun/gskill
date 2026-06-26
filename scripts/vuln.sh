@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Scan called code paths for known vulnerabilities.
 set -euo pipefail
+# shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need_tool govulncheck
 
