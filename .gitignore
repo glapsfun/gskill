@@ -32,6 +32,7 @@ go.work.sum
 # .vscode/
 
 # SDD
+specs
 .specify
 .docs
 
