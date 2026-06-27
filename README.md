@@ -66,6 +66,24 @@ byte-identical environment anywhere with `gskill install --frozen-lockfile`.
 
 ---
 
+## Documentation
+
+Full documentation lives in [`docs/`](docs/README.md), organized by the
+[Diátaxis](https://diataxis.fr/) framework:
+
+- **[Tutorial](docs/tutorials/getting-started.md)** — learn GSKILL from an empty
+  directory to a reproducible skill environment.
+- **[How-to guides](docs/how-to/index.md)** — task-focused recipes with examples,
+  one per feature.
+- **[Reference](docs/README.md#reference)** — commands, flags, exit codes, and the
+  manifest/lockfile/frontmatter schemas. The command and exit-code references are
+  generated from the CLI (`go run ./cmd/gen-reference`) and kept in lockstep by a
+  golden test.
+- **[Explanation](docs/README.md#explanation)** — the reproducibility model,
+  integrity & trust, the store vs the cache, and multi-agent installs.
+
+---
+
 ## TDD & Quality Harness
 
 Every change to GSKILL is built test-first and must pass a **single quality gate**.
