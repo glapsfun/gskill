@@ -37,7 +37,16 @@ func run() error {
 		return err
 	}
 	for rel, content := range files {
-		path := filepath.Join(root, filepath.FromSlash(rel))
+		relPath := filepath.FromSlash(rel)
+		path := filepath.Join(root, relPath)
+
+		relToRoot, err := filepath.Rel(root, path)
+		if err != nil {
+			return fmt.Errorf("rel %s: %w", path, err)
+		}
+		if relToRoot == ".." || (len(relToRoot) >= 3 && relToRoot[0:3] == ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("refusing to write outside repo root: %q", rel)
+		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 		}
