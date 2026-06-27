@@ -23,13 +23,21 @@ func main() {
 	}
 }
 
-// run renders the reference documents and writes them to their repo paths.
+// run renders the reference documents and writes them under the repo root. It
+// resolves the root from the current directory so it works both from the repo
+// root (`go run ./cmd/gen-reference`) and via `go generate ./...`, which runs
+// with the working directory set to the calling package.
 func run() error {
+	root, err := repoRoot()
+	if err != nil {
+		return err
+	}
 	files, err := docs.RenderAll()
 	if err != nil {
 		return err
 	}
-	for path, content := range files {
+	for rel, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 		}
@@ -39,4 +47,23 @@ func run() error {
 		fmt.Println("wrote", path)
 	}
 	return nil
+}
+
+// repoRoot walks up from the working directory until it finds the go.mod that
+// marks the module root.
+func repoRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getwd: %w", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("go.mod not found above %s", dir)
+		}
+		dir = parent
+	}
 }

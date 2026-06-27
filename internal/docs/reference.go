@@ -6,6 +6,8 @@
 // safe to commit and golden-test. Regenerate with: go run ./cmd/gen-reference
 package docs
 
+//go:generate go run ../../cmd/gen-reference
+
 import (
 	"fmt"
 	"sort"
