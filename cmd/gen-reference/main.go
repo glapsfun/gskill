@@ -68,6 +68,8 @@ func repoRoot() (string, error) {
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir, nil
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("stat go.mod in %s: %w", dir, err)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
