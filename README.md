@@ -5,10 +5,64 @@ versions, locks, verifies, and restores SKILL.md-based skill environments across
 AI coding agents, developer machines, and CI. Commit `gskill.toml` and
 `gskill.lock`, and reproduce a byte-identical skill environment anywhere.
 
-> **Status:** early scaffolding. The reproducible TDD & quality **harness** is in
-> place (described below) along with a minimal Go skeleton. The product commands
-> (`init`, `add`, `install`, `verify`, …) are not implemented yet — they are built
-> on top of this harness, test-first.
+> **Status:** the v1 engine is implemented test-first behind the quality harness
+> below. `init`, `add`, `install` (incl. `--frozen-lockfile`/`--offline`),
+> `verify`, `check`, `outdated`, `update`, `lock`, `remove`, `sync`, `repair`,
+> `list`, `info`, `diff`, `doctor`, `cache`, `config`, `completion`, and `tui`
+> all work against Git and local sources for Claude Code, Codex, Cursor, and
+> Gemini CLI.
+
+---
+
+## Usage
+
+```bash
+gskill init                               # scaffold gskill.toml + .gskill/
+gskill add github.com/owner/repo/skill    # resolve, install, lock
+gskill add ./local/skill --agent codex    # install a local skill into one agent
+gskill install --frozen-lockfile          # reproduce exactly from gskill.lock
+gskill verify                             # re-hash installed content vs the lock
+gskill check --fail-on-drift              # fast CI drift gate
+gskill outdated --exit-code               # exit 8 if updates are available
+gskill update [skill...]                  # advance within constraints, rewrite lock
+gskill remove <skill>                     # uninstall + GC the store
+gskill list --json                        # machine-readable inventory
+```
+
+Commit `gskill.toml` (intent) and `gskill.lock` (resolved reality); reproduce a
+byte-identical environment anywhere with `gskill install --frozen-lockfile`.
+
+### Command reference
+
+| Command | Purpose |
+| --- | --- |
+| `init` | Scaffold the manifest, `.gskill/` state dir, and gitignore hints. |
+| `add <source>` | Resolve, install, and record a new skill. |
+| `install` | Materialize all declared skills (additive, idempotent). |
+| `remove <name>` | Uninstall; drop from manifest + lock; GC the store. |
+| `update [name]` | Advance resolutions within constraints; rewrite the lock. |
+| `lock` | Recompute the lock from the manifest without bumping pins. |
+| `sync` | Make disk match the lock (`--prune` removes orphans). |
+| `repair` | Re-materialize broken installs; clean orphaned staging. |
+| `verify` | Re-hash installed content against the lock (fail-closed). |
+| `check` | Fast metadata drift report (`--fail-on-drift`). |
+| `outdated` | Show available updates (`--exit-code` → 8). |
+| `list` / `info` / `diff` | Inspect installed skills. |
+| `doctor` | Check git, detected agents, and declared requirements. |
+| `cache` / `config` / `completion` | Cache, configuration, and shell completion. |
+| `tui` | Interactive dashboard with a sanitized SKILL.md preview. |
+
+### Exit codes
+
+| Code | Meaning | Code | Meaning |
+| --- | --- | --- | --- |
+| 0 | success | 7 | drift detected (`--fail-on-drift`) |
+| 1 | generic error | 8 | update available (`outdated --exit-code`) |
+| 2 | usage error | 9 | unsupported / undetected agent |
+| 3 | invalid manifest | 10 | partial installation |
+| 4 | lockfile mismatch (`--frozen-lockfile`) | 11 | authentication failure |
+| 5 | source unavailable / network | 12 | cache / lock failure |
+| 6 | integrity failure (checksum) | | |
 
 ---
 
