@@ -40,7 +40,7 @@ func (a *App) Find(ctx context.Context, query string, scope FindScope) ([]Search
 	sources, warnings := a.findSources(ctx, scope)
 
 	var hits []SearchHit
-	seen := make(map[string]bool) // source\x00id
+	seen := make(map[string]bool) // source\x00repoPath\x00id (duplicate ids at different paths both surface)
 	for _, src := range sources {
 		res, err := a.SourceList(ctx, src, ScanOptions{})
 		if err != nil {
@@ -52,7 +52,7 @@ func (a *App) Find(ctx context.Context, query string, scope FindScope) ([]Search
 			if score == 0 {
 				continue
 			}
-			key := src + "\x00" + s.ID
+			key := src + "\x00" + s.RepoPath + "\x00" + s.ID
 			if seen[key] {
 				continue
 			}

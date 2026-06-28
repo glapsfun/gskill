@@ -274,7 +274,25 @@ func TestDiscoverAll_Deterministic(t *testing.T) {
 func TestDiscoverAll_AgentScopedLayouts(t *testing.T) {
 	t.Parallel()
 
-	r, err := discovery.DiscoverAll("testdata/agent-scoped", discovery.Options{})
+	// Built at runtime rather than committed as fixtures: a .claude/ directory
+	// is gitignored, so it would not survive a fresh checkout in CI.
+	root := t.TempDir()
+	for sp, name := range map[string]string{
+		".claude/skills/x": "x",
+		".codex/skills/y":  "y",
+		".cursor/skills/z": "z",
+	} {
+		dir := filepath.Join(root, filepath.FromSlash(sp))
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + name + "\ndescription: agent-scoped skill\n---\nbody\n"
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r, err := discovery.DiscoverAll(root, discovery.Options{})
 	if err != nil {
 		t.Fatalf("DiscoverAll: %v", err)
 	}

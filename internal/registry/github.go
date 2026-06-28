@@ -54,7 +54,9 @@ func (c *Client) ListOwnerRepos(ctx context.Context, owner string) ([]RepoRef, e
 	}
 	repos, orgErr := c.get(ctx, fmt.Sprintf("%s/orgs/%s/repos?per_page=100", c.baseURL, owner))
 	if orgErr != nil {
-		return nil, fmt.Errorf("%w: list repos for %q: %w", errs.ErrSourceUnavailable, owner, err)
+		// Surface the fallback (org) failure: the user-endpoint error is
+		// typically just a 404 because the owner is an org, not a user.
+		return nil, fmt.Errorf("%w: list repos for %q: %w", errs.ErrSourceUnavailable, owner, orgErr)
 	}
 	return repos, nil
 }

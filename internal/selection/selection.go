@@ -77,7 +77,7 @@ func Parse(skillFlags []string, all bool, path string) ([]Selector, error) {
 
 // Resolve maps selectors onto discovered skills, preferring exact matches and
 // refusing to guess between duplicates non-interactively. The returned skills
-// are de-duplicated and returned in discovery order.
+// are de-duplicated and returned in deterministic (RepoPath, ID) order.
 func Resolve(res discovery.Result, sels []Selector, interactive bool) ([]discovery.DiscoveredSkill, error) {
 	picked := make(map[string]bool) // key: id\x00repoPath
 	var out []discovery.DiscoveredSkill
