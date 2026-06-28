@@ -19,9 +19,26 @@ func TestSyncPrune_RemovesOrphans(t *testing.T) {
 		t.Fatalf("add: %s", stderr)
 	}
 
-	// Plant an orphan skill directory not present in the lockfile.
-	orphan := filepath.Join(proj, ".claude", "skills", "orphan")
-	if err := os.MkdirAll(orphan, 0o750); err != nil {
+	skillsDir := filepath.Join(proj, ".claude", "skills")
+
+	// A gskill-managed orphan: a symlink into the store no longer in the lock.
+	// It mirrors how gskill activates installs, so prune must remove it.
+	storeTarget, err := os.Readlink(filepath.Join(skillsDir, "demo"))
+	if err != nil {
+		t.Fatalf("read demo install target: %v", err)
+	}
+	managedOrphan := filepath.Join(skillsDir, "ghost")
+	if err := os.Symlink(storeTarget, managedOrphan); err != nil {
+		t.Fatal(err)
+	}
+
+	// Foreign content gskill never placed: a hand-installed skill directory.
+	// Prune must NOT delete it.
+	foreign := filepath.Join(skillsDir, "handmade")
+	if err := os.MkdirAll(foreign, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreign, "SKILL.md"), []byte("mine"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -29,10 +46,13 @@ func TestSyncPrune_RemovesOrphans(t *testing.T) {
 		t.Fatalf("sync --prune: %s", stderr)
 	}
 
-	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
-		t.Errorf("orphan not pruned (stat err=%v)", err)
+	if _, err := os.Lstat(managedOrphan); !os.IsNotExist(err) {
+		t.Errorf("managed orphan not pruned (lstat err=%v)", err)
 	}
-	if _, err := os.Stat(filepath.Join(proj, ".claude", "skills", "demo", "SKILL.md")); err != nil {
+	if _, err := os.Stat(foreign); err != nil {
+		t.Errorf("foreign skill deleted by prune: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skillsDir, "demo", "SKILL.md")); err != nil {
 		t.Errorf("declared skill removed by prune: %v", err)
 	}
 }

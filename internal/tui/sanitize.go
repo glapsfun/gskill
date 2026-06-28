@@ -24,6 +24,9 @@ func Sanitize(s string) string {
 			b.WriteRune(r)
 		case r < 0x20 || r == 0x7f:
 			// Drop other C0 controls and DEL (including a lone ESC).
+		case r >= 0x80 && r <= 0x9f:
+			// Drop C1 controls (e.g. a single-byte CSI 0x9b), which some
+			// terminals still act on even though we strip the ESC-based forms.
 		default:
 			b.WriteRune(r)
 		}

@@ -354,7 +354,7 @@ func buildLockEntry(ref source.Ref, rev resolver.Revision, ireq installer.Reques
 		},
 		Installation: lockfile.Installation{
 			Scope: string(ireq.Scope), Mode: string(result.Mode),
-			Agents: result.Agents, Targets: result.Targets,
+			Agents: result.Agents, Targets: result.Targets, Modes: result.Modes,
 		},
 		Provenance: lockfile.Provenance{FetchedAt: now, UpdatedAt: now, Trust: "checksum-ok"},
 	}

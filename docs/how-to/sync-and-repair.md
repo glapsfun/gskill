@@ -10,14 +10,19 @@ Reconcile what's on disk with the lockfile, and fix installs that have gone miss
 
 ```bash
 gskill sync              # install anything missing so disk matches the lock
-gskill sync --prune      # also REMOVE agent skill directories not in the lock
+gskill sync --prune      # also remove gskill-managed installs not in the lock
 ```
 
 **Expected:** `sync` makes the installed state match the lockfile. Plain `sync` is additive; add
-`--prune` to delete orphaned skill directories that the lock no longer references.
+`--prune` to delete orphaned installs that the lock no longer references.
 
 > `install` is additive and never deletes. `sync --prune` is the destructive reconciler — use it when
 > you want disk to be an exact mirror of the lock.
+
+`--prune` only removes **gskill-managed** installs: entries in an agent's skill directory that are
+symlinks into the gskill store. Skills you installed by hand, or that another tool placed in the same
+shared directory (e.g. `.claude/skills/`), are left untouched. Copy-mode installs carry no such
+marker — remove those explicitly with `gskill remove <name>`.
 
 ## Repair broken installs
 

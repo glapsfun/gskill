@@ -41,7 +41,8 @@ type Result struct {
 	Skill         discovery.Skill
 	ContentHash   string
 	SkillFileHash string
-	Mode          Mode
+	Mode          Mode              // representative mode (the first agent's)
+	Modes         map[string]string // agentID -> actual mode used
 	Agents        []string
 	Targets       map[string]string // agentID -> recorded dir (relative for project scope)
 	Warnings      []string
@@ -97,7 +98,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	mode, targets, err := i.activateAll(ctx, req, skill.Frontmatter.Name, storePath)
+	mode, targets, modes, err := i.activateAll(ctx, req, skill.Frontmatter.Name, storePath)
 	if err != nil {
 		return Result{}, err
 	}
@@ -107,6 +108,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		ContentHash:   hashes.ContentHash,
 		SkillFileHash: hashes.SkillFileHash,
 		Mode:          mode,
+		Modes:         modes,
 		Agents:        agentIDs(req.Agents),
 		Targets:       targets,
 		Warnings:      warnings,
@@ -185,24 +187,31 @@ func (i *Installer) stageAndVerify(contentHash, skillDir string) (string, error)
 }
 
 // activateAll links or copies the stored content into every target agent dir,
-// returning the recorded mode and per-agent target paths.
-func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath string) (Mode, map[string]string, error) {
+// returning the representative mode (the first agent's), the per-agent modes,
+// and the per-agent target paths. Modes can differ per agent — e.g. a symlink
+// falls back to a copy on a filesystem that rejects it — so each is recorded
+// rather than collapsed to one value.
+func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath string) (Mode, map[string]string, map[string]string, error) {
 	targets := make(map[string]string, len(req.Agents))
-	mode := ModeSymlink
+	modes := make(map[string]string, len(req.Agents))
+	primary := ModeSymlink
 
-	for _, ag := range req.Agents {
+	for idx, ag := range req.Agents {
 		dest := i.targetDir(ag, req, name)
 		usedMode, err := activate(storePath, dest, wantCopy(req.ModePref, ag))
 		if err != nil {
-			return "", nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
+			return "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
 		}
-		mode = usedMode
+		if idx == 0 {
+			primary = usedMode
+		}
+		modes[ag.ID()] = string(usedMode)
 		if err := ag.ValidateInstallation(ctx, dest); err != nil {
-			return "", nil, fmt.Errorf("%w: %w", errs.ErrPartialInstall, err)
+			return "", nil, nil, fmt.Errorf("%w: %w", errs.ErrPartialInstall, err)
 		}
 		targets[ag.ID()] = i.recordTarget(req, dest)
 	}
-	return mode, targets, nil
+	return primary, targets, modes, nil
 }
 
 // targetDir resolves the per-agent destination directory for the skill.

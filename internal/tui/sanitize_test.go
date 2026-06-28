@@ -40,3 +40,18 @@ func TestSanitize_DropsControlChars(t *testing.T) {
 		t.Errorf("control characters survived: %q", got)
 	}
 }
+
+func TestSanitize_DropsC1Controls(t *testing.T) {
+	t.Parallel()
+
+	// U+009B is a single-byte CSI; some terminals act on it even without an ESC.
+	csi := string(rune(0x9b))
+	in := "before" + csi + "31mafter"
+	got := tui.Sanitize(in)
+	if strings.Contains(got, csi) {
+		t.Errorf("C1 control survived: %q", got)
+	}
+	if got != "before31mafter" {
+		t.Errorf("Sanitize = %q, want %q", got, "before31mafter")
+	}
+}

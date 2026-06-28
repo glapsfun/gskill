@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -71,17 +72,17 @@ func Parse(content []byte) (Document, error) {
 		return Document{}, err
 	}
 
-	var f Frontmatter
-	if uErr := yaml.Unmarshal([]byte(fm), &f); uErr != nil {
-		return Document{}, fmt.Errorf("%w: %w", ErrInvalidFrontmatter, uErr)
-	}
-	if vErr := f.Validate(); vErr != nil {
-		return Document{}, vErr
-	}
-
 	var raw map[string]any
 	if uErr := yaml.Unmarshal([]byte(fm), &raw); uErr != nil {
 		return Document{}, fmt.Errorf("%w: %w", ErrInvalidFrontmatter, uErr)
+	}
+
+	f, err := decodeFrontmatter(raw)
+	if err != nil {
+		return Document{}, err
+	}
+	if vErr := f.Validate(); vErr != nil {
+		return Document{}, vErr
 	}
 
 	return Document{
@@ -89,6 +90,21 @@ func Parse(content []byte) (Document, error) {
 		Body:        []byte(body),
 		Warnings:    unknownKeyWarnings(raw),
 	}, nil
+}
+
+// decodeFrontmatter converts the already-parsed YAML map into the typed
+// Frontmatter via a JSON round-trip, so the frontmatter is parsed only once.
+// (sigs.k8s.io/yaml already represents the map with JSON-compatible types.)
+func decodeFrontmatter(raw map[string]any) (Frontmatter, error) {
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return Frontmatter{}, fmt.Errorf("%w: %w", ErrInvalidFrontmatter, err)
+	}
+	var f Frontmatter
+	if err := json.Unmarshal(data, &f); err != nil {
+		return Frontmatter{}, fmt.Errorf("%w: %w", ErrInvalidFrontmatter, err)
+	}
+	return f, nil
 }
 
 // splitFrontmatter separates the YAML frontmatter block from the markdown body.

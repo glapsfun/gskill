@@ -97,6 +97,69 @@ func TestSystemRunner_ResolveRef(t *testing.T) {
 	}
 }
 
+func TestSystemRunner_ResolveRefPrefersBranchOverSameNamedTag(t *testing.T) {
+	t.Parallel()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repo := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(context.Background(), "git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	revParse := func(rev string) string {
+		t.Helper()
+		cmd := exec.CommandContext(context.Background(), "git", "rev-parse", rev)
+		cmd.Dir = repo
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("rev-parse %s: %v", rev, err)
+		}
+		return string(out[:40])
+	}
+
+	run("init", "--quiet", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "f"), []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "--quiet", "-m", "first")
+	// Tag "shared" points at the first commit.
+	run("tag", "shared")
+	tagCommit := revParse("HEAD")
+
+	// A "shared" branch advances to a second, different commit.
+	run("checkout", "--quiet", "-b", "shared")
+	if err := os.WriteFile(filepath.Join(repo, "f"), []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "--quiet", "-m", "second")
+	branchCommit := revParse("HEAD")
+
+	if branchCommit == tagCommit {
+		t.Fatal("test setup: branch and tag commits must differ")
+	}
+
+	got, err := git.NewSystemRunner().ResolveRef(context.Background(), repo, "shared")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if got != branchCommit {
+		t.Errorf("ResolveRef(shared) = %q, want branch head %q (not tag %q)", got, branchCommit, tagCommit)
+	}
+}
+
 func TestSystemRunner_FetchCommit(t *testing.T) {
 	t.Parallel()
 

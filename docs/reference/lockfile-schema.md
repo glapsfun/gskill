@@ -70,7 +70,8 @@ trailing newline for stable diffs. `lockfile_version = 1`.
 | `resolved` | `mutable_ref` | `true` when resolved from a mutable reference (e.g. a branch). |
 | `metadata` | `name` / `description` / `license` | Captured from frontmatter. |
 | `requires` | skills/commands/environment/mcp | Recorded, not resolved transitively. |
-| `installation` | `scope` / `mode` / `agents` / `targets` | How and where the skill is installed. |
+| `installation` | `scope` / `mode` / `agents` / `targets` | How and where the skill is installed. `mode` is the representative install mode. |
+| `installation` | `modes` | Optional per-agent install mode (`agentID` → `symlink` \| `copy`); present when an agent's actual mode differs from `mode`. |
 | `provenance` | `fetched_at` / `updated_at` / `trust` | Audit fields. Timestamps never affect reproducibility/content determinism. |
 
 ## Determinism

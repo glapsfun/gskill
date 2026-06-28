@@ -69,22 +69,52 @@ func (SystemRunner) ResolveRef(ctx context.Context, url, ref string) (string, er
 	if out == "" {
 		return "", fmt.Errorf("%w: ref %q not found", errs.ErrSourceUnavailable, ref)
 	}
-	// Prefer a peeled tag line if present.
-	var sha string
+	if sha := pickRef(out, ref); sha != "" {
+		return sha, nil
+	}
+	return "", fmt.Errorf("%w: could not resolve ref %q", errs.ErrSourceUnavailable, ref)
+}
+
+// pickRef chooses a commit SHA from "git ls-remote" output for ref, resolving
+// the ambiguity when the same name exists as both a branch and a tag. Branch
+// heads win (ResolveRef is the branch-resolution path); among tags the peeled
+// commit (^{}) beats the annotated-tag object. The first SHA is the fallback.
+func pickRef(out, ref string) string {
+	var head, peeledTag, tag, other, first string
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
 		}
-		sha = fields[0]
-		if strings.HasSuffix(fields[1], "^{}") {
-			break
+		sha, name := fields[0], fields[1]
+		if first == "" {
+			first = sha
+		}
+		switch name {
+		case "refs/heads/" + ref:
+			head = sha
+		case "refs/tags/" + ref + "^{}":
+			peeledTag = sha
+		case "refs/tags/" + ref:
+			tag = sha
+		default:
+			if other == "" {
+				other = sha
+			}
 		}
 	}
-	if sha == "" {
-		return "", fmt.Errorf("%w: could not resolve ref %q", errs.ErrSourceUnavailable, ref)
+	switch {
+	case head != "":
+		return head
+	case peeledTag != "":
+		return peeledTag
+	case tag != "":
+		return tag
+	case other != "":
+		return other
+	default:
+		return first
 	}
-	return sha, nil
 }
 
 // FetchCommit materializes the tree at commit into dest with no .git directory.
