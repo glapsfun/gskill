@@ -1,5 +1,7 @@
 # gskill
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/glapsfun/gskill/badge)](https://scorecard.dev/viewer/?uri=github.com/glapsfun/gskill)
+
 **GSKILL** is a reproducible package manager for agentic AI skills — it installs,
 versions, locks, verifies, and restores SKILL.md-based skill environments across
 AI coding agents, developer machines, and CI. Commit `gskill.toml` and

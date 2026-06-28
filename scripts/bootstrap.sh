@@ -17,6 +17,13 @@ install_tool() {
 install_tool golangci-lint github.com/golangci/golangci-lint/v2/cmd/golangci-lint GOLANGCI_LINT
 install_tool govulncheck   golang.org/x/vuln/cmd/govulncheck                       GOVULNCHECK
 install_tool gitleaks      github.com/zricethezav/gitleaks/v8                       GITLEAKS
+install_tool actionlint    github.com/rhysd/actionlint/cmd/actionlint              ACTIONLINT
+
+# zizmor is a PyPI tool (not go-installable); scripts/audit-workflows.sh runs it via
+# `uvx zizmor==$(tool_version ZIZMOR)`. We only need `uv` present, not a global install.
+if ! have uv; then
+	log_warn "uv not found — install it (https://docs.astral.sh/uv) so scripts/audit-workflows.sh can run zizmor via uvx"
+fi
 
 if ! have pre-commit; then
 	log_warn "pre-commit not found — install it (https://pre-commit.com) then re-run to enable git hooks"
