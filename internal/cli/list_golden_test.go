@@ -19,14 +19,14 @@ func TestListJSON_StableGolden(t *testing.T) {
 			Source:  "github.com/acme/widgets",
 			Version: "2.1.3",
 			Status:  "installed",
-			Agents:  []string{"claude-code", "codex"},
+			Agents:  []string{"claude", "codex"},
 		},
 		{
 			Name:    "shell-helper",
 			Source:  "github.com/acme/shell",
 			Version: "1.0.0",
 			Status:  "missing",
-			Agents:  []string{"claude-code"},
+			Agents:  []string{"claude"},
 		},
 	}
 

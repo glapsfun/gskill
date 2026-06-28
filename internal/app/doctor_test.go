@@ -39,12 +39,12 @@ func TestDoctor_ReportsGitAndDetectedAgents(t *testing.T) {
 
 	found := false
 	for _, id := range report.DetectedAgents {
-		if id == "claude-code" {
+		if id == "claude" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("claude-code not detected: %v", report.DetectedAgents)
+		t.Errorf("claude not detected: %v", report.DetectedAgents)
 	}
 }
 
@@ -56,7 +56,7 @@ func TestDoctor_WarnsOnUnmetRequirements(t *testing.T) {
 		`"resolved":{"ref_kind":"semver","content_hash":"sha256:x","mutable_ref":false},` +
 		`"metadata":{"name":"demo","description":"d"},` +
 		`"requires":{"commands":["definitely-not-a-real-binary-zzz"],"environment":["GSKILL_DEFINITELY_UNSET_ZZZ"],"skills":[],"mcp":["some-server"]},` +
-		`"installation":{"scope":"project","mode":"symlink","agents":["claude-code"],"targets":{}},` +
+		`"installation":{"scope":"project","mode":"symlink","agents":["claude"],"targets":{}},` +
 		`"provenance":{"trust":"checksum-ok"}}}}`
 	root := projectWithLock(t, lock)
 
@@ -80,7 +80,7 @@ func TestDoctor_RequirementsAreSurfacedNeverInstalled(t *testing.T) {
 		`"resolved":{"ref_kind":"semver","content_hash":"sha256:x","mutable_ref":false},` +
 		`"metadata":{"name":"demo","description":"d"},` +
 		`"requires":{"commands":["kubectl"],"environment":[],"skills":[],"mcp":["github-mcp"]},` +
-		`"installation":{"scope":"project","mode":"symlink","agents":["claude-code"],"targets":{}},` +
+		`"installation":{"scope":"project","mode":"symlink","agents":["claude"],"targets":{}},` +
 		`"provenance":{"trust":"checksum-ok"}}}}`
 	root := projectWithLock(t, lock)
 

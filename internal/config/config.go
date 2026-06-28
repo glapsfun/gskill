@@ -31,6 +31,10 @@ type Config struct {
 	Offline   bool
 	NoCache   bool
 	Jobs      int
+	// Repositories are the known skill repositories an unscoped `find` searches
+	// (FR-038). Configured in a config file (TOML array) or via
+	// GSKILL_REPOSITORIES (comma-separated).
+	Repositories []string
 }
 
 // Sources are the inputs to Load. Empty fields are skipped; later layers
@@ -53,11 +57,12 @@ type Sources struct {
 // DefaultMap returns the built-in configuration defaults.
 func DefaultMap() map[string]any {
 	return map[string]any{
-		"log_level":  "info",
-		"log_format": "text",
-		"offline":    false,
-		"no_cache":   false,
-		"jobs":       0,
+		"log_level":    "info",
+		"log_format":   "text",
+		"offline":      false,
+		"no_cache":     false,
+		"jobs":         0,
+		"repositories": []string{},
 	}
 }
 
@@ -96,11 +101,12 @@ func Load(s Sources) (*Config, error) {
 	}
 
 	return &Config{
-		LogLevel:  k.String("log_level"),
-		LogFormat: k.String("log_format"),
-		Offline:   k.Bool("offline"),
-		NoCache:   k.Bool("no_cache"),
-		Jobs:      k.Int("jobs"),
+		LogLevel:     k.String("log_level"),
+		LogFormat:    k.String("log_format"),
+		Offline:      k.Bool("offline"),
+		NoCache:      k.Bool("no_cache"),
+		Jobs:         k.Int("jobs"),
+		Repositories: k.Strings("repositories"),
 	}, nil
 }
 
@@ -135,8 +141,21 @@ func parseEnviron(environ []string) map[string]any {
 		switch name {
 		case "config_dir", "cache_dir":
 			continue
+		case "repositories":
+			out[name] = splitList(val)
 		default:
 			out[name] = val
+		}
+	}
+	return out
+}
+
+// splitList splits a comma-separated env value into a trimmed, non-empty list.
+func splitList(val string) []string {
+	var out []string
+	for _, part := range strings.Split(val, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
 		}
 	}
 	return out

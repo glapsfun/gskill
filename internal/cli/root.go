@@ -29,6 +29,8 @@ type rootCLI struct {
 	Version  versionCmd  `cmd:"" help:"Print the gskill version."`
 	Init     initCmd     `cmd:"" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
 	Add      addCmd      `cmd:"" help:"Add and install a new skill."`
+	Source   sourceCmd   `cmd:"" help:"Inspect a skill source (list/inspect/check) without installing."`
+	Find     findCmd     `cmd:"" help:"Search for skills in a source, a GitHub owner, or configured repositories."`
 	Install  installCmd  `cmd:"" help:"Install all declared skills (additive, idempotent)."`
 	Verify   verifyCmd   `cmd:"" help:"Re-hash installed content against the lockfile."`
 	Check    checkCmd    `cmd:"" help:"Report fast drift status."`

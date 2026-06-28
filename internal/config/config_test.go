@@ -150,3 +150,47 @@ func TestDir_EnvOverride(t *testing.T) {
 		t.Errorf("ConfigDir = %q, want override %q", dir, custom)
 	}
 }
+
+func TestLoad_RepositoriesFromFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := "repositories = [\"https://github.com/a/b\", \"https://github.com/c/d\"]\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(config.Sources{ProjectFile: path, Environ: []string{}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Repositories) != 2 || cfg.Repositories[0] != "https://github.com/a/b" {
+		t.Errorf("Repositories = %v, want two repos", cfg.Repositories)
+	}
+}
+
+func TestLoad_RepositoriesFromEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(config.Sources{
+		Environ: []string{"GSKILL_REPOSITORIES=https://github.com/a/b,https://github.com/c/d"},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Repositories) != 2 {
+		t.Errorf("Repositories = %v, want 2 from env", cfg.Repositories)
+	}
+}
+
+func TestLoad_RepositoriesDefaultEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(config.Sources{Environ: []string{}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Repositories) != 0 {
+		t.Errorf("default Repositories = %v, want empty", cfg.Repositories)
+	}
+}

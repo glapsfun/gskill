@@ -12,7 +12,7 @@ import (
 func sampleManifest() *manifest.Manifest {
 	m := manifest.New()
 	m.Defaults = manifest.Defaults{
-		Agents:      []string{"claude-code", "codex"},
+		Agents:      []string{"claude", "codex"},
 		InstallMode: "symlink",
 		Scope:       "project",
 	}
@@ -20,7 +20,7 @@ func sampleManifest() *manifest.Manifest {
 		Source:  "github.com/acme/widgets",
 		Path:    "skills/kubernetes-expert",
 		Version: "^2.0.0",
-		Agents:  []string{"claude-code"},
+		Agents:  []string{"claude"},
 	}
 	return m
 }

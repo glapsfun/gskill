@@ -1,7 +1,7 @@
 schema_version = 1
 
 [defaults]
-agents = ['claude-code', 'codex']
+agents = ['claude', 'codex']
 install_mode = 'symlink'
 scope = 'project'
 
@@ -10,4 +10,4 @@ scope = 'project'
 source = 'github.com/acme/widgets'
 path = 'skills/kubernetes-expert'
 version = '^2.0.0'
-agents = ['claude-code']
+agents = ['claude']

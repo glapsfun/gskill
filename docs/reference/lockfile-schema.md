@@ -40,9 +40,9 @@ trailing newline for stable diffs. `lockfile_version = 1`.
       "installation": {
         "scope": "project",
         "mode": "symlink",
-        "agents": ["claude-code", "codex"],
+        "agents": ["claude", "codex"],
         "targets": {
-          "claude-code": ".claude/skills/<name>",
+          "claude": ".claude/skills/<name>",
           "codex": ".codex/skills/<name>"
         }
       },

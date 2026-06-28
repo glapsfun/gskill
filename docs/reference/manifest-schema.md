@@ -10,7 +10,7 @@ here. Format: TOML. `schema_version = 1`.
 schema_version = 1
 
 [defaults]
-agents = ["claude-code", "codex"]   # default target agents when an add specifies none
+agents = ["claude", "codex"]   # default target agents when an add specifies none
 install_mode = "symlink"            # symlink | copy | auto
 scope = "project"                   # project | global
 
@@ -20,7 +20,7 @@ path = "skills/<name>"              # optional: in-repo subpath (explicit path w
 version = "^2.0.0"                  # optional: semver constraint
 ref = "main"                        # optional: branch/tag (mutable — flagged in the lock)
 commit = "<sha>"                    # optional: explicit commit pin
-agents = ["claude-code"]            # optional: overrides defaults.agents
+agents = ["claude"]            # optional: overrides defaults.agents
 install_mode = "symlink"            # optional: overrides defaults.install_mode
 ```
 

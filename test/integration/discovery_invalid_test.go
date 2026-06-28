@@ -8,8 +8,10 @@ import (
 func TestAddInvalidFrontmatter_Rejected(t *testing.T) {
 	t.Parallel()
 
-	// SKILL.md missing the required name field.
-	repo := gitRepo(t, "---\ndescription: no name here\n---\n# body\n", "v1.0.0")
+	// SKILL.md missing the required description field. (A missing name is no
+	// longer invalid — identity comes from the folder, FR-007 — so the invalid
+	// case here is a malformed/incomplete frontmatter that fails the schema.)
+	repo := gitRepo(t, "---\nname: demo\n---\n# body\n", "v1.0.0")
 	proj := newProject(t)
 
 	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {

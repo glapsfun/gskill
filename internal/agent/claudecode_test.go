@@ -13,8 +13,8 @@ func TestClaudeCode_DirsAndSymlinks(t *testing.T) {
 	t.Parallel()
 
 	a := agent.NewClaudeCode()
-	if a.ID() != "claude-code" {
-		t.Errorf("ID = %q, want claude-code", a.ID())
+	if a.ID() != "claude" {
+		t.Errorf("ID = %q, want claude", a.ID())
 	}
 	if got := a.ProjectSkillDir("/proj"); got != filepath.Join("/proj", ".claude", "skills") {
 		t.Errorf("ProjectSkillDir = %q", got)
@@ -74,7 +74,7 @@ func TestNewDefaultRegistry_HasClaudeAndCodex(t *testing.T) {
 	t.Parallel()
 
 	reg := agent.NewDefaultRegistry()
-	for _, id := range []string{"claude-code", "codex"} {
+	for _, id := range []string{"claude", "codex"} {
 		if _, ok := reg.Get(id); !ok {
 			t.Errorf("default registry missing %q", id)
 		}

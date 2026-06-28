@@ -24,7 +24,7 @@ func TestSecurity_UnsafeSymlinkRejected(t *testing.T) {
 		t.Fatalf("init: %s", stderr)
 	}
 
-	_, stderr, code := runGskill(t, proj, "add", src, "--agent", "claude-code")
+	_, stderr, code := runGskill(t, proj, "add", src, "--agent", "claude")
 	if code == 0 {
 		t.Fatal("add of a skill with an escaping symlink succeeded, want rejection")
 	}
@@ -49,7 +49,7 @@ func TestSecurity_ExecBitWarnsButInstalls(t *testing.T) {
 		t.Fatalf("init: %s", stderr)
 	}
 
-	_, stderr, code := runGskill(t, proj, "add", src, "--agent", "claude-code")
+	_, stderr, code := runGskill(t, proj, "add", src, "--agent", "claude")
 	if code != 0 {
 		t.Fatalf("add with exec-bit file failed: %s", stderr)
 	}

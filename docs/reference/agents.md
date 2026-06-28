@@ -8,7 +8,7 @@ installs content.
 
 | Agent | Agent ID | Marker | Project install path |
 | --- | --- | --- | --- |
-| Claude Code | `claude-code` | `.claude/` | `.claude/skills/<name>/` |
+| Claude Code | `claude` | `.claude/` | `.claude/skills/<name>/` |
 | Codex | `codex` | `.codex/` | `.codex/skills/<name>/` |
 | Cursor | `cursor` | `.cursor/` | `.cursor/skills/<name>/` |
 | Gemini CLI | `gemini-cli` | `.gemini/` | `.gemini/skills/<name>/` |

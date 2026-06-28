@@ -2,7 +2,7 @@
   "skills": [
     {
       "agents": [
-        "claude-code",
+        "claude",
         "codex"
       ],
       "name": "kubernetes-expert",
@@ -12,7 +12,7 @@
     },
     {
       "agents": [
-        "claude-code"
+        "claude"
       ],
       "name": "shell-helper",
       "source": "github.com/acme/shell",

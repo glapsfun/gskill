@@ -16,7 +16,7 @@ var ErrInvalidAgent = errors.New("invalid agent")
 // Agent is the behavior gskill needs from a target AI agent to detect it and
 // place skills into its skill directory (FR-027, FR-031, SC-009).
 type Agent interface {
-	// ID is the stable, lowercase identifier (e.g. "claude-code").
+	// ID is the stable, lowercase identifier (e.g. "claude").
 	ID() string
 	// DisplayName is the human-facing name.
 	DisplayName() string

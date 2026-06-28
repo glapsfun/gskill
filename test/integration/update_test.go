@@ -26,7 +26,7 @@ func TestUpdate_AdvancesLockWithinConstraint(t *testing.T) {
 	}
 
 	// Publish a newer in-constraint version on a new commit.
-	if err := os.WriteFile(filepath.Join(repo, "skill", "SKILL.md"),
+	if err := os.WriteFile(filepath.Join(repo, "demo", "SKILL.md"),
 		[]byte("---\nname: demo\ndescription: updated demo\n---\n# demo v1.1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

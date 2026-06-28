@@ -44,11 +44,11 @@
         "scope": "project",
         "mode": "symlink",
         "agents": [
-          "claude-code",
+          "claude",
           "codex"
         ],
         "targets": {
-          "claude-code": ".claude/skills/kubernetes-expert",
+          "claude": ".claude/skills/kubernetes-expert",
           "codex": ".codex/skills/kubernetes-expert"
         }
       },

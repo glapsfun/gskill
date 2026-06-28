@@ -37,7 +37,7 @@ func TestDefaultRegistry_HasAllFourAgents(t *testing.T) {
 	t.Parallel()
 
 	reg := agent.NewDefaultRegistry()
-	for _, id := range []string{"claude-code", "codex", "cursor", "gemini-cli"} {
+	for _, id := range []string{"claude", "codex", "cursor", "gemini-cli"} {
 		if _, ok := reg.Get(id); !ok {
 			t.Errorf("default registry missing %q", id)
 		}

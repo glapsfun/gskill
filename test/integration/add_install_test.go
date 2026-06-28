@@ -46,7 +46,7 @@ func TestInitAddInstall_RoundTripAndIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	lockStr := string(lockBytes)
-	for _, want := range []string{`"ref_kind": "semver"`, `"version": "1.2.0"`, `"commit":`, `"content_hash":`, `"claude-code"`} {
+	for _, want := range []string{`"ref_kind": "semver"`, `"version": "1.2.0"`, `"commit":`, `"content_hash":`, `"claude"`} {
 		if !strings.Contains(lockStr, want) {
 			t.Errorf("lockfile missing %q:\n%s", want, lockStr)
 		}

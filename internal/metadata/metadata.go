@@ -55,7 +55,21 @@ func (f Frontmatter) Validate() error {
 	if f.Name == "" {
 		return fmt.Errorf("%w: missing required field 'name'", ErrInvalidFrontmatter)
 	}
-	if !nameRE.MatchString(f.Name) {
+	return f.validateRest()
+}
+
+// ValidateLenient is like Validate but treats a missing name as acceptable: a
+// discovered skill takes its identity from its folder, so the frontmatter name
+// is optional. A name that *is* present must still be lowercase kebab-case, and
+// the description remains required.
+func (f Frontmatter) ValidateLenient() error {
+	return f.validateRest()
+}
+
+// validateRest checks the rules shared by Validate and ValidateLenient: a
+// present name must be kebab-case, and the description is required.
+func (f Frontmatter) validateRest() error {
+	if f.Name != "" && !nameRE.MatchString(f.Name) {
 		return fmt.Errorf("%w: name %q must be lowercase kebab-case [a-z0-9-]", ErrInvalidFrontmatter, f.Name)
 	}
 	if strings.TrimSpace(f.Description) == "" {
@@ -65,8 +79,22 @@ func (f Frontmatter) Validate() error {
 }
 
 // Parse extracts and validates the frontmatter from SKILL.md content, returning
-// the document with its markdown body and any unknown-key warnings.
+// the document with its markdown body and any unknown-key warnings. A missing
+// name is rejected.
 func Parse(content []byte) (Document, error) {
+	return parse(content, Frontmatter.Validate)
+}
+
+// ParseLenient is like Parse but accepts a missing name (the skill folder
+// supplies identity during discovery, FR-007); a present name must still be
+// kebab-case and the description is still required. It is the parser used by the
+// recursive scanner so a name-less SKILL.md is discoverable rather than fatal.
+func ParseLenient(content []byte) (Document, error) {
+	return parse(content, Frontmatter.ValidateLenient)
+}
+
+// parse is the shared parse path; validate selects the strict or lenient rules.
+func parse(content []byte, validate func(Frontmatter) error) (Document, error) {
 	fm, body, err := splitFrontmatter(content)
 	if err != nil {
 		return Document{}, err
@@ -81,7 +109,7 @@ func Parse(content []byte) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
-	if vErr := f.Validate(); vErr != nil {
+	if vErr := validate(f); vErr != nil {
 		return Document{}, vErr
 	}
 
