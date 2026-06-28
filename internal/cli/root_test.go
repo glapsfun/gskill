@@ -62,14 +62,85 @@ func TestRun_UsageErrorExits2(t *testing.T) {
 	}
 }
 
-func TestRun_BareInvocationRunsDefaultVersion(t *testing.T) {
+func TestRun_BareInvocationPrintsHelp(t *testing.T) {
 	t.Parallel()
 
-	stdout, _, code := run(t)
+	stdout, stderr, code := run(t)
 	if code != 0 {
-		t.Fatalf("exit code = %d, want 0", code)
+		t.Fatalf("exit code = %d, want 0 (stderr: %q)", code, stderr)
 	}
-	if !strings.Contains(stdout, "gskill") {
-		t.Errorf("bare invocation stdout = %q, want version line", stdout)
+	if !strings.Contains(stdout, "Usage:") {
+		t.Errorf("bare invocation stdout = %q, want it to contain the usage line", stdout)
+	}
+	if !strings.Contains(stdout, "Reproducible package manager for agentic AI skills.") {
+		t.Errorf("bare invocation stdout = %q, want it to contain the project description", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty (help is a result, not a diagnostic)", stderr)
+	}
+}
+
+func TestRun_HelpFlagsPrintHelp(t *testing.T) {
+	t.Parallel()
+
+	for _, flag := range []string{"--help", "-h"} {
+		t.Run(flag, func(t *testing.T) {
+			t.Parallel()
+
+			stdout, stderr, code := run(t, flag)
+			if code != 0 {
+				t.Fatalf("%s exit code = %d, want 0 (stderr: %q)", flag, code, stderr)
+			}
+			if !strings.Contains(stdout, "Usage:") {
+				t.Errorf("%s stdout = %q, want it to contain the usage line", flag, stdout)
+			}
+			if stderr != "" {
+				t.Errorf("%s stderr = %q, want empty", flag, stderr)
+			}
+		})
+	}
+}
+
+func TestRun_HelpInvocationsByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	bare, _, _ := run(t)
+	long, _, _ := run(t, "--help")
+	short, _, _ := run(t, "-h")
+
+	if bare != long {
+		t.Errorf("bare invocation help differs from --help:\nbare:  %q\n--help: %q", bare, long)
+	}
+	if long != short {
+		t.Errorf("--help differs from -h:\n--help: %q\n-h:     %q", long, short)
+	}
+}
+
+func TestRun_HelpListsMainCommandsAndFlags(t *testing.T) {
+	t.Parallel()
+
+	stdout, _, _ := run(t)
+
+	for _, cmd := range []string{"install", "add", "verify", "sync", "list"} {
+		if !strings.Contains(stdout, cmd) {
+			t.Errorf("help stdout missing main command %q\nstdout: %q", cmd, stdout)
+		}
+	}
+	for _, flag := range []string{"--json", "--offline"} {
+		if !strings.Contains(stdout, flag) {
+			t.Errorf("help stdout missing global flag %q\nstdout: %q", flag, stdout)
+		}
+	}
+}
+
+func TestRun_UnknownCommandExitsNonZero(t *testing.T) {
+	t.Parallel()
+
+	_, stderr, code := run(t, "nonsense-command")
+	if code == 0 {
+		t.Errorf("exit code = 0, want non-zero for an unknown command")
+	}
+	if stderr == "" {
+		t.Error("stderr empty on unknown command, want a diagnostic")
 	}
 }

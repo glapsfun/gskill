@@ -26,7 +26,7 @@ type rootCLI struct {
 	Verbose       bool   `short:"v" help:"Enable verbose diagnostics."`
 	Dir           string `short:"C" help:"Run as if gskill started in this directory." type:"path"`
 
-	Version  versionCmd  `cmd:"" default:"1" help:"Print the gskill version."`
+	Version  versionCmd  `cmd:"" help:"Print the gskill version."`
 	Init     initCmd     `cmd:"" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
 	Add      addCmd      `cmd:"" help:"Add and install a new skill."`
 	Install  installCmd  `cmd:"" help:"Install all declared skills (additive, idempotent)."`
@@ -86,18 +86,35 @@ func (versionCmd) Run(out *Output) error {
 // command returns is mapped through errs.ExitCode.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, application *app.App) int {
 	var root rootCLI
+
+	// helpRequested records that Kong handled a --help/-h flag: its handler
+	// prints the help screen to stdout and then calls Exit, which we capture
+	// here instead of terminating the process so Run stays testable.
+	var helpRequested bool
 	parser, err := kong.New(&root,
 		kong.Name("gskill"),
 		kong.Description("Reproducible package manager for agentic AI skills."),
 		kong.Writers(stdout, stderr),
-		kong.Exit(func(int) {}),
+		kong.Exit(func(int) { helpRequested = true }),
 	)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return int(errs.CodeGeneric)
 	}
 
+	// A bare invocation shows the root help screen. Routing it through Kong's
+	// own --help flag guarantees byte-identical output to `gskill --help`.
+	if len(args) == 0 {
+		args = []string{"--help"}
+	}
+
 	kctx, err := parser.Parse(args)
+	// A help request is a successful result, not a usage error: Kong already
+	// wrote help to stdout, so exit 0 before inspecting the parse error (which,
+	// with no command selected, would otherwise be "expected one of ...").
+	if helpRequested {
+		return int(errs.CodeOK)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return int(errs.CodeUsage)
