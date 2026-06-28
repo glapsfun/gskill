@@ -1,0 +1,122 @@
+version: 2
+
+project_name: gskill
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: gskill
+    main: ./cmd/gskill
+    binary: gskill
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+        -X github.com/glapsfun/gskill/internal/version.version={{ .Version }}
+        -X github.com/glapsfun/gskill/internal/version.commit={{ .ShortCommit }}
+    # Unix only — no windows. x86 + arm.
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: gskill
+    formats: [tar.gz]
+    # The name template is a hard contract: scripts/install.sh reconstructs it and the
+    # generated Homebrew cask URLs depend on it. Do not change without updating both.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README*
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# Release notes are generated here from commits and attached to the GitHub Release body.
+# No CHANGELOG.md is committed and nothing is pushed back to the default branch.
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+      - '^Merge '
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+release:
+  github:
+    owner: glapsfun
+    name: gskill
+  # Tags like v1.2.0-rc.1 are auto-flagged as GitHub pre-releases.
+  prerelease: auto
+
+# --- Supply chain: SBOMs + signing -----------------------------------------
+# One SPDX-JSON SBOM per archive (syft).
+sboms:
+  - id: archive
+    artifacts: archive
+    documents:
+      - "${artifact}.sbom.spdx.json"
+
+# Sign checksums.txt with cosign keyless (transitively covers every archive).
+# NOTE: artifacts defaults to `none` — it MUST be set explicitly.
+signs:
+  - id: checksum
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    output: true
+
+# --- Homebrew (dedicated tap repo) -----------------------------------------
+# `homebrew_casks` (NOT the deprecated `brews`) is the supported mechanism for a
+# prebuilt CLI binary. skip_upload: auto keeps prereleases off the stable channel.
+homebrew_casks:
+  - name: gskill
+    repository:
+      owner: glapsfun
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/glapsfun/gskill"
+    description: "Reproducible package manager for agentic AI skills"
+    skip_upload: auto
+    commit_author:
+      name: gskill-release-bot
+      email: gskill-release-bot@users.noreply.github.com
+    # The binary is cosign-signed but not Apple-notarized; strip the quarantine
+    # attribute so a Homebrew install runs without a Gatekeeper prompt.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/gskill"]
+          end

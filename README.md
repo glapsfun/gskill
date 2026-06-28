@@ -14,6 +14,38 @@ AI coding agents, developer machines, and CI. Commit `gskill.toml` and
 
 ---
 
+## Installation
+
+gskill ships for **Linux and macOS** on **amd64 (x86_64)** and **arm64**. Windows is not
+supported.
+
+**Install script** (downloads the right archive and verifies its checksum):
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/glapsfun/gskill/main/scripts/install.sh | sh
+```
+
+Override the version or install directory with env vars:
+`VERSION=v0.4.0 INSTALL_DIR="$HOME/.local/bin" sh -c "$(curl -sSfL https://raw.githubusercontent.com/glapsfun/gskill/main/scripts/install.sh)"`.
+
+**Homebrew** (macOS and Linux):
+
+```bash
+brew install glapsfun/tap/gskill
+```
+
+**Go** (requires a Go toolchain):
+
+```bash
+go install github.com/glapsfun/gskill/cmd/gskill@latest
+```
+
+Verify the install with `gskill version`. Release artifacts are checksummed and
+cosign-signed with SBOMs and build-provenance attestations; see
+[docs/how-to/releasing.md](docs/how-to/releasing.md) to verify them.
+
+---
+
 ## Usage
 
 ```bash

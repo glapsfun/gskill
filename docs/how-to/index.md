@@ -29,6 +29,7 @@ GSKILL? Start with the [tutorial](../tutorials/getting-started.md) first.
 
 ## Operations
 
+- [Cut and verify a release](releasing.md) — publish a version and verify its checksums, signature, and provenance.
 - [Manage the cache](manage-the-cache.md).
 - [Configure GSKILL](configure-gskill.md).
 - [Set up shell completion](shell-completion.md).
