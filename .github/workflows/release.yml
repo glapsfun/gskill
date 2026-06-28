@@ -1,0 +1,78 @@
+name: Release
+
+# Tag-triggered release: pushing a vX.Y.Z (or vX.Y.Z-rc.N) tag runs the project's
+# quality gate against the tagged commit, then publishes binaries, archives, checksums,
+# cosign signatures, SBOMs, grouped release notes, the Homebrew cask, and a provenance
+# attestation via GoReleaser. See specs/003-release-distribution/contracts/release-workflow.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub Release
+  id-token: write # cosign keyless + provenance OIDC
+  attestations: write # GitHub build-provenance attestations
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Guard — clean working tree
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::working tree is dirty; refusing to release"; exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Quality gate (bootstrap + verify on the tagged commit)
+        run: |
+          ./scripts/bootstrap.sh
+          ./scripts/verify.sh
+
+      - name: Guard — refuse to overwrite an existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "::error::release ${GITHUB_REF_NAME} already exists; refusing to re-release"; exit 1
+          fi
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      - name: Attest binary provenance (covers all archives via checksums)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-checksums: dist/checksums.txt

@@ -36,3 +36,53 @@ jobs:
           name: coverage
           path: coverage.out
           if-no-files-found: ignore
+
+  # Additive cross-platform safety net for the distribution targets — NOT a redefinition
+  # of the single gate above. Validates that the darwin archives the release ships build
+  # and pass race tests.
+  build-test:
+    name: build-test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Test (race)
+        run: go test -race ./...
+        env:
+          CGO_ENABLED: "1"
+
+  # Validate the release config on every PR so a tag push can't surface a broken pipeline.
+  # Signing/SBOM need cosign/syft/OIDC and are exercised only by the real release job.
+  release-dryrun:
+    name: release-dryrun
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+      - name: GoReleaser snapshot (no publish)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,sbom
