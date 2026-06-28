@@ -71,6 +71,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          # Pin the version to the tag that triggered this run. Without this, when a
+          # stable tag and its prerelease (e.g. v0.0.1 and v0.0.1-rc.1) point at the
+          # same commit, `git describe` may resolve to the prerelease and GoReleaser
+          # would target the wrong release.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
 
       - name: Attest binary provenance (covers all archives via checksums)
         uses: actions/attest-build-provenance@v2
