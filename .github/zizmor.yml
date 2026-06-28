@@ -1,0 +1,11 @@
+# zizmor policy — GitHub Actions static analysis.
+# Run locally and in CI via scripts/audit-workflows.sh. Docs: docs/ci-cd.md.
+#
+# unpinned-uses: require a full commit SHA (hash-pin) for ALL actions. This is the
+# zizmor >= v1.20 default, declared explicitly here so the intent is reviewable and
+# stable regardless of the installed zizmor version.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
