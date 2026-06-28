@@ -29,16 +29,16 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 	t.Parallel()
 
 	r := agent.NewRegistry()
-	if err := r.Register(fakeAgent{id: "claude-code"}); err != nil {
+	if err := r.Register(fakeAgent{id: "claude"}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
-	got, ok := r.Get("claude-code")
+	got, ok := r.Get("claude")
 	if !ok {
-		t.Fatal("Get(claude-code) not found")
+		t.Fatal("Get(claude) not found")
 	}
-	if got.ID() != "claude-code" {
-		t.Errorf("ID = %q, want %q", got.ID(), "claude-code")
+	if got.ID() != "claude" {
+		t.Errorf("ID = %q, want %q", got.ID(), "claude")
 	}
 
 	if _, ok := r.Get("absent"); ok {
@@ -62,7 +62,7 @@ func TestRegistry_AllPreservesRegistrationOrder(t *testing.T) {
 	t.Parallel()
 
 	r := agent.NewRegistry()
-	ids := []string{"claude-code", "codex", "cursor", "gemini-cli"}
+	ids := []string{"claude", "codex", "cursor", "gemini-cli"}
 	for _, id := range ids {
 		if err := r.Register(fakeAgent{id: id}); err != nil {
 			t.Fatalf("Register %s: %v", id, err)
@@ -87,7 +87,7 @@ func TestRegistry_DetectFiltersToDetectedAgents(t *testing.T) {
 	t.Parallel()
 
 	r := agent.NewRegistry()
-	_ = r.Register(fakeAgent{id: "claude-code", detected: true})
+	_ = r.Register(fakeAgent{id: "claude", detected: true})
 	_ = r.Register(fakeAgent{id: "codex", detected: false})
 	_ = r.Register(fakeAgent{id: "cursor", detected: true})
 
@@ -98,8 +98,8 @@ func TestRegistry_DetectFiltersToDetectedAgents(t *testing.T) {
 	if len(detected) != 2 {
 		t.Fatalf("Detect returned %d agents, want 2", len(detected))
 	}
-	if detected[0].ID() != "claude-code" || detected[1].ID() != "cursor" {
-		t.Errorf("Detect order = [%s %s], want [claude-code cursor]", detected[0].ID(), detected[1].ID())
+	if detected[0].ID() != "claude" || detected[1].ID() != "cursor" {
+		t.Errorf("Detect order = [%s %s], want [claude cursor]", detected[0].ID(), detected[1].ID())
 	}
 }
 

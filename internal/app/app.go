@@ -5,12 +5,21 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/git"
+	"github.com/glapsfun/gskill/internal/registry"
 )
+
+// RepoLister lists a GitHub owner's repositories, so `find --owner` can fan out
+// across them. The default implementation calls the GitHub REST API; tests
+// inject a fake.
+type RepoLister interface {
+	ListOwnerRepos(ctx context.Context, owner string) ([]registry.RepoRef, error)
+}
 
 // App holds the injected dependencies shared by every use-case. Business logic
 // is added by sibling files (install.go, inspect.go, lifecycle.go, ...).
@@ -19,6 +28,7 @@ type App struct {
 	log    *slog.Logger
 	agents *agent.Registry
 	git    git.Runner
+	repos  RepoLister
 }
 
 // Options configures New. Nil dependencies are replaced with safe defaults.
@@ -27,6 +37,7 @@ type Options struct {
 	Logger *slog.Logger
 	Agents *agent.Registry
 	Git    git.Runner
+	Repos  RepoLister
 }
 
 // New builds an App from opts, filling in defaults for any nil dependency.
@@ -47,7 +58,11 @@ func New(opts Options) *App {
 	if gitRunner == nil {
 		gitRunner = git.NewSystemRunner()
 	}
-	return &App{cfg: cfg, log: logger, agents: agents, git: gitRunner}
+	repos := opts.Repos
+	if repos == nil {
+		repos = registry.New()
+	}
+	return &App{cfg: cfg, log: logger, agents: agents, git: gitRunner, repos: repos}
 }
 
 // Config returns the resolved configuration.

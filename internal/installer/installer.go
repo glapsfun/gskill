@@ -74,15 +74,12 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if req.Name != "" && skill.Frontmatter.Name != req.Name {
-		return Result{}, fmt.Errorf("%w: declared %q but SKILL.md name is %q",
-			errs.ErrInvalidManifest, req.Name, skill.Frontmatter.Name)
-	}
 
 	warnings, err := validateContent(skill.Dir)
 	if err != nil {
 		return Result{}, err
 	}
+	warnings = append(warnings, identityWarning(req.Name, skill.Frontmatter.Name)...)
 
 	hashes, err := integrity.HashDir(skill.Dir)
 	if err != nil {
@@ -98,7 +95,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	mode, targets, modes, err := i.activateAll(ctx, req, skill.Frontmatter.Name, storePath)
+	mode, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), storePath)
 	if err != nil {
 		return Result{}, err
 	}
@@ -128,11 +125,45 @@ func (i *Installer) Discover(ctx context.Context, req Request) (discovery.Skill,
 	if err != nil {
 		return discovery.Skill{}, err
 	}
-	if req.Name != "" && skill.Frontmatter.Name != req.Name {
-		return discovery.Skill{}, fmt.Errorf("%w: declared %q but SKILL.md name is %q",
-			errs.ErrInvalidManifest, req.Name, skill.Frontmatter.Name)
-	}
 	return skill, nil
+}
+
+// installName is the directory name a skill activates under: the selected
+// folder-derived identity (req.Name) when set, else the frontmatter name. This
+// keeps the on-disk skill directory keyed by identity, not editable frontmatter.
+func installName(req Request, skill discovery.Skill) string {
+	if req.Name != "" {
+		return req.Name
+	}
+	return skill.Frontmatter.Name
+}
+
+// identityWarning reports a non-fatal warning when a skill's frontmatter name
+// disagrees with the selected folder-derived identity. Identity comes from the
+// folder (research R2/R3), so a mismatch is advisory, not a failure.
+func identityWarning(selectedID, frontmatterName string) []string {
+	if selectedID == "" || frontmatterName == "" {
+		return nil
+	}
+	if discovery.NormalizeID(frontmatterName) == selectedID {
+		return nil
+	}
+	return []string{fmt.Sprintf("frontmatter name %q does not match selected skill identity %q", frontmatterName, selectedID)}
+}
+
+// DiscoverAll materializes req's source (cache/clone, honoring Offline) then
+// recursively scans it for skills. It is read-only: no staging, activation, or
+// manifest/lock writes. Used by source inspection, search, and the add
+// pre-flight (contracts/discovery.md).
+func (i *Installer) DiscoverAll(ctx context.Context, req Request, opts discovery.Options) (discovery.Result, error) {
+	material, err := i.materialize(ctx, req)
+	if err != nil {
+		return discovery.Result{}, err
+	}
+	if opts.RootID == "" {
+		opts.RootID = req.Ref.Repo
+	}
+	return discovery.DiscoverAll(material, opts)
 }
 
 // materialize returns a directory holding the source tree: the local path for

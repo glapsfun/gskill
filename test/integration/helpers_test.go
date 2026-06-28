@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/agent"
@@ -50,15 +51,34 @@ func readFile(t *testing.T, path string) []byte {
 	return data
 }
 
-// localSkillDir creates a plain (non-git) local skill directory named name.
+// localSkillDir creates a plain (non-git) local skill directory whose folder
+// name is the skill identity (folder-identity model). The returned path is the
+// skill directory itself, so `add <dir>` discovers a single root skill keyed by
+// name.
 func localSkillDir(t *testing.T, name string) string {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(validSkill(name)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// skillFolder derives the folder name for a skill body: its frontmatter name,
+// or "skill" when absent. Skills live in a folder named for their identity.
+func skillFolder(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "name:") {
+			if n := strings.TrimSpace(strings.TrimPrefix(line, "name:")); n != "" {
+				return n
+			}
+		}
+	}
+	return "skill"
 }
 
 // newProject creates a project dir with a Claude Code marker so detection works.
@@ -72,7 +92,8 @@ func newProject(t *testing.T) string {
 	return root
 }
 
-// gitRepo creates a local git repo with a skill at subdir "skill" containing
+// gitRepo creates a local git repo with a skill in a subdir named for the
+// skill's identity (its frontmatter name, or "skill" when absent) containing
 // skillBody, an initial commit, and the given tags. It returns the repo path.
 func gitRepo(t *testing.T, skillBody string, tags ...string) string {
 	t.Helper()
@@ -84,7 +105,7 @@ func gitRepo(t *testing.T, skillBody string, tags ...string) string {
 	repo := t.TempDir()
 	gitRun(t, repo, "init", "--quiet", "-b", "main")
 
-	skillDir := filepath.Join(repo, "skill")
+	skillDir := filepath.Join(repo, skillFolder(skillBody))
 	if err := os.MkdirAll(skillDir, 0o750); err != nil {
 		t.Fatal(err)
 	}

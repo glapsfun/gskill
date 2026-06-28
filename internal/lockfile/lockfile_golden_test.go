@@ -45,10 +45,10 @@ func sampleLockfile() *lockfile.Lockfile {
 		Installation: lockfile.Installation{
 			Scope:  "project",
 			Mode:   "symlink",
-			Agents: []string{"claude-code", "codex"},
+			Agents: []string{"claude", "codex"},
 			Targets: map[string]string{
-				"claude-code": ".claude/skills/kubernetes-expert",
-				"codex":       ".codex/skills/kubernetes-expert",
+				"claude": ".claude/skills/kubernetes-expert",
+				"codex":  ".codex/skills/kubernetes-expert",
 			},
 		},
 		Provenance: lockfile.Provenance{Trust: "unverified"},

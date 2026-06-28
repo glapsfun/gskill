@@ -139,3 +139,55 @@ func TestParse_CompatibilityObject(t *testing.T) {
 		t.Error("compatibility object not captured")
 	}
 }
+
+func TestParseLenient_MissingNameIsAllowed(t *testing.T) {
+	t.Parallel()
+
+	content := "---\ndescription: A skill whose name comes from its folder.\n---\nbody\n"
+	doc, err := metadata.ParseLenient([]byte(content))
+	if err != nil {
+		t.Fatalf("ParseLenient: unexpected error: %v", err)
+	}
+	if doc.Frontmatter.Name != "" {
+		t.Errorf("Name = %q, want empty", doc.Frontmatter.Name)
+	}
+	if doc.Frontmatter.Description == "" {
+		t.Error("description not captured")
+	}
+}
+
+func TestParseLenient_MissingDescriptionIsError(t *testing.T) {
+	t.Parallel()
+
+	content := "---\nname: broken\n---\nbody\n"
+	if _, err := metadata.ParseLenient([]byte(content)); err == nil {
+		t.Error("expected error for missing description")
+	}
+}
+
+func TestParseLenient_MalformedYAMLIsError(t *testing.T) {
+	t.Parallel()
+
+	content := "---\nname: [unclosed\n---\nbody\n"
+	if _, err := metadata.ParseLenient([]byte(content)); err == nil {
+		t.Error("expected error for malformed YAML")
+	}
+}
+
+func TestParseLenient_InvalidNameStillRejected(t *testing.T) {
+	t.Parallel()
+
+	content := "---\nname: Not_Kebab\ndescription: d\n---\nbody\n"
+	if _, err := metadata.ParseLenient([]byte(content)); err == nil {
+		t.Error("expected error: a present name must still be kebab-case")
+	}
+}
+
+func TestParse_StillRejectsMissingName(t *testing.T) {
+	t.Parallel()
+
+	content := "---\ndescription: d\n---\nbody\n"
+	if _, err := metadata.Parse([]byte(content)); err == nil {
+		t.Error("strict Parse must still require name")
+	}
+}

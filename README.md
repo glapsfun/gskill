@@ -54,6 +54,12 @@ cosign-signed with SBOMs and build-provenance attestations; see
 gskill init                               # scaffold gskill.toml + .gskill/
 gskill add github.com/owner/repo/skill    # resolve, install, lock
 gskill add ./local/skill --agent codex    # install a local skill into one agent
+gskill add github.com/openai/skills --skill code-review   # pick one of many
+gskill add github.com/openai/skills --skill '*'           # install all valid skills
+gskill add github.com/openai/skills --list                # list skills, install nothing
+gskill source list github.com/openai/skills   # enumerate skills in a source
+gskill source check github.com/openai/skills  # report invalid/duplicate skills (exit 3)
+gskill find kubernetes --owner glapsfun        # search a GitHub owner's repos
 gskill install --frozen-lockfile          # reproduce exactly from gskill.lock
 gskill verify                             # re-hash installed content vs the lock
 gskill check --fail-on-drift              # fast CI drift gate

@@ -33,13 +33,20 @@ Add and install a new skill.
 | Flag | Type | Description |
 | --- | --- | --- |
 | `--agent` | []string | Target agent ID (repeatable). |
+| `--all` | bool | Select every valid discovered skill. |
 | `--commit` | string | Explicit commit SHA to pin. |
 | `--copy` | bool | Copy instead of symlinking. |
 | `--exact` | bool | Pin to the exact resolved version. |
+| `--exclude` | []string | Skip skills whose in-repo path matches this glob (repeatable). |
 | `--force` | bool | Overwrite an existing declaration and re-resolve. |
 | `--global` | bool | Install into the user-global location. |
+| `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
+| `--list` | bool | List discovered skills without installing. |
+| `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
+| `--path` | string | In-repo path disambiguator for a duplicated --skill. |
 | `--project` | bool | Install into the project (default). |
 | `--ref` | string | Branch or tag to track. |
+| `--skill` | []string | Select a discovered skill by name (repeatable; '*' selects all; name@path disambiguates). |
 | `--symlink` | bool | Symlink instead of copying (default). |
 | `--version` | string | Semver constraint (e.g. ^2.0.0). |
 
@@ -121,6 +128,20 @@ Show manifest/lock/disk differences.
 Check the environment and declared requirements.
 
 
+## `find`
+
+Search for skills in a source, a GitHub owner, or configured repositories.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `query` | yes | Keyword to search for (matches name and description). |
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--owner` | string | Search a GitHub user/org's repositories. |
+| `--source` | string | Search within one source. |
+
+
 ## `info`
 
 Show details for one skill.
@@ -178,6 +199,60 @@ Uninstall skills and clean up.
 ## `repair`
 
 Re-materialize broken installs and clean up staging.
+
+
+## `source`
+
+Inspect a skill source (list/inspect/check) without installing.
+
+
+## `source check`
+
+Report invalid and duplicate skills in a source.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `source` | yes | Skill source: git shorthand, URL, or local path. |
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--exclude` | []string | Skip skills whose in-repo path matches this glob (repeatable). |
+| `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
+| `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
+| `--ref` | string | Branch or tag to scan. |
+
+
+## `source inspect`
+
+Show one skill's metadata, path, and diagnostics.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `source` | yes | Skill source: git shorthand, URL, or local path. |
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--exclude` | []string | Skip skills whose in-repo path matches this glob (repeatable). |
+| `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
+| `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
+| `--ref` | string | Branch or tag to scan. |
+| `--skill` | string | Skill to inspect (name or name@path). |
+
+
+## `source list`
+
+List all skills discovered in a source.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `source` | yes | Skill source: git shorthand, URL, or local path. |
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--exclude` | []string | Skip skills whose in-repo path matches this glob (repeatable). |
+| `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
+| `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
+| `--ref` | string | Branch or tag to scan. |
 
 
 ## `sync`

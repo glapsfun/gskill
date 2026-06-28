@@ -17,7 +17,7 @@ func TestGlobalScope_InstallsToUserGlobalLocation(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
 		t.Fatalf("init: %s", stderr)
 	}
-	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--global", "--agent", "claude-code"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--global", "--agent", "claude"); code != 0 {
 		t.Fatalf("add --global: %s", stderr)
 	}
 

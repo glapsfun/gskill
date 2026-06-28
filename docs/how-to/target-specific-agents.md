@@ -6,7 +6,7 @@ your user-global location.
 ## Before you start
 
 - A project with at least one supported agent marker, or the intent to target an agent explicitly.
-- Supported agent IDs: `claude-code`, `codex`, `cursor`, `gemini-cli` (see
+- Supported agent IDs: `claude`, `codex`, `cursor`, `gemini-cli` (see
   [Supported agents](../reference/agents.md)).
 
 ## Choose agents
@@ -16,7 +16,7 @@ your user-global location.
 gskill add ./skill --agent codex
 
 # Install into several (repeat --agent):
-gskill add ./skill --agent claude-code --agent cursor
+gskill add ./skill --agent claude --agent cursor
 ```
 
 If you pass no `--agent`, GSKILL installs into the agents it detects in the project (via their marker
