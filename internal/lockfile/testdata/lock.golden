@@ -47,9 +47,14 @@
           "claude",
           "codex"
         ],
+        "active_path": ".agents/skills/kubernetes-expert",
         "targets": {
           "claude": ".claude/skills/kubernetes-expert",
           "codex": ".codex/skills/kubernetes-expert"
+        },
+        "modes": {
+          "claude": "symlink",
+          "codex": "symlink"
         }
       },
       "provenance": {

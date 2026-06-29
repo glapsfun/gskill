@@ -2,9 +2,10 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 
 	"github.com/glapsfun/gskill/internal/installer"
-	"github.com/glapsfun/gskill/internal/lockfile"
 )
 
 // RepairResult reports a repair run.
@@ -31,11 +32,22 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 		if err != nil {
 			return err
 		}
+		storeRoot, err := filepath.Abs(p.store.Root())
+		if err != nil {
+			return fmt.Errorf("resolve store root: %w", err)
+		}
 		for _, name := range sortedKeys(lf.Skills) {
 			locked := lf.Skills[name]
-			if skillHealthy(root, name, locked) {
+			h, hErr := a.evaluateSkill(p, name, locked, storeRoot, true)
+			if hErr != nil {
+				return hErr
+			}
+			if h.Healthy() {
 				continue
 			}
+			// Re-materialize the broken rungs (store → active → agent targets) from
+			// the locked revision, never re-resolving. A corrupt store fails closed
+			// on the content-hash check (exit 6).
 			ireq, reqErr := a.frozenRequest(p, name, locked, InstallRequest{Root: root})
 			if reqErr != nil {
 				return reqErr
@@ -51,9 +63,4 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 		return RepairResult{}, err
 	}
 	return out, nil
-}
-
-// skillHealthy reports whether every target of a locked skill verifies.
-func skillHealthy(root, name string, locked lockfile.LockedSkill) bool {
-	return verifySkill(root, name, locked).OK
 }

@@ -43,12 +43,17 @@ func sampleLockfile() *lockfile.Lockfile {
 			MCP:         []string{},
 		},
 		Installation: lockfile.Installation{
-			Scope:  "project",
-			Mode:   "symlink",
-			Agents: []string{"claude", "codex"},
+			Scope:      "project",
+			Mode:       "symlink",
+			Agents:     []string{"claude", "codex"},
+			ActivePath: ".agents/skills/kubernetes-expert",
 			Targets: map[string]string{
 				"claude": ".claude/skills/kubernetes-expert",
 				"codex":  ".codex/skills/kubernetes-expert",
+			},
+			Modes: map[string]string{
+				"claude": "symlink",
+				"codex":  "symlink",
 			},
 		},
 		Provenance: lockfile.Provenance{Trust: "unverified"},

@@ -1,0 +1,39 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/glapsfun/gskill/internal/app"
+)
+
+// unlinkCmd detaches a single agent from a skill, retaining shared content
+// unless --prune.
+type unlinkCmd struct {
+	Skill string `arg:"" help:"The installed skill to unlink an agent from."`
+	Agent string `required:"" help:"The agent ID to detach."`
+	Prune bool   `help:"If this was the last agent, also remove the skill, active entry, and store content."`
+}
+
+// Run executes `gskill unlink`.
+func (c unlinkCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+	res, err := a.Unlink(ctx, string(root), c.Skill, c.Agent, c.Prune)
+	if err != nil {
+		return err
+	}
+
+	human := fmt.Sprintf("Unlinked %s from %s; %d agent(s) remain", c.Agent, c.Skill, len(res.RemainingAgents))
+	switch {
+	case res.Pruned:
+		human = fmt.Sprintf("Unlinked %s from %s and pruned the skill (no agents remain)", c.Agent, c.Skill)
+	case res.Unreferenced:
+		human = fmt.Sprintf("Unlinked %s from %s; skill retained but unreferenced (run with --prune to remove)", c.Agent, c.Skill)
+	}
+	return out.Result(human, map[string]any{
+		"skill":            res.Skill,
+		"unlinked_agent":   res.UnlinkedAgent,
+		"remaining_agents": res.RemainingAgents,
+		"pruned":           res.Pruned,
+		"unreferenced":     res.Unreferenced,
+	})
+}
