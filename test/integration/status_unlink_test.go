@@ -125,6 +125,26 @@ func TestUnlink_PrunesLastAgent(t *testing.T) {
 	}
 }
 
+// TestUnlink_HalfPresentSkillIsLockMismatch covers Copilot's review: a skill
+// present in only the manifest (declared, never installed/locked) must not be
+// unlinked from a zero-value lock entry — it is a lock mismatch (exit 4).
+func TestUnlink_HalfPresentSkillIsLockMismatch(t *testing.T) {
+	t.Parallel()
+	proj := newProject(t)
+	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
+		t.Fatalf("init: %s", stderr)
+	}
+	// Declare a skill in the manifest without installing it (no lock entry).
+	manifestBody := "schema_version = 1\n\n[skills.demo]\nsource = \"github.com/org/repo\"\nagents = [\"claude\"]\n"
+	if err := os.WriteFile(filepath.Join(proj, "gskill.toml"), []byte(manifestBody), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	if _, _, code := runGskill(t, proj, "unlink", "demo", "--agent", "claude"); code != 4 {
+		t.Errorf("unlink of a half-present skill exit = %d, want 4 (lock mismatch)", code)
+	}
+}
+
 // TestUnlink_UsageErrors covers T038: missing --agent (exit 2), unknown agent
 // (exit 9), agent not declared for the skill (exit 3).
 func TestUnlink_UsageErrors(t *testing.T) {

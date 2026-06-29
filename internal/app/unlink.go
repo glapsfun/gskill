@@ -54,8 +54,14 @@ func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune boo
 func (a *App) unlinkOne(p *project, m *manifest.Manifest, lf *lockfile.Lockfile, skill, agentID string, prune bool, out *UnlinkResult) error {
 	locked, inLock := lf.Skills[skill]
 	ms, inManifest := m.Skills[skill]
-	if !inLock && !inManifest {
+	switch {
+	case !inLock && !inManifest:
 		return fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, skill)
+	case !inLock || !inManifest:
+		// A half-present skill would otherwise have its missing side written back
+		// from a zero value, corrupting the manifest or lockfile.
+		return fmt.Errorf("%w: skill %q is out of sync between the manifest and lockfile; run 'gskill sync' (or 'gskill lock') first",
+			errs.ErrLockMismatch, skill)
 	}
 
 	current := installedAgentIDs(lf, skill, ms)

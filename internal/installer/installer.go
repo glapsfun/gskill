@@ -254,7 +254,7 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 
 	for idx, ag := range req.Agents {
 		dest := i.targetDir(ag, req, name)
-		usedMode, err := activateAgent(linkTarget, copySource, dest, wantCopy(req.ModePref, ag))
+		usedMode, err := activateAgent(linkTarget, copySource, dest, agentActivation(req.ModePref, ag))
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
 		}
@@ -291,18 +291,40 @@ func (i *Installer) recordTarget(req Request, dest string) string {
 	return rel
 }
 
-// wantCopy reports whether activation must copy rather than symlink.
-func wantCopy(modePref string, ag agent.Agent) bool {
-	return modePref == "copy" || !ag.SupportsSymlinks()
+// activation is how an agent target is materialized.
+type activation int
+
+const (
+	// activateAuto prefers a symlink and falls back to a copy when symlinks are
+	// unsupported (the default).
+	activateAuto activation = iota
+	// activateCopy always copies (forced by --copy or an agent that rejects symlinks).
+	activateCopy
+	// activateSymlinkStrict requires a symlink (--symlink) and fails rather than
+	// silently copying, so symlink-policy failures surface instead of being masked.
+	activateSymlinkStrict
+)
+
+// agentActivation maps the requested mode preference and the agent's capability
+// to a concrete activation strategy.
+func agentActivation(modePref string, ag agent.Agent) activation {
+	switch {
+	case modePref == PrefCopy || !ag.SupportsSymlinks():
+		return activateCopy
+	case modePref == PrefSymlink:
+		return activateSymlinkStrict
+	default:
+		return activateAuto
+	}
 }
 
 // activateAgent places a skill at an agent's dest, reporting the mode used.
 // A symlinked target points at linkTarget (the active entry, or the store for
-// global scope); a copied target (forced, or a symlink fallback) reads the
-// resolved store content from copySource, never the active symlink, so copies
-// hold real content rather than a recreated link.
-func activateAgent(linkTarget, copySource, dest string, forceCopy bool) (Mode, error) {
-	if forceCopy {
+// global scope); a copied target reads the resolved store content from
+// copySource, never the active symlink, so copies hold real content rather than
+// a recreated link.
+func activateAgent(linkTarget, copySource, dest string, mode activation) (Mode, error) {
+	if mode == activateCopy {
 		if err := clearAndCopy(copySource, dest); err != nil {
 			return "", err
 		}
@@ -318,8 +340,12 @@ func activateAgent(linkTarget, copySource, dest string, forceCopy bool) (Mode, e
 	if err != nil {
 		return "", fmt.Errorf("resolve link target: %w", err)
 	}
-	if linkErr := os.Symlink(abs, dest); linkErr == nil {
+	linkErr := os.Symlink(abs, dest)
+	if linkErr == nil {
 		return ModeSymlink, nil
+	}
+	if mode == activateSymlinkStrict {
+		return "", fmt.Errorf("%w: --symlink requested but linking %s failed: %w", errs.ErrPartialInstall, dest, linkErr)
 	}
 	if err := fsutil.CopyDir(copySource, dest); err != nil {
 		return "", fmt.Errorf("copy fallback: %w", err)
