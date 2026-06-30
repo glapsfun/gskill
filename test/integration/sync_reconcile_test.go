@@ -1,11 +1,101 @@
 package integration_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestInstall_BackfillsIncompleteManifest covers 008 FR-009: a hand-authored
+// manifest with only source+path is brought to the always-present form (version
+// pin + agent set) by `install`, and a re-run is byte-identical (idempotent).
+func TestInstall_BackfillsIncompleteManifest(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0", "v1.2.0")
+	proj := newProject(t)
+	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
+		t.Fatalf("init: %s", stderr)
+	}
+	body := "schema_version = 1\n\n[skills.demo]\nsource = \"" + repo + "\"\npath = \"demo\"\n"
+	if err := os.WriteFile(filepath.Join(proj, "gskill.toml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("install: %s", stderr)
+	}
+	demo := section(string(readFile(t, filepath.Join(proj, "gskill.toml"))), "[skills.demo]")
+	if !strings.Contains(demo, "version = '^1.2.0'") {
+		t.Errorf("install did not backfill version pin:\n%s", demo)
+	}
+	if !strings.Contains(demo, "agents = ['claude']") {
+		t.Errorf("install did not backfill agent set:\n%s", demo)
+	}
+
+	// Idempotent: a second install changes neither file.
+	tomlBefore := readFile(t, filepath.Join(proj, "gskill.toml"))
+	lockBefore := readFile(t, filepath.Join(proj, "gskill.lock"))
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("second install: %s", stderr)
+	}
+	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.toml")), tomlBefore) {
+		t.Error("manifest rewritten on idempotent re-install")
+	}
+	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.lock")), lockBefore) {
+		t.Error("lockfile rewritten on idempotent re-install")
+	}
+}
+
+// TestSync_BackfillsLegacyManifestFromLock covers 008 FR-009 for the t1-style
+// case: a complete lock but an incomplete manifest (no version) is migrated to
+// the pinned form by sync using the LOCKED resolution (no re-resolve), and a
+// second sync is a byte-identical no-op.
+func TestSync_BackfillsLegacyManifestFromLock(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0", "v1.2.0")
+	proj := newProject(t)
+	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
+		t.Fatalf("init: %s", stderr)
+	}
+	// Bare add writes a complete lock; then strip the manifest back to source+path
+	// to simulate a manifest produced by a pre-008 build.
+	if _, stderr, code := runGskill(t, proj, "add", repo); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	body := "schema_version = 1\n\n[skills.demo]\nsource = \"" + repo + "\"\npath = \"demo\"\n"
+	if err := os.WriteFile(filepath.Join(proj, "gskill.toml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+		t.Fatalf("migrating sync: %s", stderr)
+	}
+	demo := section(string(readFile(t, filepath.Join(proj, "gskill.toml"))), "[skills.demo]")
+	if !strings.Contains(demo, "version = '^1.2.0'") || !strings.Contains(demo, "agents = ['claude']") {
+		t.Errorf("sync did not migrate legacy manifest:\n%s", demo)
+	}
+
+	// Second sync is a byte-identical no-op.
+	tomlBefore := readFile(t, filepath.Join(proj, "gskill.toml"))
+	lockBefore := readFile(t, filepath.Join(proj, "gskill.lock"))
+	stdout, stderr, code := runGskill(t, proj, "--json", "sync")
+	if code != 0 {
+		t.Fatalf("second sync: %s", stderr)
+	}
+	if !strings.Contains(stdout, `"up_to_date": true`) {
+		t.Errorf("second sync not up to date:\n%s", stdout)
+	}
+	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.toml")), tomlBefore) {
+		t.Error("manifest rewritten on idempotent re-sync")
+	}
+	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.lock")), lockBefore) {
+		t.Error("lockfile rewritten on idempotent re-sync")
+	}
+}
 
 // writeManifest writes a gskill.toml declaring one skill from source for the
 // given agents.
