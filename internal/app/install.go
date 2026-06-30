@@ -115,6 +115,12 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		return AddResult{}, err
 	}
 
+	// Adding an agent to an already-installed skill is a local relink: reuse the
+	// locked revision and existing store, with no resolve or network (FR-001).
+	if res, handled, laErr := a.tryLocalAgentAdd(ctx, p, m, req); handled {
+		return res, laErr
+	}
+
 	ref, err := source.Parse(req.Source)
 	if err != nil {
 		return AddResult{}, err
@@ -157,6 +163,143 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		return AddResult{}, err
 	}
 	return a.installSelected(ctx, p, m, req, ref, rev, ireq, inst, selected, warnings)
+}
+
+// tryLocalAgentAdd handles a pure agent-add — adding agents to one or more
+// already-locked skills from the same source — entirely from the lockfile and
+// store, with no resolver or network call (FR-001, review F7). It returns
+// handled=true when it took ownership of the request (success or a conflict
+// error); handled=false means the caller should fall through to the normal
+// resolve+install path.
+func (a *App) tryLocalAgentAdd(ctx context.Context, p *project, m *manifest.Manifest, req AddRequest) (AddResult, bool, error) {
+	if disqualifiesLocalAdd(req) {
+		return AddResult{}, false, nil
+	}
+	lf, err := loadOrNewLock(p.lockPath)
+	if err != nil {
+		return AddResult{}, false, nil //nolint:nilerr // fall back to the normal path on a lock read error
+	}
+	targets, ok := localAgentAddTargets(m, lf, req)
+	if !ok {
+		return AddResult{}, false, nil
+	}
+
+	agents, err := a.targetAgents(ctx, req.Root, req.Agents, m.Defaults.Agents)
+	if err != nil {
+		return AddResult{}, true, err
+	}
+	reqIDs := agentIDs(agents)
+	if !anyNewAgent(lf, targets, reqIDs) {
+		return AddResult{}, true, conflictErr(targets[0])
+	}
+
+	res, err := a.materializeLocalAgentAdd(ctx, p, m, targets, reqIDs)
+	return res, true, err
+}
+
+// disqualifiesLocalAdd reports whether a request can't be a pure agent-add (it
+// changes the pin, only lists, or selects everything).
+func disqualifiesLocalAdd(req AddRequest) bool {
+	return req.Force || req.ListOnly || req.All ||
+		req.Version != "" || req.Ref != "" || req.Commit != ""
+}
+
+// anyNewAgent reports whether any target skill gains a not-yet-installed agent.
+func anyNewAgent(lf *lockfile.Lockfile, targets, reqIDs []string) bool {
+	for _, name := range targets {
+		if len(subtract(reqIDs, lf.Skills[name].Installation.Agents)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// materializeLocalAgentAdd relinks the new agents for every target skill under
+// the project lock, with no resolution.
+func (a *App) materializeLocalAgentAdd(ctx context.Context, p *project, m *manifest.Manifest, targets, reqIDs []string) (AddResult, error) {
+	res := AddResult{}
+	err := a.withLock(ctx, p, func() error {
+		lf, lockErr := loadOrNewLock(p.lockPath)
+		if lockErr != nil {
+			return lockErr
+		}
+		for _, name := range targets {
+			if relErr := a.relinkAgents(ctx, p, m, lf, name, reqIDs, &res); relErr != nil {
+				return relErr
+			}
+		}
+		if saveErr := manifest.Save(p.manifestPath, m); saveErr != nil {
+			return saveErr
+		}
+		return lockfile.Save(p.lockPath, lf)
+	})
+	return res, err
+}
+
+// relinkAgents activates the not-yet-installed agents for one locked skill from
+// the lock (no resolve) and merges the result into the manifest and lockfile.
+func (a *App) relinkAgents(ctx context.Context, p *project, m *manifest.Manifest, lf *lockfile.Lockfile, name string, reqIDs []string, res *AddResult) error {
+	locked := lf.Skills[name]
+	newIDs := subtract(reqIDs, locked.Installation.Agents)
+	if len(newIDs) == 0 {
+		return nil
+	}
+	newAgents, err := a.agentsByID(newIDs)
+	if err != nil {
+		return err
+	}
+	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root})
+	if err != nil {
+		return err
+	}
+	mergeAgentInstall(&locked, result)
+	lf.Skills[name] = locked
+
+	ms := m.Skills[name]
+	ms.Agents = locked.Installation.Agents
+	m.Skills[name] = ms
+
+	res.Installed = append(res.Installed, InstalledSkill{
+		Name: name, Path: ms.Path, ContentHash: locked.Resolved.ContentHash, Targets: result.Targets,
+	})
+	return nil
+}
+
+// localAgentAddTargets returns the already-locked skill names a pure agent-add
+// targets, or ok=false when the request is not a pure agent-add (globby/`*`/path
+// selectors, a source that is not uniquely locked, or any target whose source
+// differs from the request).
+func localAgentAddTargets(m *manifest.Manifest, lf *lockfile.Lockfile, req AddRequest) ([]string, bool) {
+	var names []string
+	if len(req.Selectors) > 0 {
+		for _, sel := range req.Selectors {
+			if strings.ContainsAny(sel, "*@/") {
+				return nil, false
+			}
+			names = append(names, sel)
+		}
+	} else {
+		var cands []string
+		for name := range lf.Skills {
+			if ms, in := m.Skills[name]; in && ms.Source == req.Source {
+				cands = append(cands, name)
+			}
+		}
+		if len(cands) != 1 {
+			return nil, false
+		}
+		names = cands
+	}
+
+	for _, name := range names {
+		ms, inM := m.Skills[name]
+		_, inL := lf.Skills[name]
+		if !inM || !inL || ms.Source != req.Source {
+			return nil, false
+		}
+	}
+	sort.Strings(names)
+	return names, true
 }
 
 // resolveSelection turns the discovered skills into the set to install, honoring
@@ -206,19 +349,16 @@ func (a *App) chooseInteractive(req AddRequest, candidates []discovery.Discovere
 	return chosen, nil
 }
 
-// installSelected installs the chosen skills atomically: it pre-checks every
-// manifest-key collision, then stages and activates each skill, rolling back
-// already-activated targets on any failure, and commits the manifest and
-// lockfile only after all succeed (FR-046, research R8).
+// installSelected installs the chosen skills atomically. For a skill already
+// declared from the same source, a new target agent unions into the existing
+// install (reusing the one store + active entry and adding only the missing
+// agent target, FR-001..FR-005); the same skill with no new agent still
+// conflicts, and the same name from a different source is a collision (FR-029).
+// It stages and activates each skill, rolling back already-activated targets on
+// any failure, and commits the manifest and lockfile only after all succeed.
 func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manifest, req AddRequest, ref source.Ref, rev resolver.Revision, ireq installer.Request, inst *installer.Installer, selected []discovery.DiscoveredSkill, warnings []string) (AddResult, error) {
-	for _, s := range selected {
-		if _, exists := m.Skills[s.ID]; exists && !req.Force {
-			return AddResult{}, fmt.Errorf("%w: skill %q already declared; use 'gskill update %s' or --force",
-				errs.ErrInvalidManifest, s.ID, s.ID)
-		}
-	}
-
 	res := AddResult{Warnings: append([]string(nil), warnings...)}
+	reqIDs := agentIDs(ireq.Agents)
 	err := a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
@@ -232,17 +372,32 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 		}
 
 		for _, s := range selected {
+			plan, planErr := a.planAdd(m, lf, s.ID, req, reqIDs)
+			if planErr != nil {
+				rollback()
+				return planErr
+			}
 			ir := ireq
 			ir.Name = s.ID
 			ir.Path = s.RepoPath
+			ir.Agents = plan.activate
 			result, instErr := inst.Install(ctx, ir)
 			if instErr != nil {
 				rollback()
 				return instErr
 			}
 			activated = append(activated, result)
-			m.Skills[s.ID] = manifestEntry(req, s.RepoPath)
-			lf.Skills[s.ID] = buildLockEntry(ref, rev, ir, result, m.Skills[s.ID])
+			if plan.mergeInto {
+				locked := lf.Skills[s.ID]
+				mergeAgentInstall(&locked, result)
+				lf.Skills[s.ID] = locked
+				ms := m.Skills[s.ID]
+				ms.Agents = plan.manifestIDs
+				m.Skills[s.ID] = ms
+			} else {
+				m.Skills[s.ID] = manifestEntry(req, s.RepoPath, plan.manifestIDs)
+				lf.Skills[s.ID] = buildLockEntry(ref, rev, ir, result, m.Skills[s.ID])
+			}
 			res.Installed = append(res.Installed, InstalledSkill{
 				Name: s.ID, Path: s.RepoPath, ContentHash: result.ContentHash, Targets: result.Targets,
 			})
@@ -263,6 +418,80 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 		return AddResult{}, err
 	}
 	return res, nil
+}
+
+// addPlan is the agent set to activate now for one selected skill plus the agent
+// IDs to persist in the manifest. mergeInto marks an agent-add (the skill is
+// already installed), so only the new agents are activated and the result is
+// merged into the existing lock entry rather than replacing it.
+type addPlan struct {
+	activate    []agent.Agent // agents to activate now (only the new ones for an agent-add)
+	manifestIDs []string      // agent IDs to record in the manifest entry
+	mergeInto   bool
+}
+
+// planAdd decides how a selected skill installs given the existing manifest and
+// lockfile state, failing closed on a genuine conflict or cross-source collision.
+func (a *App) planAdd(m *manifest.Manifest, lf *lockfile.Lockfile, id string, req AddRequest, reqIDs []string) (addPlan, error) {
+	existing, exists := m.Skills[id]
+	if !exists || req.Force {
+		ags, err := a.agentsByID(reqIDs)
+		return addPlan{activate: ags, manifestIDs: req.Agents}, err
+	}
+
+	if existing.Source != req.Source {
+		return addPlan{}, fmt.Errorf(
+			"%w: skill %q is already declared from a different source %q (name collision); use a different name or 'gskill remove %s' first",
+			errs.ErrInvalidManifest, id, existing.Source, id)
+	}
+
+	current := installedAgentIDs(lf, id, existing)
+	newOnes := subtract(reqIDs, current)
+	if len(newOnes) == 0 {
+		return addPlan{}, conflictErr(id)
+	}
+
+	// Activate only the new agents; the existing targets are untouched and the
+	// result is merged into the lock entry (FR-001..FR-005).
+	ags, err := a.agentsByID(newOnes)
+	return addPlan{activate: ags, manifestIDs: unionStrings(current, reqIDs), mergeInto: true}, err
+}
+
+// conflictErr reports an already-declared skill with no new agent to add.
+func conflictErr(id string) error {
+	return fmt.Errorf("%w: skill %q already declared; use 'gskill update %s' or --force",
+		errs.ErrInvalidManifest, id, id)
+}
+
+// mergeAgentInstall folds an agent-add install result into an existing lock
+// entry, unioning agents and merging the per-agent target/mode records while
+// preserving the resolved revision, source, and active path.
+func mergeAgentInstall(locked *lockfile.LockedSkill, result installer.Result) {
+	locked.Installation.Agents = unionStrings(locked.Installation.Agents, result.Agents)
+	if locked.Installation.Targets == nil {
+		locked.Installation.Targets = make(map[string]string, len(result.Targets))
+	}
+	for k, v := range result.Targets {
+		locked.Installation.Targets[k] = v
+	}
+	if locked.Installation.Modes == nil {
+		locked.Installation.Modes = make(map[string]string, len(result.Modes))
+	}
+	for k, v := range result.Modes {
+		locked.Installation.Modes[k] = v
+	}
+	if locked.Installation.ActivePath == "" {
+		locked.Installation.ActivePath = result.ActivePath
+	}
+}
+
+// installedAgentIDs returns the agents a skill is currently installed for,
+// preferring the lockfile's recorded set and falling back to the manifest.
+func installedAgentIDs(lf *lockfile.Lockfile, id string, ms manifest.Skill) []string {
+	if locked, ok := lf.Skills[id]; ok && len(locked.Installation.Agents) > 0 {
+		return locked.Installation.Agents
+	}
+	return ms.Agents
 }
 
 // removeTargets best-effort removes a skill's activated directories during an
@@ -495,17 +724,59 @@ func (a *App) withLock(ctx context.Context, p *project, fn func() error) error {
 
 // manifestEntry builds the manifest record for an add (intent only). The path
 // is the selected skill's in-repo location, so the manifest pins which skill
-// inside the source was installed (FR-028/FR-030).
-func manifestEntry(req AddRequest, repoPath string) manifest.Skill {
+// inside the source was installed (FR-028/FR-030). agentIDs is the agent set to
+// declare: the raw --agent values for a fresh add, or the unioned set when an
+// agent is added to an already-declared skill.
+func manifestEntry(req AddRequest, repoPath string, agentIDs []string) manifest.Skill {
 	return manifest.Skill{
 		Source:      req.Source,
 		Path:        repoPath,
 		Version:     req.Version,
 		Ref:         req.Ref,
 		Commit:      req.Commit,
-		Agents:      req.Agents,
+		Agents:      agentIDs,
 		InstallMode: req.Mode,
 	}
+}
+
+// agentIDs extracts the IDs of the given agents in order.
+func agentIDs(agents []agent.Agent) []string {
+	ids := make([]string, 0, len(agents))
+	for _, ag := range agents {
+		ids = append(ids, ag.ID())
+	}
+	return ids
+}
+
+// unionStrings returns the ordered union of a and b, preserving a's order then
+// appending new values from b.
+func unionStrings(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, vs := range [][]string{a, b} {
+		for _, v := range vs {
+			if !seen[v] {
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+// subtract returns the values in a that are not in b.
+func subtract(a, b []string) []string {
+	exclude := make(map[string]bool, len(b))
+	for _, v := range b {
+		exclude[v] = true
+	}
+	var out []string
+	for _, v := range a {
+		if !exclude[v] {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // buildLockEntry assembles the lockfile record from resolution + install reality.
@@ -541,7 +812,8 @@ func buildLockEntry(ref source.Ref, rev resolver.Revision, ireq installer.Reques
 		},
 		Installation: lockfile.Installation{
 			Scope: string(ireq.Scope), Mode: string(result.Mode),
-			Agents: result.Agents, Targets: result.Targets, Modes: result.Modes,
+			Agents: result.Agents, ActivePath: result.ActivePath,
+			Targets: result.Targets, Modes: result.Modes,
 		},
 		Provenance: lockfile.Provenance{FetchedAt: now, UpdatedAt: now, Trust: "checksum-ok"},
 	}
@@ -605,25 +877,51 @@ func loadOrNewLock(path string) (*lockfile.Lockfile, error) {
 	return lockfile.Load(path)
 }
 
-// ensureGitignore appends a .gskill/ ignore hint, returning whether it changed.
+// gskillIgnorePatterns are the gskill-managed, reproducible artifacts kept out
+// of version control: the content store/cache/locks (.gskill/) and the active
+// skill layer (.agents/). The committed manifest + lockfile regenerate both via
+// `gskill sync` (FR-007, clarification: gitignore both, regen on sync).
+var gskillIgnorePatterns = []string{".gskill/", ".agents/"}
+
+// ensureGitignore appends any missing gskill ignore hints, returning whether it
+// changed the file.
 func ensureGitignore(root string) (bool, error) {
 	path := filepath.Join(root, ".gitignore")
 	existing, err := os.ReadFile(path) //nolint:gosec // project-root .gitignore
 	if err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("read .gitignore: %w", err)
 	}
-	if strings.Contains(string(existing), ".gskill/") {
+
+	content := string(existing)
+	changed := false
+	for _, pattern := range gskillIgnorePatterns {
+		if lineContains(content, pattern) {
+			continue
+		}
+		if content != "" && !strings.HasSuffix(content, "\n") {
+			content += "\n"
+		}
+		content += pattern + "\n"
+		changed = true
+	}
+	if !changed {
 		return false, nil
 	}
-	content := string(existing)
-	if content != "" && !strings.HasSuffix(content, "\n") {
-		content += "\n"
-	}
-	content += ".gskill/\n"
 	if err := fsutil.WriteFileAtomic(path, []byte(content), 0o600); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// lineContains reports whether content has pattern as a whole trimmed line, so
+// ".agents/" is not considered present merely because ".agents/skills" appears.
+func lineContains(content, pattern string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == pattern {
+			return true
+		}
+	}
+	return false
 }
 
 // sortedKeys returns the map keys in sorted order for deterministic iteration.
@@ -636,14 +934,15 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// modeOr returns the first non-empty install mode, defaulting to "symlink".
+// modeOr returns the first non-empty install-mode preference, defaulting to
+// "auto" (prefer symlink, fall back to copy) per FR-022/FR-023.
 func modeOr(values ...string) string {
 	for _, v := range values {
 		if v != "" {
 			return v
 		}
 	}
-	return "symlink"
+	return installer.DefaultModePref
 }
 
 // scopeOr maps an optional scope string to an installer.Scope, default project.

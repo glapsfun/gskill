@@ -75,6 +75,36 @@ func TestInstall_StagesAndActivates(t *testing.T) {
 	if got := res.Targets["claude"]; got != filepath.Join(".claude", "skills", "demo") {
 		t.Errorf("target = %q, want .claude/skills/demo", got)
 	}
+
+	// Three-hop chain: the active entry exists and links into the store, and the
+	// agent target is a symlink into the active entry (not directly into store).
+	if got := res.ActivePath; got != filepath.Join(".agents", "skills", "demo") {
+		t.Errorf("active path = %q, want .agents/skills/demo", got)
+	}
+	activeDir := filepath.Join(projectRoot, ".agents", "skills", "demo")
+	activeInfo, err := os.Lstat(activeDir)
+	if err != nil {
+		t.Fatalf("lstat active entry: %v", err)
+	}
+	if activeInfo.Mode()&os.ModeSymlink == 0 {
+		t.Error("active entry is not a symlink into the store")
+	} else if tgt, _ := os.Readlink(activeDir); !strings.Contains(tgt, string(filepath.Separator)+"store"+string(filepath.Separator)) {
+		t.Errorf("active entry links to %q, want a store path", tgt)
+	}
+
+	agentTarget := filepath.Join(projectRoot, ".claude", "skills", "demo")
+	agentInfo, err := os.Lstat(agentTarget)
+	if err != nil {
+		t.Fatalf("lstat agent target: %v", err)
+	}
+	if agentInfo.Mode()&os.ModeSymlink == 0 {
+		t.Error("agent target is not a symlink")
+	} else {
+		tgt, _ := os.Readlink(agentTarget)
+		if !strings.Contains(tgt, filepath.Join(".agents", "skills", "demo")) {
+			t.Errorf("agent target links to %q, want the active entry .agents/skills/demo", tgt)
+		}
+	}
 }
 
 // nestedSkill creates a source with one skill at skills/<folder> whose

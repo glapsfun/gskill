@@ -3,8 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
-	"os"
 
+	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
@@ -165,7 +165,7 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 		if lockErr != nil {
 			return lockErr
 		}
-		if rmErr := removeSkills(root, m, lf, names, &out); rmErr != nil {
+		if rmErr := a.removeSkills(p, m, lf, names, &out); rmErr != nil {
 			return rmErr
 		}
 
@@ -189,9 +189,9 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 	return out, nil
 }
 
-// removeSkills deletes the named skills from the manifest, lockfile, and agent
-// directories, recording the outcome in out.
-func removeSkills(root string, m *manifest.Manifest, lf *lockfile.Lockfile, names []string, out *RemoveResult) error {
+// removeSkills deletes the named skills from the manifest, lockfile, agent
+// directories (confined), and the active layer, recording the outcome in out.
+func (a *App) removeSkills(p *project, m *manifest.Manifest, lf *lockfile.Lockfile, names []string, out *RemoveResult) error {
 	for _, name := range names {
 		locked, inLock := lf.Skills[name]
 		_, inManifest := m.Skills[name]
@@ -200,10 +200,14 @@ func removeSkills(root string, m *manifest.Manifest, lf *lockfile.Lockfile, name
 			continue
 		}
 		if inLock {
-			for _, target := range locked.Installation.Targets {
-				if err := os.RemoveAll(resolveTarget(root, target)); err != nil {
+			scope := locked.Installation.Scope
+			for _, id := range sortedKeys(locked.Installation.Targets) {
+				if _, err := a.removeSafeTarget(p, scope, id, name, locked.Installation.Targets[id]); err != nil {
 					return fmt.Errorf("remove target for %q: %w", name, err)
 				}
+			}
+			if err := active.Remove(p.root, name); err != nil {
+				return fmt.Errorf("remove active for %q: %w", name, err)
 			}
 		}
 		delete(m.Skills, name)

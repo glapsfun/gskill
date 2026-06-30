@@ -83,8 +83,9 @@ type CheckReport struct {
 	HasDrift bool
 }
 
-// Check produces a fast, metadata-only drift report. With failOnDrift, any drift
-// returns exit 7 (FR-016, FR-017).
+// Check produces a drift report over the three-hop chain (store → active →
+// agent). With failOnDrift, any drift returns exit 7 (FR-016). A present-but-
+// corrupt store fails closed with exit 6 regardless of the flag (FR-018).
 func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckReport, error) {
 	p := openProject(root)
 	m := manifest.New()
@@ -100,18 +101,54 @@ func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckRepo
 		return CheckReport{}, err
 	}
 
+	health, err := a.healthByName(p, lf)
+	if err != nil {
+		return CheckReport{}, err
+	}
+
 	var report CheckReport
+	integrityFault := false
 	for _, name := range unionKeys(m.Skills, lf.Skills) {
-		status := classifySkill(p.root, name, m, lf)
+		status := chainStatus(p.root, name, m, lf, health[name])
 		report.Skills = append(report.Skills, SkillCheck{Name: name, Status: string(status)})
 		if status != integrity.DriftInstalled {
 			report.HasDrift = true
 		}
+		integrityFault = integrityFault || health[name].IntegrityFault()
+	}
+	if integrityFault {
+		return report, errs.ErrIntegrity
 	}
 	if failOnDrift && report.HasDrift {
 		return report, errs.ErrDrift
 	}
 	return report, nil
+}
+
+// chainStatus classifies a skill from manifest/lock metadata, then downgrades a
+// metadata-clean skill to drift when its three-hop chain is broken (e.g. a
+// dangling active link the lstat presence check cannot see).
+func chainStatus(root, name string, m *manifest.Manifest, lf *lockfile.Lockfile, h SkillHealth) integrity.DriftStatus {
+	status := classifySkill(root, name, m, lf)
+	if status == integrity.DriftInstalled && h.Name != "" && !h.Healthy() {
+		return integrity.DriftModified
+	}
+	return status
+}
+
+// healthByName evaluates the chain health of every locked skill, keyed by name.
+// It hash-verifies content so check fails closed (exit 6) on a tampered store or
+// a corrupt copy target, not just on structural drift.
+func (a *App) healthByName(p *project, lf *lockfile.Lockfile) (map[string]SkillHealth, error) {
+	healths, err := a.evaluateHealth(p, lf, true)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]SkillHealth, len(healths))
+	for _, h := range healths {
+		out[h.Name] = h
+	}
+	return out, nil
 }
 
 // classifySkill builds a SkillState from manifest/lock/fs and classifies it.

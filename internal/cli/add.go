@@ -26,8 +26,9 @@ type addCmd struct {
 	Force   bool     `help:"Overwrite an existing declaration and re-resolve."`
 	Global  bool     `help:"Install into the user-global location."`
 	Project bool     `help:"Install into the project (default)."`
-	Copy    bool     `help:"Copy instead of symlinking."`
-	Symlink bool     `help:"Symlink instead of copying (default)."`
+	Auto    bool     `xor:"installmode" help:"Prefer a symlink, fall back to a copy (default)."`
+	Copy    bool     `xor:"installmode" help:"Copy instead of linking."`
+	Symlink bool     `xor:"installmode" help:"Symlink, never copy."`
 
 	MaxDepth int      `name:"max-depth" help:"Maximum recursive scan depth (0 = unbounded)."`
 	Include  []string `help:"Only discover skills whose in-repo path matches this glob (repeatable)."`
@@ -45,7 +46,7 @@ func (c addCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRo
 		Agents:      c.Agent,
 		Force:       c.Force,
 		Scope:       scopeFlag(c.Global),
-		Mode:        modeFromFlags(c.Copy, c.Symlink),
+		Mode:        modeFromFlags(c.Copy, c.Symlink, c.Auto),
 		Selectors:   c.Skill,
 		All:         c.All,
 		Path:        c.Path,
@@ -149,13 +150,17 @@ func modeFlag(copyMode bool) string {
 	return ""
 }
 
-// modeFromFlags resolves --copy/--symlink to an install-mode string ("" default).
-func modeFromFlags(copyMode, symlinkMode bool) string {
+// modeFromFlags resolves --copy/--symlink/--auto to an install-mode preference
+// string ("" means default, which resolves to auto). The flags are mutually
+// exclusive at the parser level (kong xor), so at most one is set here.
+func modeFromFlags(copyMode, symlinkMode, autoMode bool) string {
 	switch {
 	case copyMode:
-		return string(installer.ModeCopy)
+		return installer.PrefCopy
 	case symlinkMode:
-		return string(installer.ModeSymlink)
+		return installer.PrefSymlink
+	case autoMode:
+		return installer.PrefAuto
 	default:
 		return ""
 	}

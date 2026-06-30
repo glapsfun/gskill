@@ -30,3 +30,17 @@ const (
 func (m Mode) Valid() bool {
 	return m == ModeSymlink || m == ModeCopy
 }
+
+// Mode-preference strings accepted on the command line and in the manifest.
+// PrefAuto is the default: it prefers a symlink and falls back to a copy where
+// symlinks are unsupported. Only ModeSymlink or ModeCopy is ever recorded as the
+// resolved mode — never "auto".
+const (
+	PrefAuto    = "auto"
+	PrefSymlink = "symlink"
+	PrefCopy    = "copy"
+)
+
+// DefaultModePref is the install-mode preference applied when neither the
+// command line nor the manifest specifies one (FR-022, FR-023).
+const DefaultModePref = PrefAuto

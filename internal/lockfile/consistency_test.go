@@ -60,6 +60,30 @@ func TestCheckConsistency_Disagreements(t *testing.T) {
 		m.Skills["demo"] = manifest.Skill{Source: "github.com/acme/demo", Version: "^2.0.0"}
 		assertMismatch(t, m, lf)
 	})
+
+	t.Run("declared agent not locked", func(t *testing.T) {
+		t.Parallel()
+		m, lf := consistentPair()
+		// Manifest adds codex without re-locking: a per-skill agent-set drift.
+		m.Skills["demo"] = manifest.Skill{Source: "github.com/acme/demo", Version: "^1.0.0", Agents: []string{"claude", "codex"}}
+		locked := lf.Skills["demo"]
+		locked.Installation.Agents = []string{"claude"}
+		lf.Skills["demo"] = locked
+		assertMismatch(t, m, lf)
+	})
+}
+
+func TestCheckConsistency_AgentSetAgrees(t *testing.T) {
+	t.Parallel()
+
+	m, lf := consistentPair()
+	m.Skills["demo"] = manifest.Skill{Source: "github.com/acme/demo", Version: "^1.0.0", Agents: []string{"claude"}}
+	locked := lf.Skills["demo"]
+	locked.Installation.Agents = []string{"claude", "codex"} // superset of declared is fine
+	lf.Skills["demo"] = locked
+	if err := lockfile.CheckConsistency(m, lf); err != nil {
+		t.Errorf("CheckConsistency = %v, want nil (locked agents superset of declared)", err)
+	}
 }
 
 func assertMismatch(t *testing.T, m *manifest.Manifest, lf *lockfile.Lockfile) {

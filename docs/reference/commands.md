@@ -34,8 +34,9 @@ Add and install a new skill.
 | --- | --- | --- |
 | `--agent` | []string | Target agent ID (repeatable). |
 | `--all` | bool | Select every valid discovered skill. |
+| `--auto` | bool | Prefer a symlink, fall back to a copy (default). |
 | `--commit` | string | Explicit commit SHA to pin. |
-| `--copy` | bool | Copy instead of symlinking. |
+| `--copy` | bool | Copy instead of linking. |
 | `--exact` | bool | Pin to the exact resolved version. |
 | `--exclude` | []string | Skip skills whose in-repo path matches this glob (repeatable). |
 | `--force` | bool | Overwrite an existing declaration and re-resolve. |
@@ -47,7 +48,7 @@ Add and install a new skill.
 | `--project` | bool | Install into the project (default). |
 | `--ref` | string | Branch or tag to track. |
 | `--skill` | []string | Select a discovered skill by name (repeatable; '*' selects all; name@path disambiguates). |
-| `--symlink` | bool | Symlink instead of copying (default). |
+| `--symlink` | bool | Symlink, never copy. |
 | `--version` | string | Semver constraint (e.g. ^2.0.0). |
 
 
@@ -255,18 +256,37 @@ List all skills discovered in a source.
 | `--ref` | string | Branch or tag to scan. |
 
 
+## `status`
+
+Show installed skills, their agents, modes, and per-target health.
+
+
 ## `sync`
 
-Make disk exactly match the lockfile (--prune removes orphans).
+Reconcile disk to the manifest's desired state (--prune removes orphans).
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--prune` | bool | Remove agent skill directories not in the lockfile. |
+| `--prune` | bool | Remove agent targets and active entries the manifest no longer declares. |
 
 
 ## `tui`
 
 Launch the interactive dashboard.
+
+
+## `unlink`
+
+Detach one agent from a skill (--prune removes it when the last agent goes).
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `skill` | yes | The installed skill to unlink an agent from. |
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--agent` | string | The agent ID to detach. |
+| `--prune` | bool | If this was the last agent, also remove the skill, active entry, and store content. |
 
 
 ## `update`

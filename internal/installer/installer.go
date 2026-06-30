@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/cache"
 	"github.com/glapsfun/gskill/internal/discovery"
@@ -44,6 +45,7 @@ type Result struct {
 	Mode          Mode              // representative mode (the first agent's)
 	Modes         map[string]string // agentID -> actual mode used
 	Agents        []string
+	ActivePath    string            // project-relative active entry (empty for global scope)
 	Targets       map[string]string // agentID -> recorded dir (relative for project scope)
 	Warnings      []string
 }
@@ -95,7 +97,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	mode, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), storePath)
+	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), storePath)
 	if err != nil {
 		return Result{}, err
 	}
@@ -107,6 +109,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		Mode:          mode,
 		Modes:         modes,
 		Agents:        agentIDs(req.Agents),
+		ActivePath:    activePath,
 		Targets:       targets,
 		Warnings:      warnings,
 	}, nil
@@ -217,32 +220,54 @@ func (i *Installer) stageAndVerify(contentHash, skillDir string) (string, error)
 	return storePath, nil
 }
 
-// activateAll links or copies the stored content into every target agent dir,
-// returning the representative mode (the first agent's), the per-agent modes,
-// and the per-agent target paths. Modes can differ per agent — e.g. a symlink
-// falls back to a copy on a filesystem that rejects it — so each is recorded
-// rather than collapsed to one value.
-func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath string) (Mode, map[string]string, map[string]string, error) {
+// activateAll materializes the active layer and links/copies it into every
+// target agent dir, returning the representative mode (the first agent's), the
+// project-relative active path, the per-agent target paths, and the per-agent
+// modes. For project scope each agent target derives from the shared active
+// entry (.agents/skills/<name>), which itself links into the store, so a skill
+// shared by N agents exists physically once. For global scope there is no
+// project active layer, so agents derive directly from the store. Modes can
+// differ per agent — a symlink falls back to a copy on a filesystem that rejects
+// it — so each is recorded rather than collapsed to one value.
+func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath string) (Mode, string, map[string]string, map[string]string, error) {
+	// linkTarget is what symlinked agents point at; copySource is the real
+	// directory copy-mode agents (and copy fallbacks) read from. Copies always
+	// read the resolved store content, never the active symlink itself.
+	linkTarget := storePath
+	copySource := storePath
+	var activeRel string
+	if req.Scope != ScopeGlobal {
+		// Propagate EnsureActive's error code verbatim so a foreign-occupant
+		// collision fails closed with its own exit code rather than being masked
+		// as a generic partial install.
+		activePath, err := active.EnsureActive(req.ProjectRoot, name, storePath, i.store.Root())
+		if err != nil {
+			return "", "", nil, nil, fmt.Errorf("ensure active %s: %w", name, err)
+		}
+		linkTarget = activePath
+		activeRel = i.recordTarget(req, activePath)
+	}
+
 	targets := make(map[string]string, len(req.Agents))
 	modes := make(map[string]string, len(req.Agents))
 	primary := ModeSymlink
 
 	for idx, ag := range req.Agents {
 		dest := i.targetDir(ag, req, name)
-		usedMode, err := activate(storePath, dest, wantCopy(req.ModePref, ag))
+		usedMode, err := activateAgent(linkTarget, copySource, dest, agentActivation(req.ModePref, ag))
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
+			return "", "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
 		}
 		if idx == 0 {
 			primary = usedMode
 		}
 		modes[ag.ID()] = string(usedMode)
 		if err := ag.ValidateInstallation(ctx, dest); err != nil {
-			return "", nil, nil, fmt.Errorf("%w: %w", errs.ErrPartialInstall, err)
+			return "", "", nil, nil, fmt.Errorf("%w: %w", errs.ErrPartialInstall, err)
 		}
 		targets[ag.ID()] = i.recordTarget(req, dest)
 	}
-	return primary, targets, modes, nil
+	return primary, activeRel, targets, modes, nil
 }
 
 // targetDir resolves the per-agent destination directory for the skill.
@@ -266,25 +291,64 @@ func (i *Installer) recordTarget(req Request, dest string) string {
 	return rel
 }
 
-// wantCopy reports whether activation must copy rather than symlink.
-func wantCopy(modePref string, ag agent.Agent) bool {
-	return modePref == "copy" || !ag.SupportsSymlinks()
+// activation is how an agent target is materialized.
+type activation int
+
+const (
+	// activateAuto prefers a symlink and falls back to a copy when symlinks are
+	// unsupported (the default).
+	activateAuto activation = iota
+	// activateCopy always copies (forced by --copy or an agent that rejects symlinks).
+	activateCopy
+	// activateSymlinkStrict requires a symlink (--symlink) and fails rather than
+	// silently copying, so symlink-policy failures surface instead of being masked.
+	activateSymlinkStrict
+)
+
+// agentActivation maps the requested mode preference and the agent's capability
+// to a concrete activation strategy.
+func agentActivation(modePref string, ag agent.Agent) activation {
+	switch {
+	case modePref == PrefCopy || !ag.SupportsSymlinks():
+		return activateCopy
+	case modePref == PrefSymlink:
+		return activateSymlinkStrict
+	default:
+		return activateAuto
+	}
 }
 
-// activate links or copies storePath into dest and reports the mode used.
-func activate(storePath, dest string, forceCopy bool) (Mode, error) {
-	if forceCopy {
-		if err := clearAndCopy(storePath, dest); err != nil {
+// activateAgent places a skill at an agent's dest, reporting the mode used.
+// A symlinked target points at linkTarget (the active entry, or the store for
+// global scope); a copied target reads the resolved store content from
+// copySource, never the active symlink, so copies hold real content rather than
+// a recreated link.
+func activateAgent(linkTarget, copySource, dest string, mode activation) (Mode, error) {
+	if mode == activateCopy {
+		if err := clearAndCopy(copySource, dest); err != nil {
 			return "", err
 		}
 		return ModeCopy, nil
 	}
-	symlinked, err := fsutil.SymlinkOrCopy(storePath, dest)
-	if err != nil {
-		return "", err
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+		return "", fmt.Errorf("create target parent: %w", err)
 	}
-	if symlinked {
+	if err := os.RemoveAll(dest); err != nil {
+		return "", fmt.Errorf("clear target %s: %w", dest, err)
+	}
+	abs, err := filepath.Abs(linkTarget)
+	if err != nil {
+		return "", fmt.Errorf("resolve link target: %w", err)
+	}
+	linkErr := os.Symlink(abs, dest)
+	if linkErr == nil {
 		return ModeSymlink, nil
+	}
+	if mode == activateSymlinkStrict {
+		return "", fmt.Errorf("%w: --symlink requested but linking %s failed: %w", errs.ErrPartialInstall, dest, linkErr)
+	}
+	if err := fsutil.CopyDir(copySource, dest); err != nil {
+		return "", fmt.Errorf("copy fallback: %w", err)
 	}
 	return ModeCopy, nil
 }

@@ -38,9 +38,11 @@ type rootCLI struct {
 	Update   updateCmd   `cmd:"" help:"Advance skills within their version constraints."`
 	Lock     lockCmd     `cmd:"" help:"Recompute the lockfile from the manifest."`
 	Remove   removeCmd   `cmd:"" help:"Uninstall skills and clean up."`
-	Sync     syncCmd     `cmd:"" help:"Make disk exactly match the lockfile (--prune removes orphans)."`
+	Sync     syncCmd     `cmd:"" help:"Reconcile disk to the manifest's desired state (--prune removes orphans)."`
 	Repair   repairCmd   `cmd:"" help:"Re-materialize broken installs and clean up staging."`
+	Unlink   unlinkCmd   `cmd:"" help:"Detach one agent from a skill (--prune removes it when the last agent goes)."`
 
+	Status     statusCmd     `cmd:"" help:"Show installed skills, their agents, modes, and per-target health."`
 	List       listCmd       `cmd:"" help:"List installed skills and their status."`
 	Info       infoCmd       `cmd:"" help:"Show details for one skill."`
 	Diff       diffCmd       `cmd:"" help:"Show manifest/lock/disk differences."`

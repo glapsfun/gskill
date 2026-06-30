@@ -26,6 +26,13 @@ func CheckConsistency(m *manifest.Manifest, lf *Lockfile) error {
 			locked.Requested.Commit != ms.Commit {
 			return fmt.Errorf("%w: skill %q requested version changed since lock", errs.ErrLockMismatch, name)
 		}
+		// Explicitly declared agents must all be present in the locked install;
+		// an agent added to the manifest but not yet locked is a drift (FR-008).
+		for _, want := range ms.Agents {
+			if !containsAgent(locked.Installation.Agents, want) {
+				return fmt.Errorf("%w: skill %q declares agent %q not present in the lockfile", errs.ErrLockMismatch, name, want)
+			}
+		}
 	}
 	for name := range lf.Skills {
 		if _, ok := m.Skills[name]; !ok {
@@ -33,4 +40,14 @@ func CheckConsistency(m *manifest.Manifest, lf *Lockfile) error {
 		}
 	}
 	return nil
+}
+
+// containsAgent reports whether id is in ids.
+func containsAgent(ids []string, id string) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
 }

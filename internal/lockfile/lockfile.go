@@ -82,13 +82,17 @@ type Requires struct {
 
 // Installation is the placement record (FR-019, FR-020, FR-027, FR-028). Mode is
 // the representative install mode; Modes records the actual mode per agent for
-// the case where they differ (e.g. a symlink falls back to a copy).
+// the case where they differ (e.g. a symlink falls back to a copy). ActivePath
+// is the project-relative active-layer entry (.agents/skills/<name>) that every
+// agent target derives from; it is absent on legacy (pre-active-layer) entries,
+// which signals a migration on the next reconcile/repair.
 type Installation struct {
-	Scope   string            `json:"scope"`
-	Mode    string            `json:"mode"`
-	Agents  []string          `json:"agents"`
-	Targets map[string]string `json:"targets"`
-	Modes   map[string]string `json:"modes,omitempty"`
+	Scope      string            `json:"scope"`
+	Mode       string            `json:"mode"`
+	Agents     []string          `json:"agents"`
+	ActivePath string            `json:"active_path,omitempty"`
+	Targets    map[string]string `json:"targets"`
+	Modes      map[string]string `json:"modes,omitempty"`
 }
 
 // Provenance is best-effort trust info. Timestamps are excluded from
