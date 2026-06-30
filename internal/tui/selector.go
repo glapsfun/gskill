@@ -11,9 +11,9 @@ import (
 
 const (
 	// reservedRows is the number of non-list lines the picker frames around the
-	// scrollable window (header, filter line, the more-above/more-below markers,
-	// and the position/help footer). The visible page size is the terminal
-	// height minus these rows.
+	// scrollable window: the header, the filter line, the more-above and
+	// more-below markers, a blank spacer, and the position/help footer (6 in
+	// total). The visible page size is the terminal height minus these rows.
 	reservedRows = 6
 	// defaultPageSize bounds the list before the first WindowSizeMsg arrives, so
 	// a large list never renders unbounded even if a size is never reported.
