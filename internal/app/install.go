@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -253,11 +254,16 @@ func (a *App) relinkAgents(ctx context.Context, p *project, m *manifest.Manifest
 		return err
 	}
 	mergeAgentInstall(&locked, result)
-	lf.Skills[name] = locked
 
 	ms := m.Skills[name]
 	ms.Agents = locked.Installation.Agents
+	// Backfill the version pin from the locked revision (no re-resolve) so an
+	// agent-add to a pre-008 unpinned skill still records a version, and keep the
+	// lock's requested in step (008 finding 3).
+	ms = backfillPins(ms, revFromLock(locked.Resolved), ms.Agents, len(m.Defaults.Agents) > 0)
 	m.Skills[name] = ms
+	locked.Requested = requestedFromSkill(ms)
+	lf.Skills[name] = locked
 
 	res.Installed = append(res.Installed, InstalledSkill{
 		Name: name, Path: ms.Path, ContentHash: locked.Resolved.ContentHash, Targets: result.Targets,
@@ -390,12 +396,23 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 			if plan.mergeInto {
 				locked := lf.Skills[s.ID]
 				mergeAgentInstall(&locked, result)
-				lf.Skills[s.ID] = locked
 				ms := m.Skills[s.ID]
 				ms.Agents = plan.manifestIDs
+				// Backfill the version pin from the already-locked revision (not the
+				// freshly-resolved rev, so the pin matches what is locked), keeping
+				// the lock's requested consistent (008 finding 3).
+				ms = backfillPins(ms, revFromLock(locked.Resolved), ms.Agents, len(m.Defaults.Agents) > 0)
 				m.Skills[s.ID] = ms
+				locked.Requested = requestedFromSkill(ms)
+				lf.Skills[s.ID] = locked
 			} else {
-				m.Skills[s.ID] = manifestEntry(req, s.RepoPath, plan.manifestIDs)
+				entry := manifestEntry(req, s.RepoPath, plan.manifestIDs)
+				// Record the resolved version pin (and, when applicable, the
+				// agent set) before building the lock entry, so lockfile
+				// `requested` matches the manifest and sync stays idempotent
+				// (008 FR-004/FR-007). Agents are already decided by planAdd.
+				entry = backfillPins(entry, rev, plan.manifestIDs, len(m.Defaults.Agents) > 0)
+				m.Skills[s.ID] = entry
 				lf.Skills[s.ID] = buildLockEntry(ref, rev, ir, result, m.Skills[s.ID])
 			}
 			res.Installed = append(res.Installed, InstalledSkill{
@@ -436,7 +453,7 @@ func (a *App) planAdd(m *manifest.Manifest, lf *lockfile.Lockfile, id string, re
 	existing, exists := m.Skills[id]
 	if !exists || req.Force {
 		ags, err := a.agentsByID(reqIDs)
-		return addPlan{activate: ags, manifestIDs: req.Agents}, err
+		return addPlan{activate: ags, manifestIDs: manifestAgentIDs(m, req, reqIDs)}, err
 	}
 
 	if existing.Source != req.Source {
@@ -455,6 +472,21 @@ func (a *App) planAdd(m *manifest.Manifest, lf *lockfile.Lockfile, id string, re
 	// result is merged into the lock entry (FR-001..FR-005).
 	ags, err := a.agentsByID(newOnes)
 	return addPlan{activate: ags, manifestIDs: unionStrings(current, reqIDs), mergeInto: true}, err
+}
+
+// manifestAgentIDs decides which agent IDs to persist in a fresh manifest entry
+// (008 FR-001/FR-003): explicit --agent values are recorded as resolved; with no
+// --agent, the resolved set is recorded per-skill unless a project-wide
+// [defaults] agents block is present, in which case the entry stays empty and
+// keeps inheriting from that block.
+func manifestAgentIDs(m *manifest.Manifest, req AddRequest, reqIDs []string) []string {
+	if len(req.Agents) > 0 {
+		return reqIDs
+	}
+	if len(m.Defaults.Agents) > 0 {
+		return nil
+	}
+	return reqIDs
 }
 
 // conflictErr reports an already-declared skill with no new agent to add.
@@ -572,6 +604,10 @@ type SkillChange struct {
 	Name        string
 	ContentHash string
 	Changed     bool
+	// ManifestChanged is set when an always-present field (agent set or version
+	// pin) was backfilled into the manifest entry this run, so the caller knows
+	// to persist gskill.toml (008 FR-008/FR-009). In-memory only.
+	ManifestChanged bool
 }
 
 // InstallResult reports an install run.
@@ -598,22 +634,9 @@ func (a *App) Install(ctx context.Context, req InstallRequest) (InstallResult, e
 
 	var out InstallResult
 	err = a.withLock(ctx, p, func() error {
-		lf, lockErr := loadOrNewLock(p.lockPath)
-		if lockErr != nil {
-			return lockErr
-		}
-		for _, name := range sortedKeys(m.Skills) {
-			change, applyErr := a.installOne(ctx, p, lf, name, m.Skills[name], req, m.Defaults.Agents)
-			if applyErr != nil {
-				return applyErr
-			}
-			out.Skills = append(out.Skills, change)
-			out.Changed = out.Changed || change.Changed
-		}
-		if out.Changed {
-			return lockfile.Save(p.lockPath, lf)
-		}
-		return nil
+		var fnErr error
+		out, fnErr = a.installAll(ctx, p, m, req)
+		return fnErr
 	})
 	if err != nil {
 		return InstallResult{}, err
@@ -621,36 +644,90 @@ func (a *App) Install(ctx context.Context, req InstallRequest) (InstallResult, e
 	return out, nil
 }
 
-// installOne installs a single declared skill and updates lf in place.
-func (a *App) installOne(ctx context.Context, p *project, lf *lockfile.Lockfile, name string, ms manifest.Skill, req InstallRequest, defaults []string) (SkillChange, error) {
+// installAll materializes every declared skill under the held project lock,
+// backfilling the always-present manifest fields and persisting the lockfile and
+// manifest only when something changed (008 FR-007/FR-008).
+func (a *App) installAll(ctx context.Context, p *project, m *manifest.Manifest, req InstallRequest) (InstallResult, error) {
+	lf, err := loadOrNewLock(p.lockPath)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	var out InstallResult
+	manifestChanged := false
+	for _, name := range sortedKeys(m.Skills) {
+		change, newMS, applyErr := a.installOne(ctx, p, lf, name, m.Skills[name], req, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
+		if applyErr != nil {
+			return InstallResult{}, applyErr
+		}
+		if change.ManifestChanged {
+			m.Skills[name] = newMS
+			manifestChanged = true
+		}
+		out.Skills = append(out.Skills, change)
+		out.Changed = out.Changed || change.Changed
+	}
+	// Save the lockfile when content changed or a manifest pin was backfilled
+	// (the latter updates the lock's `requested` to match — 008 FR-007).
+	if out.Changed || manifestChanged {
+		if err := lockfile.Save(p.lockPath, lf); err != nil {
+			return InstallResult{}, err
+		}
+	}
+	if manifestChanged {
+		if err := manifest.Save(p.manifestPath, m); err != nil {
+			return InstallResult{}, err
+		}
+	}
+	return out, nil
+}
+
+// installOne installs a single declared skill and updates lf in place. It
+// returns the (possibly backfilled) manifest entry so the caller can persist the
+// always-present fields; SkillChange.ManifestChanged reports whether it differs
+// from the input. hasDefaultsAgents suppresses per-skill agent recording when a
+// [defaults] agents block governs the set (008 FR-001..FR-009).
+func (a *App) installOne(ctx context.Context, p *project, lf *lockfile.Lockfile, name string, ms manifest.Skill, req InstallRequest, defaults []string, hasDefaultsAgents bool) (SkillChange, manifest.Skill, error) {
 	ref, err := source.Parse(ms.Source)
 	if err != nil {
-		return SkillChange{}, err
+		return SkillChange{}, ms, err
 	}
 	ref = promoteLocalGit(ref)
 	agents, err := a.targetAgents(ctx, p.root, ms.Agents, defaults)
 	if err != nil {
-		return SkillChange{}, err
+		return SkillChange{}, ms, err
 	}
 	rev, _, err := resolver.Resolve(ctx, a.git, ref, resolver.Requested{
 		Version: ms.Version, Ref: ms.Ref, Commit: ms.Commit,
 	})
 	if err != nil {
-		return SkillChange{}, err
+		return SkillChange{}, ms, err
 	}
+
+	// Backfill the always-present fields before building the lock entry, so the
+	// lockfile's `requested` is derived from the same pinned manifest entry and
+	// declarationUnchanged stays satisfied on the next run (008 FR-007).
+	backfilled := backfillPins(ms, rev, agentIDs(agents), hasDefaultsAgents)
 
 	ireq := a.installRequest(p.root, ref, rev, agents, req.Scope, modeOr(req.Mode, ms.InstallMode))
 	ireq.Name = name
 	ireq.Offline = req.Offline
+	// Honor the manifest's in-repo path so a multi-skill source resolves to the
+	// declared skill instead of erroring on multiple SKILL.md files.
+	if ms.Path != "" {
+		ireq.Path = ms.Path
+	}
 	result, err := a.installerForScope(p, string(ireq.Scope)).Install(ctx, ireq)
 	if err != nil {
-		return SkillChange{}, err
+		return SkillChange{}, ms, err
 	}
 
 	old, existed := lf.Skills[name]
 	changed := !existed || old.Resolved.ContentHash != result.ContentHash || old.Resolved.Commit != rev.Commit
-	lf.Skills[name] = buildLockEntry(ref, rev, ireq, result, ms)
-	return SkillChange{Name: name, ContentHash: result.ContentHash, Changed: changed}, nil
+	lf.Skills[name] = buildLockEntry(ref, rev, ireq, result, backfilled)
+	return SkillChange{
+		Name: name, ContentHash: result.ContentHash, Changed: changed,
+		ManifestChanged: !reflect.DeepEqual(backfilled, ms),
+	}, backfilled, nil
 }
 
 // targetAgents resolves the agents to install into: explicit, then defaults,
@@ -720,6 +797,47 @@ func (a *App) withLock(ctx context.Context, p *project, fn func() error) error {
 	}
 	defer func() { _ = lock.Release() }()
 	return fn()
+}
+
+// backfillPins fills the always-present manifest fields from the resolved
+// revision so a committed gskill.toml records what was installed even when the
+// user named no version or agent (008 FR-001..FR-006). It fills a version pin
+// only when the user specified none, mapping by ref-kind: semver→caret range
+// (e.g. ^0.1.0, kept floating so updates are not frozen), (non-semver) tag→ref,
+// branch→ref, commit→commit; a local source has no resolvable version and is
+// left unpinned. It records the resolved agent set
+// per-skill unless the set is empty and a project-wide [defaults] agents block
+// is present, in which case the entry keeps inheriting from that block. Explicit
+// values are never overwritten.
+func backfillPins(ms manifest.Skill, rev resolver.Revision, resolvedAgentIDs []string, hasDefaultsAgents bool) manifest.Skill {
+	if ms.Version == "" && ms.Ref == "" && ms.Commit == "" {
+		switch rev.RefKind {
+		case resolver.RefKindSemver:
+			// Record a caret range, not the bare resolved version, so the manifest
+			// constraint that `outdated`/`update` read stays floating (within the
+			// major) instead of freezing the skill at an exact pin (008 finding 1).
+			ms.Version = "^" + rev.Version
+		case resolver.RefKindTag:
+			ms.Ref = rev.Tag
+		case resolver.RefKindBranch:
+			ms.Ref = rev.Branch
+		case resolver.RefKindCommit:
+			ms.Commit = rev.Commit
+		case resolver.RefKindLocal:
+			// No resolvable version; leave the entry unpinned (FR-006).
+		}
+	}
+	if len(ms.Agents) == 0 && !hasDefaultsAgents {
+		ms.Agents = resolvedAgentIDs
+	}
+	return ms
+}
+
+// requestedFromSkill mirrors a manifest entry's pin fields into a lockfile
+// Requested record, so the lock's requested constraint stays consistent with the
+// manifest after a backfill and declarationUnchanged keeps holding (008 FR-007).
+func requestedFromSkill(ms manifest.Skill) lockfile.Requested {
+	return lockfile.Requested{Version: ms.Version, Ref: ms.Ref, Commit: ms.Commit}
 }
 
 // manifestEntry builds the manifest record for an add (intent only). The path

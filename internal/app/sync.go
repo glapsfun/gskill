@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -80,7 +81,7 @@ func (a *App) reconcile(ctx context.Context, p *project, m *manifest.Manifest, r
 		return SyncResult{}, err
 	}
 
-	out, lockChanged, err := a.reconcileSkills(ctx, p, lf, m, desired, req)
+	out, lockChanged, manifestChanged, err := a.reconcileSkills(ctx, p, lf, m, desired, req)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -96,9 +97,14 @@ func (a *App) reconcile(ctx context.Context, p *project, m *manifest.Manifest, r
 		out.Orphans = findOrphans(lf, m, desired)
 	}
 
-	out.UpToDate = !lockChanged && noChanges(out.Reconciled)
+	out.UpToDate = !lockChanged && !manifestChanged && noChanges(out.Reconciled)
 	if lockChanged {
 		if err := lockfile.Save(p.lockPath, lf); err != nil {
+			return SyncResult{}, err
+		}
+	}
+	if manifestChanged {
+		if err := manifest.Save(p.manifestPath, m); err != nil {
 			return SyncResult{}, err
 		}
 	}
@@ -106,19 +112,22 @@ func (a *App) reconcile(ctx context.Context, p *project, m *manifest.Manifest, r
 }
 
 // reconcileSkills reconciles every declared skill, returning the outcomes and
-// whether the lockfile changed.
-func (a *App) reconcileSkills(ctx context.Context, p *project, lf *lockfile.Lockfile, m *manifest.Manifest, desired map[string]map[string]bool, req SyncRequest) (SyncResult, bool, error) {
+// whether the lockfile and/or manifest changed (the manifest changes when an
+// always-present field is backfilled — 008 FR-009).
+func (a *App) reconcileSkills(ctx context.Context, p *project, lf *lockfile.Lockfile, m *manifest.Manifest, desired map[string]map[string]bool, req SyncRequest) (SyncResult, bool, bool, error) {
 	var out SyncResult
 	lockChanged := false
+	manifestChanged := false
 	for _, name := range sortedKeys(m.Skills) {
-		change, ch, rErr := a.reconcileSkill(ctx, p, lf, name, m.Skills[name], desired[name], req)
+		change, lc, mc, rErr := a.reconcileSkill(ctx, p, lf, m, name, desired[name], req)
 		if rErr != nil {
-			return SyncResult{}, false, rErr
+			return SyncResult{}, false, false, rErr
 		}
 		out.Reconciled = append(out.Reconciled, change)
-		lockChanged = lockChanged || ch
+		lockChanged = lockChanged || lc
+		manifestChanged = manifestChanged || mc
 	}
-	return out, lockChanged, nil
+	return out, lockChanged, manifestChanged, nil
 }
 
 // desiredAgentSets resolves, per declared skill, the set of target agent IDs
@@ -142,40 +151,66 @@ func (a *App) desiredAgentSets(ctx context.Context, p *project, m *manifest.Mani
 // reconcileSkill brings one declared skill into the desired state. When the
 // declaration is unchanged and the chain already matches, it makes no changes;
 // otherwise it reconciles from the lockfile (no re-resolution) or re-resolves
-// when the declaration itself changed.
-func (a *App) reconcileSkill(ctx context.Context, p *project, lf *lockfile.Lockfile, name string, ms manifest.Skill, want map[string]bool, req SyncRequest) (SyncChange, bool, error) {
+// when the declaration itself changed. It also backfills the always-present
+// manifest fields (008 FR-009), mutating m.Skills[name] in place and reporting
+// whether the lockfile and/or manifest changed.
+func (a *App) reconcileSkill(ctx context.Context, p *project, lf *lockfile.Lockfile, m *manifest.Manifest, name string, want map[string]bool, req SyncRequest) (SyncChange, bool, bool, error) {
+	ms := m.Skills[name]
+	hasDefaultsAgents := len(m.Defaults.Agents) > 0
 	desiredAgents, err := a.agentsByID(sortedSetKeys(want))
 	if err != nil {
-		return SyncChange{}, false, err
+		return SyncChange{}, false, false, err
 	}
 	desiredIDs := agentIDs(desiredAgents)
 	locked, hasLock := lf.Skills[name]
 
 	if hasLock && declarationUnchanged(ms, locked) {
+		// Migrate a legacy/incomplete manifest to the pinned form using the
+		// locked resolution — no re-resolve — keeping the lock's requested in
+		// step so the next run stays idempotent (008 FR-009). Record the agent set
+		// the run actually materializes (desiredIDs), not the stale locked set, so
+		// a newly-detected agent is not later treated as an orphan (008 finding 2).
+		backfilled := backfillPins(ms, revFromLock(locked.Resolved), desiredIDs, hasDefaultsAgents)
+		manifestChanged := !reflect.DeepEqual(backfilled, ms)
+		lockChanged := false
+		if manifestChanged {
+			m.Skills[name] = backfilled
+			locked.Requested = requestedFromSkill(backfilled)
+			lf.Skills[name] = locked
+			lockChanged = true
+		}
 		needed, nErr := a.reconcileNeeded(p, name, locked, desiredIDs)
 		if nErr != nil {
-			return SyncChange{}, false, nErr
+			return SyncChange{}, false, false, nErr
 		}
 		if !needed {
-			return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash}, false, nil
+			return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash, Changed: manifestChanged}, lockChanged, manifestChanged, nil
 		}
 		added := subtract(desiredIDs, locked.Installation.Agents)
 		result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req)
 		if rErr != nil {
-			return SyncChange{}, false, rErr
+			return SyncChange{}, false, false, rErr
 		}
 		applyInstallation(&locked, result)
 		lf.Skills[name] = locked
-		return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash, Changed: true, AgentsAdded: added}, true, nil
+		return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash, Changed: true, AgentsAdded: added}, true, manifestChanged, nil
 	}
 
 	before := lf.Skills[name].Installation.Agents
-	change, iErr := a.installOne(ctx, p, lf, name, ms, InstallRequest{Root: p.root, Offline: req.Offline}, nil)
+	// Install for the full desired agent set (explicit + [defaults] agents +
+	// detected), passing it as the default so installOne does not fall back to
+	// detection-only and silently drop a [defaults] agents entry on first sync.
+	change, newMS, iErr := a.installOne(ctx, p, lf, name, ms, InstallRequest{Root: p.root, Offline: req.Offline}, desiredIDs, hasDefaultsAgents)
 	if iErr != nil {
-		return SyncChange{}, false, iErr
+		return SyncChange{}, false, false, iErr
+	}
+	manifestChanged := false
+	if change.ManifestChanged {
+		m.Skills[name] = newMS
+		manifestChanged = true
 	}
 	added := subtract(desiredIDs, before)
-	return SyncChange{Name: name, ContentHash: change.ContentHash, Changed: true, AgentsAdded: added}, true, nil
+	return SyncChange{Name: name, ContentHash: change.ContentHash, Changed: true, AgentsAdded: added}, true, manifestChanged, nil
 }
 
 // reconcileNeeded reports whether the chain for the desired agents is anything

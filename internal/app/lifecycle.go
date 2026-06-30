@@ -79,19 +79,30 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 		if lockErr != nil {
 			return lockErr
 		}
+		manifestChanged := false
 		for _, name := range targets {
 			ms, ok := m.Skills[name]
 			if !ok {
 				return fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, name)
 			}
-			change, applyErr := a.installOne(ctx, p, lf, name, ms, InstallRequest{Root: root}, m.Defaults.Agents)
+			change, newMS, applyErr := a.installOne(ctx, p, lf, name, ms, InstallRequest{Root: root}, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
 			if applyErr != nil {
 				return applyErr
+			}
+			if change.ManifestChanged {
+				m.Skills[name] = newMS
+				manifestChanged = true
 			}
 			out.Skills = append(out.Skills, change)
 			out.Changed = out.Changed || change.Changed
 		}
-		return lockfile.Save(p.lockPath, lf)
+		if err := lockfile.Save(p.lockPath, lf); err != nil {
+			return err
+		}
+		if manifestChanged {
+			return manifest.Save(p.manifestPath, m)
+		}
+		return nil
 	})
 	if err != nil {
 		return InstallResult{}, err
@@ -118,6 +129,7 @@ func (a *App) Lock(ctx context.Context, root string) (InstallResult, error) {
 			return lockErr
 		}
 		next := lockfile.New()
+		manifestChanged := false
 		for _, name := range sortedKeys(m.Skills) {
 			ms := m.Skills[name]
 			if entry, ok := old.Skills[name]; ok && declarationUnchanged(ms, entry) {
@@ -125,14 +137,24 @@ func (a *App) Lock(ctx context.Context, root string) (InstallResult, error) {
 				out.Skills = append(out.Skills, SkillChange{Name: name, ContentHash: entry.Resolved.ContentHash})
 				continue
 			}
-			change, applyErr := a.installOne(ctx, p, next, name, ms, InstallRequest{Root: root}, m.Defaults.Agents)
+			change, newMS, applyErr := a.installOne(ctx, p, next, name, ms, InstallRequest{Root: root}, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
 			if applyErr != nil {
 				return applyErr
+			}
+			if change.ManifestChanged {
+				m.Skills[name] = newMS
+				manifestChanged = true
 			}
 			out.Skills = append(out.Skills, change)
 			out.Changed = true
 		}
-		return lockfile.Save(p.lockPath, next)
+		if err := lockfile.Save(p.lockPath, next); err != nil {
+			return err
+		}
+		if manifestChanged {
+			return manifest.Save(p.manifestPath, m)
+		}
+		return nil
 	})
 	if err != nil {
 		return InstallResult{}, err
