@@ -41,6 +41,7 @@ go.work.sum
 specs
 .specify
 .docs
+t1
 
 # AI
 .claude
