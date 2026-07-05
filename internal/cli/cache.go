@@ -21,6 +21,11 @@ func cacheDir(root string) string {
 
 type cachePathCmd struct{}
 
+// Help returns the detailed help shown by `gskill cache path --help`.
+func (cachePathCmd) Help() string {
+	return examplesHelp("gskill cache path")
+}
+
 // Run prints the cache directory.
 func (cachePathCmd) Run(out *Output, root projectRoot) error {
 	dir := cacheDir(string(root))
@@ -28,6 +33,11 @@ func (cachePathCmd) Run(out *Output, root projectRoot) error {
 }
 
 type cacheStatsCmd struct{}
+
+// Help returns the detailed help shown by `gskill cache stats --help`.
+func (cacheStatsCmd) Help() string {
+	return examplesHelp("gskill cache stats --json")
+}
 
 // Run reports cache file count and total size.
 func (cacheStatsCmd) Run(out *Output, root projectRoot) error {
@@ -57,6 +67,11 @@ func (cacheStatsCmd) Run(out *Output, root projectRoot) error {
 
 type cacheListCmd struct{}
 
+// Help returns the detailed help shown by `gskill cache list --help`.
+func (cacheListCmd) Help() string {
+	return examplesHelp("gskill cache list")
+}
+
 // Run lists top-level cache entries (algorithm/hash).
 func (cacheListCmd) Run(out *Output, root projectRoot) error {
 	dir := cacheDir(string(root))
@@ -76,6 +91,11 @@ func (cacheListCmd) Run(out *Output, root projectRoot) error {
 }
 
 type cacheCleanCmd struct{}
+
+// Help returns the detailed help shown by `gskill cache clean --help`.
+func (cacheCleanCmd) Help() string {
+	return examplesHelp("gskill cache clean")
+}
 
 // Run removes all cached material.
 func (cacheCleanCmd) Run(out *Output, root projectRoot) error {

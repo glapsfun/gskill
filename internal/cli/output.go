@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"golang.org/x/term"
 )
@@ -28,6 +29,7 @@ type Output struct {
 	json        bool
 	quiet       bool
 	interactive bool
+	stdin       io.Reader // confirmation replies; defaults to os.Stdin
 }
 
 // NewOutput builds an Output. Interactive is forced off when stdout is not a
@@ -63,6 +65,34 @@ func (o *Output) Result(human string, v any) error {
 		return fmt.Errorf("write result: %w", err)
 	}
 	return nil
+}
+
+// Confirm prompts on stderr for a yes/no answer read from stdin, defaulting
+// to No. It returns true without prompting when assumeYes is set or the
+// session is non-interactive, so unattended and CI runs never block (FR-012).
+func (o *Output) Confirm(prompt string, assumeYes bool) bool {
+	if assumeYes || !o.interactive {
+		return true
+	}
+	in := o.stdin
+	if in == nil {
+		// A prompt can only be answered by a real terminal on stdin; with
+		// stdin redirected or closed, proceed exactly as a non-interactive
+		// run would instead of failing on the unanswerable read.
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return true
+		}
+		in = os.Stdin
+	}
+	_, _ = fmt.Fprintf(o.stderr, "%s [y/N]: ", prompt)
+	var reply string
+	_, _ = fmt.Fscanln(in, &reply)
+	switch strings.ToLower(strings.TrimSpace(reply)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // Diag writes a diagnostic line to stderr unless quiet is set.

@@ -8,7 +8,7 @@ verification rather than assumption.
 
 The lockfile records content checksums for everything it installs. Before any downloaded artifact is
 written into an agent's skill directory, GSKILL verifies it against that recorded checksum. A mismatch
-**aborts** the operation. `gskill verify` re-runs this check on demand, re-hashing installed content
+**aborts** the operation. `gskill project verify` re-runs this check on demand, re-hashing installed content
 and exiting `6` on any difference.
 
 ## Fail closed

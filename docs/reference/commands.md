@@ -77,15 +77,6 @@ Print the cache directory.
 Show cache size and entry count.
 
 
-## `check`
-
-Report fast drift status.
-
-| Flag | Type | Description |
-| --- | --- | --- |
-| `--fail-on-drift` | bool | Exit non-zero (7) if any drift is detected. |
-
-
 ## `completion`
 
 Print a shell completion script.
@@ -119,28 +110,14 @@ Print the effective configuration.
 Print the config file path.
 
 
-## `diff`
+## `dashboard` (alias: `tui`)
 
-Show manifest/lock/disk differences.
+Launch the interactive dashboard.
 
 
 ## `doctor`
 
 Check the environment and declared requirements.
-
-
-## `find`
-
-Search for skills in a source, a GitHub owner, or configured repositories.
-
-| Argument | Required | Description |
-| --- | --- | --- |
-| `query` | yes | Keyword to search for (matches name and description). |
-
-| Flag | Type | Description |
-| --- | --- | --- |
-| `--owner` | string | Search a GitHub user/org's repositories. |
-| `--source` | string | Search within one source. |
 
 
 ## `info`
@@ -166,17 +143,13 @@ Install all declared skills (additive, idempotent).
 | `--copy` | bool | Copy instead of symlinking. |
 | `--frozen-lockfile` | bool | Restore exactly from the lockfile; never modify it. |
 | `--global` | bool | Install into the user-global location. |
+| `--project` | bool | Install into the project (default). |
 | `--update-lockfile` | bool | Allow the lockfile to be rewritten. |
 
 
 ## `list`
 
 List installed skills and their status.
-
-
-## `lock`
-
-Recompute the lockfile from the manifest.
 
 
 ## `outdated`
@@ -188,6 +161,49 @@ Show skills with newer versions available.
 | `--exit-code` | bool | Exit 8 if any update is available. |
 
 
+## `project`
+
+Manage this project's manifest, lockfile, and installed state.
+
+
+## `project check`
+
+Report fast drift status.
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--fail-on-drift` | bool | Exit non-zero (7) if any drift is detected. |
+
+
+## `project diff`
+
+Show manifest/lock/disk differences.
+
+
+## `project lock`
+
+Recompute the lockfile from the manifest.
+
+
+## `project repair`
+
+Re-materialize broken installs and clean up staging.
+
+
+## `project sync`
+
+Reconcile disk to the manifest's desired state (--prune removes orphans).
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--prune` | bool | Remove agent targets and active entries the manifest no longer declares. |
+
+
+## `project verify`
+
+Re-hash installed content against the lockfile.
+
+
 ## `remove`
 
 Uninstall skills and clean up.
@@ -197,9 +213,18 @@ Uninstall skills and clean up.
 | `skills` | yes | Skills to remove. |
 
 
-## `repair`
+## `search` (alias: `find`)
 
-Re-materialize broken installs and clean up staging.
+Search for skills in a source, a GitHub owner, or configured repositories.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `query` | yes | Keyword to search for (matches name and description). |
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--owner` | string | Search a GitHub user/org's repositories. |
+| `--source` | string | Search within one source. |
 
 
 ## `source`
@@ -261,20 +286,6 @@ List all skills discovered in a source.
 Show installed skills, their agents, modes, and per-target health.
 
 
-## `sync`
-
-Reconcile disk to the manifest's desired state (--prune removes orphans).
-
-| Flag | Type | Description |
-| --- | --- | --- |
-| `--prune` | bool | Remove agent targets and active entries the manifest no longer declares. |
-
-
-## `tui`
-
-Launch the interactive dashboard.
-
-
 ## `unlink`
 
 Detach one agent from a skill (--prune removes it when the last agent goes).
@@ -296,11 +307,6 @@ Advance skills within their version constraints.
 | Argument | Required | Description |
 | --- | --- | --- |
 | `skills` | no | Skills to update (default: all declared). |
-
-
-## `verify`
-
-Re-hash installed content against the lockfile.
 
 
 ## `version`

@@ -11,7 +11,6 @@ import (
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
-	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
@@ -50,7 +49,7 @@ type SyncResult struct {
 func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
 	p := openProject(req.Root)
 	if !p.manifestExists() {
-		return SyncResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
+		return SyncResult{}, errNoManifest()
 	}
 	m, err := manifest.Load(p.manifestPath)
 	if err != nil {

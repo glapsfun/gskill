@@ -11,6 +11,14 @@ import (
 // doctorCmd checks the environment and declared requirements.
 type doctorCmd struct{}
 
+// Help returns the detailed help shown by `gskill doctor --help`.
+func (doctorCmd) Help() string {
+	return examplesHelp(
+		"gskill doctor",
+		"gskill doctor --json",
+	)
+}
+
 // Run executes `gskill doctor`.
 func (doctorCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	report, err := a.Doctor(ctx, string(root))

@@ -1,0 +1,28 @@
+Usage: gskill search (find) <query> [flags]
+
+Search for skills in a source, a GitHub owner, or configured repositories.
+
+Examples:
+
+    gskill search kubernetes
+    gskill search deploy --owner acme
+    gskill search helper --source github.com/owner/repo
+
+Arguments:
+  <query>    Keyword to search for (matches name and description).
+
+Flags:
+  -h, --help              Show context-sensitive help.
+      --json              Emit machine-readable JSON on stdout.
+      --quiet             Suppress diagnostics on stderr.
+      --no-interactive    Disable prompts and colored output.
+      --yes               Assume yes for confirmation prompts.
+      --offline           Operate without network access.
+      --no-cache          Bypass the content cache.
+      --dry-run           Report actions without applying them.
+      --config=STRING     Path to a config file.
+  -v, --verbose           Enable verbose diagnostics.
+  -C, --dir=STRING        Run as if gskill started in this directory.
+
+      --source=STRING     Search within one source.
+      --owner=STRING      Search a GitHub user/org's repositories.

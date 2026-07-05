@@ -35,6 +35,16 @@ type addCmd struct {
 	Exclude  []string `help:"Skip skills whose in-repo path matches this glob (repeatable)."`
 }
 
+// Help returns the detailed help shown by `gskill add --help`.
+func (addCmd) Help() string {
+	return examplesHelp(
+		"gskill add github.com/owner/repo --agent claude",
+		"gskill add github.com/owner/repo --skill deploy-helper --version '^2.0.0'",
+		"gskill add ./local/skills --all",
+		"gskill add github.com/owner/repo --list",
+	)
+}
+
 // Run executes `gskill add`.
 func (c addCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	res, err := a.Add(ctx, app.AddRequest{
@@ -140,14 +150,6 @@ func scopeFlag(global bool) string {
 		return string(installer.ScopeGlobal)
 	}
 	return string(installer.ScopeProject)
-}
-
-// modeFlag maps the --copy flag to an install-mode string ("" means default).
-func modeFlag(copyMode bool) string {
-	if copyMode {
-		return string(installer.ModeCopy)
-	}
-	return ""
 }
 
 // modeFromFlags resolves --copy/--symlink/--auto to an install-mode preference

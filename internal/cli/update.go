@@ -12,6 +12,14 @@ type updateCmd struct {
 	Skills []string `arg:"" optional:"" help:"Skills to update (default: all declared)."`
 }
 
+// Help returns the detailed help shown by `gskill update --help`.
+func (updateCmd) Help() string {
+	return examplesHelp(
+		"gskill update",
+		"gskill update my-skill",
+	)
+}
+
 // Run executes `gskill update`.
 func (c updateCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	res, err := a.Update(ctx, string(root), c.Skills)

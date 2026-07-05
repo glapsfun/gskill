@@ -7,10 +7,16 @@ import (
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
-// tuiCmd launches the interactive dashboard.
+// tuiCmd launches the interactive dashboard. Its canonical command name is
+// `dashboard`; the original `tui` remains a kong alias.
 type tuiCmd struct{}
 
-// Run executes `gskill tui`.
+// Help returns the detailed help shown by `gskill dashboard --help`.
+func (tuiCmd) Help() string {
+	return examplesHelp("gskill dashboard")
+}
+
+// Run executes `gskill dashboard` (alias: `gskill tui`).
 func (tuiCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	skills, err := a.List(ctx, string(root))
 	if err != nil {

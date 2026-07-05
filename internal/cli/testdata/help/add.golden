@@ -1,0 +1,49 @@
+Usage: gskill add <source> [flags]
+
+Add and install a new skill.
+
+Examples:
+
+    gskill add github.com/owner/repo --agent claude
+    gskill add github.com/owner/repo --skill deploy-helper --version '^2.0.0'
+    gskill add ./local/skills --all
+    gskill add github.com/owner/repo --list
+
+Arguments:
+  <source>    Skill source: git shorthand, URL, or local path.
+
+Flags:
+  -h, --help                   Show context-sensitive help.
+      --json                   Emit machine-readable JSON on stdout.
+      --quiet                  Suppress diagnostics on stderr.
+      --no-interactive         Disable prompts and colored output.
+      --yes                    Assume yes for confirmation prompts.
+      --offline                Operate without network access.
+      --no-cache               Bypass the content cache.
+      --dry-run                Report actions without applying them.
+      --config=STRING          Path to a config file.
+  -v, --verbose                Enable verbose diagnostics.
+  -C, --dir=STRING             Run as if gskill started in this directory.
+
+      --skill=SKILL,...        Select a discovered skill by name (repeatable;
+                               '*' selects all; name@path disambiguates).
+      --all                    Select every valid discovered skill.
+      --list                   List discovered skills without installing.
+      --path=STRING            In-repo path disambiguator for a duplicated
+                               --skill.
+      --version=STRING         Semver constraint (e.g. ^2.0.0).
+      --ref=STRING             Branch or tag to track.
+      --commit=STRING          Explicit commit SHA to pin.
+      --exact                  Pin to the exact resolved version.
+      --agent=AGENT,...        Target agent ID (repeatable).
+      --force                  Overwrite an existing declaration and re-resolve.
+      --global                 Install into the user-global location.
+      --project                Install into the project (default).
+      --auto                   Prefer a symlink, fall back to a copy (default).
+      --copy                   Copy instead of linking.
+      --symlink                Symlink, never copy.
+      --max-depth=INT          Maximum recursive scan depth (0 = unbounded).
+      --include=INCLUDE,...    Only discover skills whose in-repo path matches
+                               this glob (repeatable).
+      --exclude=EXCLUDE,...    Skip skills whose in-repo path matches this glob
+                               (repeatable).

@@ -20,15 +20,15 @@ Drive GSKILL from scripts and agents by consuming machine-readable output and br
 
 ```bash
 gskill list --json        # inventory of installed skills
-gskill check --json       # fast drift status
+gskill project check --json       # fast drift status
 gskill outdated --json    # available updates per skill
-gskill verify --json      # integrity result
+gskill project verify --json      # integrity result
 ```
 
 Parse stdout as JSON and branch on the exit code:
 
 ```bash
-if gskill check --json > status.json; then
+if gskill project check --json > status.json; then
   echo "in sync"
 else
   echo "drift or error (exit $?)"   # see the exit-codes reference

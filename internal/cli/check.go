@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/errs"
 )
 
 // checkCmd reports fast drift status.
@@ -12,7 +14,15 @@ type checkCmd struct {
 	FailOnDrift bool `name:"fail-on-drift" help:"Exit non-zero (7) if any drift is detected."`
 }
 
-// Run executes `gskill check`.
+// Help returns the detailed help shown by `gskill project check --help`.
+func (checkCmd) Help() string {
+	return examplesHelp(
+		"gskill project check",
+		"gskill project check --fail-on-drift",
+	)
+}
+
+// Run executes `gskill project check` (alias: `gskill check`).
 func (c checkCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	report, err := a.Check(ctx, string(root), c.FailOnDrift)
 	skills := make([]map[string]any, 0, len(report.Skills))
@@ -26,6 +36,9 @@ func (c checkCmd) Run(ctx context.Context, out *Output, a *app.App, root project
 	}
 	if rErr := out.Result(human, map[string]any{"has_drift": report.HasDrift, "skills": skills}); rErr != nil {
 		return rErr
+	}
+	if err != nil && errors.Is(err, errs.ErrDrift) {
+		return errs.WithHint(err, "run 'gskill project sync' to reconcile disk with the manifest")
 	}
 	return err
 }

@@ -10,7 +10,14 @@ import (
 // repairCmd re-materializes broken installs and cleans up staging.
 type repairCmd struct{}
 
-// Run executes `gskill repair`.
+// Help returns the detailed help shown by `gskill project repair --help`.
+func (repairCmd) Help() string {
+	return examplesHelp(
+		"gskill project repair",
+	)
+}
+
+// Run executes `gskill project repair` (alias: `gskill repair`).
 func (repairCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	res, err := a.Repair(ctx, string(root))
 	if err != nil {

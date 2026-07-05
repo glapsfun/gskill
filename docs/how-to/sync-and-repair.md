@@ -1,5 +1,8 @@
 # Sync and repair
 
+> `gskill project sync` / `gskill project repair` are the canonical commands;
+> the former flat `gskill sync` / `gskill repair` still work as silent aliases.
+
 Reconcile what's on disk with the lockfile, and fix installs that have gone missing or broken.
 
 ## Before you start
@@ -9,8 +12,8 @@ Reconcile what's on disk with the lockfile, and fix installs that have gone miss
 ## Make disk match the lock
 
 ```bash
-gskill sync              # install anything missing so disk matches the lock
-gskill sync --prune      # also remove gskill-managed installs not in the lock
+gskill project sync              # install anything missing so disk matches the lock
+gskill project sync --prune      # also remove gskill-managed installs not in the lock
 ```
 
 **Expected:** `sync` makes the installed state match the lockfile. Plain `sync` is additive; add
@@ -27,7 +30,7 @@ marker — remove those explicitly with `gskill remove <name>`.
 ## Repair broken installs
 
 ```bash
-gskill repair
+gskill project repair
 ```
 
 **Expected:** GSKILL re-materialises broken or modified installs from the store/cache and cleans up

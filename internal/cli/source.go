@@ -34,6 +34,14 @@ type sourceListCmd struct {
 	scanFlags
 }
 
+// Help returns the detailed help shown by `gskill source list --help`.
+func (sourceListCmd) Help() string {
+	return examplesHelp(
+		"gskill source list github.com/owner/repo",
+		"gskill source list ./local/skills --max-depth 2",
+	)
+}
+
 // Run lists every discovered skill (FR-032).
 func (c sourceListCmd) Run(ctx context.Context, out *Output, a *app.App) error {
 	res, err := a.SourceList(ctx, c.Source, c.opts())
@@ -63,6 +71,13 @@ type sourceInspectCmd struct {
 	scanFlags
 }
 
+// Help returns the detailed help shown by `gskill source inspect --help`.
+func (sourceInspectCmd) Help() string {
+	return examplesHelp(
+		"gskill source inspect github.com/owner/repo --skill deploy-helper",
+	)
+}
+
 // Run shows one skill's details (FR-033).
 func (c sourceInspectCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	insp, err := a.SourceInspect(ctx, c.Source, c.Skill, string(root), c.opts())
@@ -88,6 +103,13 @@ func (c sourceInspectCmd) Run(ctx context.Context, out *Output, a *app.App, root
 type sourceCheckCmd struct {
 	Source string `arg:"" help:"Skill source: git shorthand, URL, or local path."`
 	scanFlags
+}
+
+// Help returns the detailed help shown by `gskill source check --help`.
+func (sourceCheckCmd) Help() string {
+	return examplesHelp(
+		"gskill source check github.com/owner/repo",
+	)
 }
 
 // Run reports invalid and duplicate skills, exiting non-zero on problems (FR-034).

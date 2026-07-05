@@ -1,5 +1,8 @@
 # Use the TUI dashboard
 
+> `gskill dashboard` is the canonical command; the former `gskill tui` still
+> works as a silent alias.
+
 Launch GSKILL's interactive terminal dashboard to browse installed skills and preview their `SKILL.md`
 content.
 
@@ -13,7 +16,7 @@ content.
 ## Steps
 
 ```bash
-gskill tui
+gskill dashboard
 ```
 
 ## Expected result

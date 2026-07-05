@@ -19,7 +19,7 @@ import (
 func (a *App) installFrozen(ctx context.Context, req InstallRequest) (InstallResult, error) {
 	p := openProject(req.Root)
 	if !p.manifestExists() {
-		return InstallResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
+		return InstallResult{}, errNoManifest()
 	}
 	m, err := manifest.Load(p.manifestPath)
 	if err != nil {
@@ -91,7 +91,9 @@ func (a *App) agentsByID(ids []string) ([]agent.Agent, error) {
 	for _, id := range ids {
 		ag, ok := a.agents.Get(id)
 		if !ok {
-			return nil, fmt.Errorf("%w: locked agent %q is not available", errs.ErrUnsupportedAgent, id)
+			return nil, errs.WithHint(
+				fmt.Errorf("%w: locked agent %q is not available", errs.ErrUnsupportedAgent, id),
+				"run 'gskill doctor' to list detected agents")
 		}
 		out = append(out, ag)
 	}

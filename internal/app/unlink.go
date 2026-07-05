@@ -26,10 +26,12 @@ type UnlinkResult struct {
 func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune bool) (UnlinkResult, error) {
 	p := openProject(root)
 	if !p.manifestExists() {
-		return UnlinkResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
+		return UnlinkResult{}, errNoManifest()
 	}
 	if _, ok := a.agents.Get(agentID); !ok {
-		return UnlinkResult{}, fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, agentID)
+		return UnlinkResult{}, errs.WithHint(
+			fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, agentID),
+			"run 'gskill doctor' to list detected agents")
 	}
 	m, err := manifest.Load(p.manifestPath)
 	if err != nil {
@@ -56,17 +58,23 @@ func (a *App) unlinkOne(p *project, m *manifest.Manifest, lf *lockfile.Lockfile,
 	ms, inManifest := m.Skills[skill]
 	switch {
 	case !inLock && !inManifest:
-		return fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, skill)
+		return errs.WithHint(
+			fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, skill),
+			"run 'gskill list' to see installed skills")
 	case !inLock || !inManifest:
 		// A half-present skill would otherwise have its missing side written back
 		// from a zero value, corrupting the manifest or lockfile.
-		return fmt.Errorf("%w: skill %q is out of sync between the manifest and lockfile; run 'gskill sync' (or 'gskill lock') first",
-			errs.ErrLockMismatch, skill)
+		return errs.WithHint(
+			fmt.Errorf("%w: skill %q is out of sync between the manifest and lockfile",
+				errs.ErrLockMismatch, skill),
+			"run 'gskill project sync' (or 'gskill project lock') to reconcile them")
 	}
 
 	current := installedAgentIDs(lf, skill, ms)
 	if !contains(current, agentID) {
-		return fmt.Errorf("%w: skill %q is not installed for agent %q", errs.ErrInvalidManifest, skill, agentID)
+		return errs.WithHint(
+			fmt.Errorf("%w: skill %q is not installed for agent %q", errs.ErrInvalidManifest, skill, agentID),
+			"run 'gskill status' to see each skill's agents")
 	}
 
 	// Remove the agent's recorded target (confined), then drop it from lock +

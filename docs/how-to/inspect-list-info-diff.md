@@ -25,8 +25,8 @@ GSKILL records and warns about but does not resolve transitively).
 ## Compare intent, reality, and disk
 
 ```bash
-gskill diff              # all skills
-gskill diff <name>       # one skill
+gskill project diff              # all skills
+gskill project diff <name>       # one skill
 ```
 
 **Expected:** the differences between `gskill.toml` (intent), `gskill.lock` (reality), and what's

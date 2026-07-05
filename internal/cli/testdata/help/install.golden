@@ -1,0 +1,28 @@
+Usage: gskill install [flags]
+
+Install all declared skills (additive, idempotent).
+
+Examples:
+
+    gskill install
+    gskill install --frozen-lockfile
+    gskill install --global --copy
+
+Flags:
+  -h, --help               Show context-sensitive help.
+      --json               Emit machine-readable JSON on stdout.
+      --quiet              Suppress diagnostics on stderr.
+      --no-interactive     Disable prompts and colored output.
+      --yes                Assume yes for confirmation prompts.
+      --offline            Operate without network access.
+      --no-cache           Bypass the content cache.
+      --dry-run            Report actions without applying them.
+      --config=STRING      Path to a config file.
+  -v, --verbose            Enable verbose diagnostics.
+  -C, --dir=STRING         Run as if gskill started in this directory.
+
+      --global             Install into the user-global location.
+      --project            Install into the project (default).
+      --copy               Copy instead of symlinking.
+      --frozen-lockfile    Restore exactly from the lockfile; never modify it.
+      --update-lockfile    Allow the lockfile to be rewritten.

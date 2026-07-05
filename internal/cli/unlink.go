@@ -15,6 +15,14 @@ type unlinkCmd struct {
 	Prune bool   `help:"If this was the last agent, also remove the skill, active entry, and store content."`
 }
 
+// Help returns the detailed help shown by `gskill unlink --help`.
+func (unlinkCmd) Help() string {
+	return examplesHelp(
+		"gskill unlink my-skill --agent claude",
+		"gskill unlink my-skill --agent claude --prune",
+	)
+}
+
 // Run executes `gskill unlink`.
 func (c unlinkCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	res, err := a.Unlink(ctx, string(root), c.Skill, c.Agent, c.Prune)

@@ -1,0 +1,24 @@
+Usage: gskill project sync [flags]
+
+Reconcile disk to the manifest's desired state (--prune removes orphans).
+
+Examples:
+
+    gskill project sync
+    gskill project sync --prune
+
+Flags:
+  -h, --help              Show context-sensitive help.
+      --json              Emit machine-readable JSON on stdout.
+      --quiet             Suppress diagnostics on stderr.
+      --no-interactive    Disable prompts and colored output.
+      --yes               Assume yes for confirmation prompts.
+      --offline           Operate without network access.
+      --no-cache          Bypass the content cache.
+      --dry-run           Report actions without applying them.
+      --config=STRING     Path to a config file.
+  -v, --verbose           Enable verbose diagnostics.
+  -C, --dir=STRING        Run as if gskill started in this directory.
+
+      --prune             Remove agent targets and active entries the manifest
+                          no longer declares.
