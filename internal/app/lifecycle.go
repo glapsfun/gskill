@@ -61,7 +61,7 @@ func (a *App) Outdated(ctx context.Context, root string) (OutdatedReport, error)
 func (a *App) Update(ctx context.Context, root string, names []string) (InstallResult, error) {
 	p := openProject(root)
 	if !p.manifestExists() {
-		return InstallResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
+		return InstallResult{}, errNoManifest()
 	}
 	m, err := manifest.Load(p.manifestPath)
 	if err != nil {
@@ -83,7 +83,9 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 		for _, name := range targets {
 			ms, ok := m.Skills[name]
 			if !ok {
-				return fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, name)
+				return errs.WithHint(
+					fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, name),
+					"run 'gskill list' to see installed skills")
 			}
 			change, newMS, applyErr := a.installOne(ctx, p, lf, name, ms, InstallRequest{Root: root}, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
 			if applyErr != nil {
@@ -115,7 +117,7 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 func (a *App) Lock(ctx context.Context, root string) (InstallResult, error) {
 	p := openProject(root)
 	if !p.manifestExists() {
-		return InstallResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
+		return InstallResult{}, errNoManifest()
 	}
 	m, err := manifest.Load(p.manifestPath)
 	if err != nil {
@@ -174,7 +176,7 @@ type RemoveResult struct {
 func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveResult, error) {
 	p := openProject(root)
 	if !p.manifestExists() {
-		return RemoveResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
+		return RemoveResult{}, errNoManifest()
 	}
 	m, err := manifest.Load(p.manifestPath)
 	if err != nil {

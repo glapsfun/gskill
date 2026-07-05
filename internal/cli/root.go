@@ -2,18 +2,24 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/alecthomas/kong"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/selection"
 	"github.com/glapsfun/gskill/internal/version"
 )
 
-// rootCLI is the gskill command grammar: global flags plus the command tree.
+// rootCLI is the gskill command grammar: global flags plus the command tree,
+// organized into the CORE / INSPECT / PROJECT / MORE help sections. Field
+// order matters: kong renders command groups in order of first appearance.
 type rootCLI struct {
 	JSON          bool   `help:"Emit machine-readable JSON on stdout."`
 	Quiet         bool   `help:"Suppress diagnostics on stderr."`
@@ -26,31 +32,41 @@ type rootCLI struct {
 	Verbose       bool   `short:"v" help:"Enable verbose diagnostics."`
 	Dir           string `short:"C" help:"Run as if gskill started in this directory." type:"path"`
 
-	Version  versionCmd  `cmd:"" help:"Print the gskill version."`
-	Init     initCmd     `cmd:"" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
-	Add      addCmd      `cmd:"" help:"Add and install a new skill."`
-	Source   sourceCmd   `cmd:"" help:"Inspect a skill source (list/inspect/check) without installing."`
-	Find     findCmd     `cmd:"" help:"Search for skills in a source, a GitHub owner, or configured repositories."`
-	Install  installCmd  `cmd:"" help:"Install all declared skills (additive, idempotent)."`
-	Verify   verifyCmd   `cmd:"" help:"Re-hash installed content against the lockfile."`
-	Check    checkCmd    `cmd:"" help:"Report fast drift status."`
-	Outdated outdatedCmd `cmd:"" help:"Show skills with newer versions available."`
-	Update   updateCmd   `cmd:"" help:"Advance skills within their version constraints."`
-	Lock     lockCmd     `cmd:"" help:"Recompute the lockfile from the manifest."`
-	Remove   removeCmd   `cmd:"" help:"Uninstall skills and clean up."`
-	Sync     syncCmd     `cmd:"" help:"Reconcile disk to the manifest's desired state (--prune removes orphans)."`
-	Repair   repairCmd   `cmd:"" help:"Re-materialize broken installs and clean up staging."`
-	Unlink   unlinkCmd   `cmd:"" help:"Detach one agent from a skill (--prune removes it when the last agent goes)."`
+	Init    initCmd    `cmd:"" group:"core" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
+	Add     addCmd     `cmd:"" group:"core" help:"Add and install a new skill."`
+	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent)."`
+	Update  updateCmd  `cmd:"" group:"core" help:"Advance skills within their version constraints."`
+	Remove  removeCmd  `cmd:"" group:"core" help:"Uninstall skills and clean up."`
 
-	Status     statusCmd     `cmd:"" help:"Show installed skills, their agents, modes, and per-target health."`
-	List       listCmd       `cmd:"" help:"List installed skills and their status."`
-	Info       infoCmd       `cmd:"" help:"Show details for one skill."`
-	Diff       diffCmd       `cmd:"" help:"Show manifest/lock/disk differences."`
-	Doctor     doctorCmd     `cmd:"" help:"Check the environment and declared requirements."`
-	Cache      cacheCmd      `cmd:"" help:"Manage the content cache."`
-	ConfigCmd  configCmd     `cmd:"" name:"config" help:"Inspect layered configuration."`
-	Completion completionCmd `cmd:"" help:"Print a shell completion script."`
-	TUI        tuiCmd        `cmd:"" name:"tui" help:"Launch the interactive dashboard."`
+	List     listCmd     `cmd:"" group:"inspect" help:"List installed skills and their status."`
+	Status   statusCmd   `cmd:"" group:"inspect" help:"Show installed skills, their agents, modes, and per-target health."`
+	Info     infoCmd     `cmd:"" group:"inspect" help:"Show details for one skill."`
+	Search   searchCmd   `cmd:"" group:"inspect" aliases:"find" help:"Search for skills in a source, a GitHub owner, or configured repositories."`
+	Outdated outdatedCmd `cmd:"" group:"inspect" help:"Show skills with newer versions available."`
+
+	// Hidden aliases of the regrouped maintenance commands (see aliasTable).
+	// They reuse the same command structs as the project group, so behavior is
+	// identical by construction; the group tag keeps them out of kong's
+	// ungrouped "Commands:" bucket, hidden keeps them out of every help
+	// listing, and declaring them before Project keeps the section's spacing
+	// clean (kong emits an entry separator only after visible nodes).
+	Sync   syncCmd   `cmd:"" hidden:"" group:"project" help:"Reconcile disk to the manifest's desired state (--prune removes orphans)."`
+	Repair repairCmd `cmd:"" hidden:"" group:"project" help:"Re-materialize broken installs and clean up staging."`
+	Lock   lockCmd   `cmd:"" hidden:"" group:"project" help:"Recompute the lockfile from the manifest."`
+	Verify verifyCmd `cmd:"" hidden:"" group:"project" help:"Re-hash installed content against the lockfile."`
+	Check  checkCmd  `cmd:"" hidden:"" group:"project" help:"Report fast drift status."`
+	Diff   diffCmd   `cmd:"" hidden:"" group:"project" help:"Show manifest/lock/disk differences."`
+
+	Project projectCmd `cmd:"" group:"project" help:"Manage this project's manifest, lockfile, and installed state."`
+
+	Source     sourceCmd     `cmd:"" group:"more" help:"Inspect a skill source (list/inspect/check) without installing."`
+	Cache      cacheCmd      `cmd:"" group:"more" help:"Manage the content cache."`
+	ConfigCmd  configCmd     `cmd:"" name:"config" group:"more" help:"Inspect layered configuration."`
+	Unlink     unlinkCmd     `cmd:"" group:"more" help:"Detach one agent from a skill (--prune removes it when the last agent goes)."`
+	Doctor     doctorCmd     `cmd:"" group:"more" help:"Check the environment and declared requirements."`
+	Dashboard  tuiCmd        `cmd:"" name:"dashboard" group:"more" aliases:"tui" help:"Launch the interactive dashboard."`
+	Completion completionCmd `cmd:"" group:"more" help:"Print a shell completion script."`
+	Version    versionCmd    `cmd:"" group:"more" help:"Print the gskill version."`
 }
 
 // projectRoot is the resolved working directory, bound for command use.
@@ -77,12 +93,68 @@ func (r *rootCLI) resolveDir() {
 // versionCmd prints the build version.
 type versionCmd struct{}
 
+// Help returns the detailed help shown by `gskill version --help`.
+func (versionCmd) Help() string {
+	return examplesHelp(
+		"gskill version",
+		"gskill version --json",
+	)
+}
+
 // Run prints the version line (human) or a {"version": ...} object (JSON).
 func (versionCmd) Run(out *Output) error {
 	if out.JSON() {
 		return out.Result("", map[string]string{"version": version.Version()})
 	}
 	return out.Result(version.String(), nil)
+}
+
+// helpWrapWidth pins help wrapping so output is byte-identical regardless of
+// terminal size; the help golden tests depend on it.
+const helpWrapWidth = 80
+
+// grammarOptions returns the kong options that define the gskill grammar and
+// help layout. Run and DocsModel share them so the shipped CLI, the help
+// golden tests, and the generated reference docs can never disagree.
+func grammarOptions() []kong.Option {
+	return []kong.Option{
+		kong.Name("gskill"),
+		kong.Description("Reproducible package manager for agentic AI skills."),
+		kong.ExplicitGroups([]kong.Group{
+			{Key: "core", Title: "CORE"},
+			{Key: "inspect", Title: "INSPECT"},
+			{Key: "project", Title: "PROJECT (manifest · lockfile · installed state)"},
+			{Key: "more", Title: "MORE"},
+		}),
+		kong.ConfigureHelp(kong.HelpOptions{
+			NoExpandSubcommands: true,
+			WrapUpperBound:      helpWrapWidth,
+		}),
+	}
+}
+
+// unknownCommandRE captures the offending token of an unknown-command error,
+// with or without kong's own trailing suggestion.
+var unknownCommandRE = regexp.MustCompile(`^unexpected argument (\S+?)(, did you mean .*)?$`)
+
+// parseErrorNode returns the command node kong had selected when the parse
+// failed, or nil when the failure happened before any command matched (e.g.
+// an unknown top-level token or a flags-only invocation).
+func parseErrorNode(err error) *kong.Node {
+	var pe *kong.ParseError
+	if errors.As(err, &pe) && pe.Context != nil {
+		return pe.Context.Selected()
+	}
+	return nil
+}
+
+// isMissingSubcommand reports whether err is kong's missing-subcommand
+// validation error for the given selected node: a group command was named but
+// no leaf was chosen. Missing positional arguments produce `expected "<arg>"`
+// instead, so they keep failing as usage errors.
+func isMissingSubcommand(err error, selected *kong.Node) bool {
+	return selected != nil && len(selected.Children) > 0 &&
+		strings.HasPrefix(err.Error(), "expected one of ")
 }
 
 // Run parses args and executes the selected command, writing to stdout/stderr,
@@ -95,12 +167,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	// prints the help screen to stdout and then calls Exit, which we capture
 	// here instead of terminating the process so Run stays testable.
 	var helpRequested bool
-	parser, err := kong.New(&root,
-		kong.Name("gskill"),
-		kong.Description("Reproducible package manager for agentic AI skills."),
+	options := append(grammarOptions(),
 		kong.Writers(stdout, stderr),
 		kong.Exit(func(int) { helpRequested = true }),
 	)
+	parser, err := kong.New(&root, options...)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return int(errs.CodeGeneric)
@@ -120,7 +191,23 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 		return int(errs.CodeOK)
 	}
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, err)
+		selected := parseErrorNode(err)
+		// A group command without a subcommand (e.g. `gskill project`) is a
+		// navigation step, not a mistake: show that group's help and succeed,
+		// exactly as if --help had been passed. Not in --json mode, though —
+		// machine consumers need the strict usage error and a clean stdout.
+		if isMissingSubcommand(err, selected) && !root.JSON && retryWithHelp(args, options, &helpRequested) {
+			return int(errs.CodeOK)
+		}
+		// Only rewrite root-level unknown-command errors: deeper in the tree
+		// (a selected command with a stray or misspelled argument) kong's own
+		// context-aware message is the correct one.
+		msg := err.Error()
+		if selected == nil {
+			msg = suggestAlternative(err, parser.Model)
+		}
+		_, _ = fmt.Fprintln(stderr, msg)
+		_, _ = fmt.Fprintln(stderr, "Run 'gskill --help' for usage.")
 		return int(errs.CodeUsage)
 	}
 
@@ -138,7 +225,64 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 
 	if runErr := kctx.Run(out); runErr != nil {
 		out.Diag("error: %v", runErr)
+		if hint := errs.HintOf(runErr); hint != "" {
+			out.Diag("→ %s", hint)
+		}
 		return errs.ExitCode(runErr)
 	}
 	return 0
+}
+
+// retryWithHelp re-parses args with --help appended, using a fresh grammar so
+// the failed first parse leaves no state behind and the caller's args slice
+// is never touched. It reports whether kong rendered a help screen (observed
+// through the shared helpRequested exit-capture flag).
+func retryWithHelp(args []string, options []kong.Option, helpRequested *bool) bool {
+	var retryRoot rootCLI
+	retryArgs := append(append(make([]string, 0, len(args)+1), args...), "--help")
+	retryParser, err := kong.New(&retryRoot, options...)
+	if err != nil {
+		return false
+	}
+	_, _ = retryParser.Parse(retryArgs)
+	return *helpRequested
+}
+
+// suggestAlternative rewrites an unknown-command parse error with a
+// deterministic "did you mean?" suggestion computed over the grammar's
+// visible top-level commands and the alias table (kong's own suggester never
+// sees aliases and casts a looser net). Alias hits resolve to their canonical
+// form so users are always steered toward the documented surface; when this
+// suggester finds nothing, kong's original message — including any suggestion
+// of its own — is kept as-is.
+func suggestAlternative(err error, model *kong.Application) string {
+	msg := err.Error()
+	m := unknownCommandRE.FindStringSubmatch(msg)
+	if m == nil {
+		return msg
+	}
+
+	candidates := make([]string, 0, len(model.Children)+len(aliasTable))
+	for _, node := range model.Children {
+		if node.Type == kong.CommandNode && !node.Hidden {
+			candidates = append(candidates, node.Name)
+		}
+	}
+	canonicalOf := make(map[string]string, len(aliasTable))
+	for _, a := range aliasTable {
+		if a.Kind != aliasKindCommand {
+			continue
+		}
+		candidates = append(candidates, a.Old)
+		canonicalOf[a.Old] = a.Canonical
+	}
+	hits := selection.Closest(strings.Trim(m[1], `"`), candidates, 1)
+	if len(hits) == 0 {
+		return msg
+	}
+	hit := hits[0]
+	if canonical, ok := canonicalOf[hit]; ok {
+		hit = canonical
+	}
+	return fmt.Sprintf("unexpected argument %s, did you mean %q?", m[1], hit)
 }

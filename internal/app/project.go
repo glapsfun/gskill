@@ -1,11 +1,13 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/glapsfun/gskill/internal/cache"
 	"github.com/glapsfun/gskill/internal/config"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/store"
 )
@@ -16,6 +18,14 @@ const (
 	LockName     = "gskill.lock"
 	stateDirName = ".gskill"
 )
+
+// errNoManifest is the shared missing-manifest failure, carrying the next
+// step as a hint so every command reports it identically.
+func errNoManifest() error {
+	return errs.WithHint(
+		fmt.Errorf("%w: no %s found", errs.ErrInvalidManifest, ManifestName),
+		"run 'gskill init' to create one")
+}
 
 // project bundles the resolved paths and content stores for one project root.
 type project struct {

@@ -11,7 +11,15 @@ import (
 // diffCmd reports manifest/lock/disk differences.
 type diffCmd struct{}
 
-// Run executes `gskill diff`.
+// Help returns the detailed help shown by `gskill project diff --help`.
+func (diffCmd) Help() string {
+	return examplesHelp(
+		"gskill project diff",
+		"gskill project diff --json",
+	)
+}
+
+// Run executes `gskill project diff` (alias: `gskill diff`).
 func (diffCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	entries, err := a.Diff(ctx, string(root))
 	if err != nil {

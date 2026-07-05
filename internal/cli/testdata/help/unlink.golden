@@ -1,0 +1,28 @@
+Usage: gskill unlink --agent=STRING <skill> [flags]
+
+Detach one agent from a skill (--prune removes it when the last agent goes).
+
+Examples:
+
+    gskill unlink my-skill --agent claude
+    gskill unlink my-skill --agent claude --prune
+
+Arguments:
+  <skill>    The installed skill to unlink an agent from.
+
+Flags:
+  -h, --help              Show context-sensitive help.
+      --json              Emit machine-readable JSON on stdout.
+      --quiet             Suppress diagnostics on stderr.
+      --no-interactive    Disable prompts and colored output.
+      --yes               Assume yes for confirmation prompts.
+      --offline           Operate without network access.
+      --no-cache          Bypass the content cache.
+      --dry-run           Report actions without applying them.
+      --config=STRING     Path to a config file.
+  -v, --verbose           Enable verbose diagnostics.
+  -C, --dir=STRING        Run as if gskill started in this directory.
+
+      --agent=STRING      The agent ID to detach.
+      --prune             If this was the last agent, also remove the skill,
+                          active entry, and store content.

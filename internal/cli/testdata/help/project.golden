@@ -1,0 +1,35 @@
+Usage: gskill project <command> [flags]
+
+Manage this project's manifest, lockfile, and installed state.
+
+Flags:
+  -h, --help              Show context-sensitive help.
+      --json              Emit machine-readable JSON on stdout.
+      --quiet             Suppress diagnostics on stderr.
+      --no-interactive    Disable prompts and colored output.
+      --yes               Assume yes for confirmation prompts.
+      --offline           Operate without network access.
+      --no-cache          Bypass the content cache.
+      --dry-run           Report actions without applying them.
+      --config=STRING     Path to a config file.
+  -v, --verbose           Enable verbose diagnostics.
+  -C, --dir=STRING        Run as if gskill started in this directory.
+
+PROJECT (manifest · lockfile · installed state)
+  project sync [flags]
+    Reconcile disk to the manifest's desired state (--prune removes orphans).
+
+  project repair
+    Re-materialize broken installs and clean up staging.
+
+  project lock
+    Recompute the lockfile from the manifest.
+
+  project verify
+    Re-hash installed content against the lockfile.
+
+  project check [flags]
+    Report fast drift status.
+
+  project diff
+    Show manifest/lock/disk differences.

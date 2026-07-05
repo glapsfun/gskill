@@ -11,6 +11,14 @@ import (
 // listCmd lists installed skills with status.
 type listCmd struct{}
 
+// Help returns the detailed help shown by `gskill list --help`.
+func (listCmd) Help() string {
+	return examplesHelp(
+		"gskill list",
+		"gskill list --json",
+	)
+}
+
 // Run executes `gskill list`.
 func (listCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	skills, err := a.List(ctx, string(root))

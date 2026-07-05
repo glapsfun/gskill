@@ -9,11 +9,8 @@ import "github.com/alecthomas/kong"
 // about the shipped CLI behavior.
 func DocsModel() (*kong.Application, error) {
 	var root rootCLI
-	parser, err := kong.New(&root,
-		kong.Name("gskill"),
-		kong.Description("Reproducible package manager for agentic AI skills."),
-		kong.Exit(func(int) {}),
-	)
+	options := append(grammarOptions(), kong.Exit(func(int) {}))
+	parser, err := kong.New(&root, options...)
 	if err != nil {
 		return nil, err
 	}

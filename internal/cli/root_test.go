@@ -121,7 +121,7 @@ func TestRun_HelpListsMainCommandsAndFlags(t *testing.T) {
 
 	stdout, _, _ := run(t)
 
-	for _, cmd := range []string{"install", "add", "verify", "sync", "list"} {
+	for _, cmd := range []string{"install", "add", "project", "search", "list"} {
 		if !strings.Contains(stdout, cmd) {
 			t.Errorf("help stdout missing main command %q\nstdout: %q", cmd, stdout)
 		}

@@ -55,6 +55,21 @@ func RenderCommands(model *kong.Application) string {
 	return normalizeTrailing(b.String())
 }
 
+// commandHeading renders a command's reference heading, annotating retained
+// old names (kong aliases) so the docs match the help output (e.g.
+// "`search` (alias: `find`)").
+func commandHeading(node *kong.Node, name string) string {
+	heading := "## `" + name + "`"
+	if len(node.Aliases) > 0 {
+		quoted := make([]string, 0, len(node.Aliases))
+		for _, a := range node.Aliases {
+			quoted = append(quoted, "`"+a+"`")
+		}
+		heading += " (alias: " + strings.Join(quoted, ", ") + ")"
+	}
+	return heading
+}
+
 // normalizeTrailing guarantees exactly one trailing newline so the output is
 // stable and agrees with the repo's end-of-file hook.
 func normalizeTrailing(s string) string {
@@ -62,10 +77,14 @@ func normalizeTrailing(s string) string {
 }
 
 // writeCommand renders one command node (and any one-level subcommands) using
-// the fully-qualified name path (e.g. "cache list").
+// the fully-qualified name path (e.g. "cache list"). Hidden nodes are skipped:
+// they are silent aliases of canonical commands, not documented surface.
 func writeCommand(b *strings.Builder, node *kong.Node, name string) {
+	if node.Hidden {
+		return
+	}
 	writeLine(b, "")
-	writeLine(b, "## `"+name+"`")
+	writeLine(b, commandHeading(node, name))
 	writeLine(b, "")
 	if help := strings.TrimSpace(node.Help); help != "" {
 		writeLine(b, help)

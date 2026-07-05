@@ -1,0 +1,31 @@
+Usage: gskill source inspect --skill=STRING <source> [flags]
+
+Show one skill's metadata, path, and diagnostics.
+
+Examples:
+
+    gskill source inspect github.com/owner/repo --skill deploy-helper
+
+Arguments:
+  <source>    Skill source: git shorthand, URL, or local path.
+
+Flags:
+  -h, --help                   Show context-sensitive help.
+      --json                   Emit machine-readable JSON on stdout.
+      --quiet                  Suppress diagnostics on stderr.
+      --no-interactive         Disable prompts and colored output.
+      --yes                    Assume yes for confirmation prompts.
+      --offline                Operate without network access.
+      --no-cache               Bypass the content cache.
+      --dry-run                Report actions without applying them.
+      --config=STRING          Path to a config file.
+  -v, --verbose                Enable verbose diagnostics.
+  -C, --dir=STRING             Run as if gskill started in this directory.
+
+      --skill=STRING           Skill to inspect (name or name@path).
+      --ref=STRING             Branch or tag to scan.
+      --max-depth=INT          Maximum recursive scan depth (0 = unbounded).
+      --include=INCLUDE,...    Only discover skills whose in-repo path matches
+                               this glob (repeatable).
+      --exclude=EXCLUDE,...    Skip skills whose in-repo path matches this glob
+                               (repeatable).

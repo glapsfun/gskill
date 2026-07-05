@@ -13,6 +13,14 @@ type outdatedCmd struct {
 	ExitCode bool `name:"exit-code" help:"Exit 8 if any update is available."`
 }
 
+// Help returns the detailed help shown by `gskill outdated --help`.
+func (outdatedCmd) Help() string {
+	return examplesHelp(
+		"gskill outdated",
+		"gskill outdated --exit-code",
+	)
+}
+
 // Run executes `gskill outdated`.
 func (c outdatedCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	report, err := a.Outdated(ctx, string(root))
@@ -40,7 +48,7 @@ func (c outdatedCmd) Run(ctx context.Context, out *Output, a *app.App, root proj
 		return rErr
 	}
 	if c.ExitCode && report.AnyAvailable {
-		return errs.ErrUpdateAvailable
+		return errs.WithHint(errs.ErrUpdateAvailable, "run 'gskill update' to advance skills within their constraints")
 	}
 	return nil
 }

@@ -11,6 +11,14 @@ import (
 // statusCmd reports installed skills, their agents, modes, and per-target health.
 type statusCmd struct{}
 
+// Help returns the detailed help shown by `gskill status --help`.
+func (statusCmd) Help() string {
+	return examplesHelp(
+		"gskill status",
+		"gskill status --json",
+	)
+}
+
 // Run executes `gskill status`.
 func (statusCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	report, err := a.Status(ctx, string(root))

@@ -8,16 +8,26 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 )
 
-// findCmd searches for skills within a source, a GitHub owner, or the configured
-// repositories, always including locally installed skills.
-type findCmd struct {
+// searchCmd searches for skills within a source, a GitHub owner, or the
+// configured repositories, always including locally installed skills. Its
+// canonical name is `search`; the original `find` remains a kong alias.
+type searchCmd struct {
 	Query  string `arg:"" help:"Keyword to search for (matches name and description)."`
 	Source string `help:"Search within one source."`
 	Owner  string `help:"Search a GitHub user/org's repositories."`
 }
 
-// Run executes `gskill find`.
-func (c findCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+// Help returns the detailed help shown by `gskill search --help`.
+func (searchCmd) Help() string {
+	return examplesHelp(
+		"gskill search kubernetes",
+		"gskill search deploy --owner acme",
+		"gskill search helper --source github.com/owner/repo",
+	)
+}
+
+// Run executes `gskill search` (alias: `gskill find`).
+func (c searchCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	hits, warnings, err := a.Find(ctx, c.Query, app.FindScope{
 		Source: c.Source,
 		Owner:  c.Owner,

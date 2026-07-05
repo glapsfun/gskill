@@ -20,7 +20,7 @@ rewrites `gskill.lock`. Commit the updated lockfile.
 ## Re-lock without bumping versions
 
 ```bash
-gskill lock              # recompute the lock from the manifest, honouring current pins
+gskill project lock              # recompute the lock from the manifest, honouring current pins
 ```
 
 **Expected:** the lockfile is recomputed from the manifest **without** advancing any version — use this
@@ -28,7 +28,7 @@ after hand-editing `gskill.toml`. It does not bump pins.
 
 ## Expected result
 
-- `gskill update` may change resolved versions; `gskill lock` never does.
+- `gskill update` may change resolved versions; `gskill project lock` never does.
 - Both produce a deterministic `gskill.lock`. Review the diff before committing — the lockfile diff
   should match your intent.
 

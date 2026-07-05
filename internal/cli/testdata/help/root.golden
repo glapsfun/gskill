@@ -1,0 +1,79 @@
+Usage: gskill <command> [flags]
+
+Reproducible package manager for agentic AI skills.
+
+Flags:
+  -h, --help              Show context-sensitive help.
+      --json              Emit machine-readable JSON on stdout.
+      --quiet             Suppress diagnostics on stderr.
+      --no-interactive    Disable prompts and colored output.
+      --yes               Assume yes for confirmation prompts.
+      --offline           Operate without network access.
+      --no-cache          Bypass the content cache.
+      --dry-run           Report actions without applying them.
+      --config=STRING     Path to a config file.
+  -v, --verbose           Enable verbose diagnostics.
+  -C, --dir=STRING        Run as if gskill started in this directory.
+
+CORE
+  init [flags]
+    Scaffold a gskill project (manifest, state dir, gitignore).
+
+  add <source> [flags]
+    Add and install a new skill.
+
+  install [flags]
+    Install all declared skills (additive, idempotent).
+
+  update [<skills> ...] [flags]
+    Advance skills within their version constraints.
+
+  remove <skills> ... [flags]
+    Uninstall skills and clean up.
+
+INSPECT
+  list [flags]
+    List installed skills and their status.
+
+  status [flags]
+    Show installed skills, their agents, modes, and per-target health.
+
+  info <name> [flags]
+    Show details for one skill.
+
+  search (find) <query> [flags]
+    Search for skills in a source, a GitHub owner, or configured repositories.
+
+  outdated [flags]
+    Show skills with newer versions available.
+
+PROJECT (manifest · lockfile · installed state)
+  project <command> [flags]
+    Manage this project's manifest, lockfile, and installed state.
+
+MORE
+  source <command> [flags]
+    Inspect a skill source (list/inspect/check) without installing.
+
+  cache <command> [flags]
+    Manage the content cache.
+
+  config <command> [flags]
+    Inspect layered configuration.
+
+  unlink --agent=STRING <skill> [flags]
+    Detach one agent from a skill (--prune removes it when the last agent goes).
+
+  doctor [flags]
+    Check the environment and declared requirements.
+
+  dashboard (tui) [flags]
+    Launch the interactive dashboard.
+
+  completion <shell> [flags]
+    Print a shell completion script.
+
+  version [flags]
+    Print the gskill version.
+
+Run "gskill <command> --help" for more information on a command.

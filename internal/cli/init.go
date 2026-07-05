@@ -10,6 +10,14 @@ import (
 // initCmd scaffolds a gskill project.
 type initCmd struct{}
 
+// Help returns the detailed help shown by `gskill init --help`.
+func (initCmd) Help() string {
+	return examplesHelp(
+		"gskill init",
+		"gskill -C path/to/repo init",
+	)
+}
+
 // Run executes `gskill init`.
 func (initCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	res, err := a.Init(ctx, string(root))

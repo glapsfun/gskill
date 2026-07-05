@@ -13,6 +13,14 @@ type infoCmd struct {
 	Name string `arg:"" help:"Skill name."`
 }
 
+// Help returns the detailed help shown by `gskill info --help`.
+func (infoCmd) Help() string {
+	return examplesHelp(
+		"gskill info my-skill",
+		"gskill info my-skill --json",
+	)
+}
+
 // Run executes `gskill info`.
 func (c infoCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	info, err := a.Info(ctx, string(root), c.Name)

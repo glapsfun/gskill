@@ -12,7 +12,7 @@ available. GSKILL is non-interactive by default, so these commands are CI-safe o
 
 ```bash
 gskill install --frozen-lockfile     # restore exactly; exit 4 if lock is out of sync
-gskill check --fail-on-drift         # exit 7 if installed state drifts from the lock
+gskill project check --fail-on-drift         # exit 7 if installed state drifts from the lock
 ```
 
 **Expected:** both exit `0` on a clean, in-sync project. `check --fail-on-drift` exits **`7`** if drift
@@ -30,7 +30,7 @@ Use this in a scheduled job to be notified, not in the main build if you don't w
 ## Reading results in scripts
 
 ```bash
-gskill check --json                  # structured status on stdout
+gskill project check --json                  # structured status on stdout
 ```
 
 Diagnostics go to **stderr**; the `--json` result is the only thing on **stdout**, so it stays

@@ -109,7 +109,7 @@ type AddResult struct {
 func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	p := openProject(req.Root)
 	if !p.manifestExists() {
-		return AddResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
+		return AddResult{}, errNoManifest()
 	}
 	m, err := manifest.Load(p.manifestPath)
 	if err != nil {
@@ -625,7 +625,7 @@ func (a *App) Install(ctx context.Context, req InstallRequest) (InstallResult, e
 
 	p := openProject(req.Root)
 	if !p.manifestExists() {
-		return InstallResult{}, fmt.Errorf("%w: no %s; run 'gskill init' first", errs.ErrInvalidManifest, ManifestName)
+		return InstallResult{}, errNoManifest()
 	}
 	m, err := manifest.Load(p.manifestPath)
 	if err != nil {
@@ -742,7 +742,9 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 		for _, id := range ids {
 			ag, ok := a.agents.Get(id)
 			if !ok {
-				return nil, fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, id)
+				return nil, errs.WithHint(
+					fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, id),
+					"run 'gskill doctor' to list detected agents")
 			}
 			out = append(out, ag)
 		}
@@ -766,9 +768,10 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 	for _, ag := range a.agents.All() {
 		known = append(known, ag.ID())
 	}
-	return nil, fmt.Errorf(
-		"%w: no target agent specified and none detected; pass --agent <id> (known: %s)",
-		errs.ErrUnsupportedAgent, strings.Join(known, ", "))
+	return nil, errs.WithHint(
+		fmt.Errorf("%w: no target agent specified and none detected (known: %s)",
+			errs.ErrUnsupportedAgent, strings.Join(known, ", ")),
+		"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing")
 }
 
 // installRequest assembles an installer.Request with shared defaults.
