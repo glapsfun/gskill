@@ -141,7 +141,7 @@ No overlap between updaters — each source has exactly one owner:
 | Source | Owner | Notes |
 |--------|-------|-------|
 | `go.mod` / `go.sum` | **Dependabot** (`gomod`) | grouped minor/patch |
-| `.github/workflows/*` `uses:` SHAs | **Dependabot** (`github-actions`) | bumps the SHA **and** the trailing `# vX.Y.Z` comment |
+| `.github/workflows/*` `uses:` SHAs | **Dependabot** (`github-actions`) | bumps the SHA **and** the trailing `# vX.Y.Z` comment; all `github/codeql-action/*` components are grouped into one PR and must remain on the same version |
 | `.config/tool-versions` | **Renovate** (one custom manager) | the only manager Renovate runs |
 
 Every Dependabot/Renovate PR triggers the full CI gate before it can merge.
