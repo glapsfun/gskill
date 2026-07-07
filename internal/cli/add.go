@@ -301,7 +301,7 @@ func skillChooser(interactive bool) func([]discovery.DiscoveredSkill) ([]discove
 	return func(cands []discovery.DiscoveredSkill) ([]discovery.DiscoveredSkill, error) {
 		items := make([]tui.SkillItem, len(cands))
 		for i, s := range cands {
-			items[i] = tui.SkillItem{ID: s.ID, DisplayName: s.DisplayName, RepoPath: s.RepoPath, Valid: s.Valid}
+			items[i] = tui.SkillItem{ID: s.ID, DisplayName: s.DisplayName, Description: s.Description, RepoPath: s.RepoPath, Valid: s.Valid}
 		}
 		idx, err := tui.SelectSkills(items, true)
 		if err != nil {

@@ -1076,3 +1076,143 @@ func TestWizard_CancelAgainstRealAppWritesNothing(t *testing.T) {
 		t.Error("cancel left installed files behind (SC-002)")
 	}
 }
+
+// ---- Phase 9 convergence tests (spec 011 T042–T046) ----------------------------
+
+func describedSkills() []discovery.DiscoveredSkill {
+	return []discovery.DiscoveredSkill{
+		{ID: "alpha", DisplayName: "alpha", Description: "reviews pull requests", Valid: true},
+		{ID: "beta", DisplayName: "beta", Description: "debugs kubernetes pods", Valid: true},
+		{
+			ID: "broken", DisplayName: "broken", Description: "half-written", Valid: false,
+			Problems: []discovery.Diagnostic{{Severity: discovery.SeverityError, Message: "missing description in frontmatter"}},
+		},
+	}
+}
+
+func TestWizardSelect_FilterMatchesDescriptions(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, describedSkills(), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter")) // → select
+
+	// "kubernetes" appears only in beta's description (FR-010).
+	m = drive(t, m, key("/"))
+	for _, r := range "kubernetes" {
+		m = drive(t, m, key(string(r)))
+	}
+	view := m.View()
+	if !strings.Contains(view, "beta") {
+		t.Errorf("description filter lost the matching skill:\n%s", view)
+	}
+	if strings.Contains(view, "alpha") {
+		t.Errorf("description filter did not narrow the list:\n%s", view)
+	}
+}
+
+func TestWizardSelect_RowsShowDescriptions(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, describedSkills(), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), win(120, 30)) // wide enough for descriptions
+
+	if v := m.View(); !strings.Contains(v, "reviews pull requests") {
+		t.Errorf("selection rows missing skill descriptions (FR-009):\n%s", v)
+	}
+}
+
+func TestWizardSelect_InvalidReasonShownUnderCursor(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, describedSkills(), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), win(120, 30))
+	m = drive(t, m, key("down"), key("down")) // cursor onto "broken"
+
+	if v := m.View(); !strings.Contains(v, "missing description in frontmatter") {
+		t.Errorf("invalid-skill reason not available on the invalid row (FR-011):\n%s", v)
+	}
+}
+
+func TestWizardWelcome_ReportsAgentsAndVersions(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	phases := fakePhases(&calls, fakeSkills("alpha", "beta"), nil)
+	phases.Agents = func(context.Context) ([]app.AgentChoice, error) {
+		return []app.AgentChoice{
+			{ID: "claude", DisplayName: "Claude", Detected: true, Preselected: true},
+			{ID: "codex", DisplayName: "Codex"},
+		}, nil
+	}
+	phases.Versions = func(context.Context) (app.VersionList, error) {
+		return app.VersionList{Candidates: []app.VersionCandidate{
+			{Kind: app.VersionLatest, Label: "latest → v2.0.0"},
+			{Kind: app.VersionRelease, Label: "v2.0.0", Ref: "v2.0.0"},
+			{Kind: app.VersionRelease, Label: "v1.0.0", Ref: "v1.0.0"},
+			{Kind: app.VersionBranch, Label: "main", Ref: "main"},
+		}}, nil
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  phases,
+	})
+	m = start(t, m)
+
+	view := m.View()
+	if !strings.Contains(view, "1 detected") {
+		t.Errorf("welcome does not report detected agents (FR-005/US1-AC1):\n%s", view)
+	}
+	if !strings.Contains(view, "2 release") {
+		t.Errorf("welcome does not report available versions (FR-005/US1-AC1):\n%s", view)
+	}
+}
+
+func TestWizardVersion_ListIsBoundedAndFollowsCursor(t *testing.T) {
+	t.Parallel()
+
+	candidates := []app.VersionCandidate{{Kind: app.VersionLatest, Label: "latest"}}
+	for i := range 100 {
+		candidates = append(candidates, app.VersionCandidate{
+			Kind: app.VersionRelease, Label: fmt.Sprintf("v1.%d.0", i), Ref: fmt.Sprintf("v1.%d.0", i),
+		})
+	}
+	var calls phaseCalls
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, app.VersionList{Candidates: candidates}),
+	}))
+	m = drive(t, m, win(80, 24))
+
+	if got := strings.Count(m.View(), "\n"); got > 24 {
+		t.Errorf("version list renders %d lines at a 24-row terminal (FR-022)", got)
+	}
+	if !strings.Contains(m.View(), "more") {
+		t.Errorf("bounded version list missing a more-content marker:\n%s", m.View())
+	}
+
+	// Cursor far down must remain visible.
+	for range 60 {
+		m = drive(t, m, key("down"))
+	}
+	if !strings.Contains(m.View(), "v1.59.0") {
+		t.Errorf("cursor row not kept visible while scrolling:\n%s", m.View())
+	}
+	if got := strings.Count(m.View(), "\n"); got > 24 {
+		t.Errorf("scrolled version list renders %d lines at a 24-row terminal", got)
+	}
+}

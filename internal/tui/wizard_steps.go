@@ -84,7 +84,9 @@ func (m wizardModel) viewWelcome() string {
 	if invalid > 0 {
 		fmt.Fprintf(&b, " (%d invalid)", invalid)
 	}
-	b.WriteString(".\n\n")
+	b.WriteString(".\n")
+	m.writeWelcomeDetection(&b)
+	b.WriteString("\n")
 	b.WriteString(m.st.Subtitle.Render("This guided flow will walk you through:") + "\n")
 	b.WriteString("  1. selecting skills   2. choosing a version   3. picking target agents\n")
 	b.WriteString("  4. reviewing the plan  5. approving            6. installing\n")
@@ -94,6 +96,46 @@ func (m wizardModel) viewWelcome() string {
 	}
 	b.WriteString(m.hintLine("enter continue · q cancel"))
 	return b.String()
+}
+
+// writeWelcomeDetection reports detected agents and available versions on the
+// welcome step (FR-005, US1/AC1). Data still loading renders as such; steps
+// answered by flags (whose listings were never requested) are simply omitted.
+func (m wizardModel) writeWelcomeDetection(b *strings.Builder) {
+	switch {
+	case m.agentsLoading:
+		b.WriteString(m.st.Subtitle.Render("Agents:   detecting…") + "\n")
+	case len(m.agentChoices) > 0:
+		detected := make([]string, 0, len(m.agentChoices))
+		for _, c := range m.agentChoices {
+			if c.Detected {
+				detected = append(detected, c.DisplayName)
+			}
+		}
+		line := fmt.Sprintf("Agents:   %d detected of %d supported", len(detected), len(m.agentChoices))
+		if len(detected) > 0 {
+			line += " (" + strings.Join(detected, ", ") + ")"
+		}
+		b.WriteString(line + "\n")
+	}
+
+	switch {
+	case m.versionsLoading:
+		b.WriteString(m.st.Subtitle.Render("Versions: listing…") + "\n")
+	case m.versions.Degraded:
+		b.WriteString(m.st.Warning.Render("Versions: browsing unavailable ("+Sanitize(m.versions.DegradedReason)+")") + "\n")
+	case len(m.versions.Candidates) > 0:
+		releases, branches := 0, 0
+		for _, c := range m.versions.Candidates {
+			switch c.Kind {
+			case app.VersionRelease:
+				releases++
+			case app.VersionBranch:
+				branches++
+			}
+		}
+		fmt.Fprintf(b, "Versions: %d release(s), %d branch(es) available\n", releases, branches)
+	}
 }
 
 // ---- skill selection (reuses the spec-009 selector) --------------------------
@@ -199,6 +241,11 @@ func (m wizardModel) viewSelect() string {
 
 func (m *wizardModel) startVersions() tea.Cmd {
 	m.versionsLoading = true
+	return m.versionsCmd()
+}
+
+// versionsCmd is the flag-free version-listing command builder.
+func (m wizardModel) versionsCmd() tea.Cmd {
 	versions := m.phases.Versions
 	ctx := m.ctx
 	return func() tea.Msg {
@@ -326,6 +373,7 @@ func (m wizardModel) viewVersion() string {
 		b.WriteString(m.st.Warning.Render("⚠ version browsing unavailable: "+Sanitize(m.versions.DegradedReason)) + "\n")
 		b.WriteString(m.st.Subtitle.Render("\"latest\" will be used; a branch, tag, or commit can still be set with --ref/--commit.") + "\n\n")
 	}
+	rows := make([]string, 0, len(m.versions.Candidates)+1)
 	for i, c := range m.versions.Candidates {
 		cursor := "  "
 		label := Sanitize(c.Label)
@@ -333,11 +381,11 @@ func (m wizardModel) viewVersion() string {
 			cursor = m.st.Cursor.Render("❯") + " "
 			label = m.st.Selected.Render(label)
 		}
-		b.WriteString(cursor + label)
+		row := cursor + label
 		if c.Metadata != "" {
-			b.WriteString("  " + m.st.Subtitle.Render(Sanitize(c.Metadata)))
+			row += "  " + m.st.Subtitle.Render(Sanitize(c.Metadata))
 		}
-		b.WriteString("\n")
+		rows = append(rows, row)
 	}
 
 	// Synthetic last row: type an exact ref or commit (FR-012).
@@ -352,15 +400,59 @@ func (m wizardModel) viewVersion() string {
 		b.WriteString(m.hintLine("enter apply · esc cancel input"))
 		return b.String()
 	}
-	b.WriteString(typedCursor + typedLabel + "\n")
+	rows = append(rows, typedCursor+typedLabel)
+
+	for _, line := range m.cursorWindow(rows, m.versionCursor) {
+		b.WriteString(line + "\n")
+	}
 	b.WriteString(m.hintLine("↑/↓ move · enter choose · esc back · q cancel"))
 	return b.String()
+}
+
+// cursorWindow bounds rows to the terminal height, keeping the cursor row
+// visible and adding more-markers, so long version lists never overflow a
+// small terminal (FR-022).
+func (m wizardModel) cursorWindow(rows []string, cursor int) []string {
+	page := defaultPageSize
+	if m.height > 0 {
+		if p := m.height - previewReservedRows; p > 0 {
+			page = p
+		} else {
+			page = 1
+		}
+	}
+	if len(rows) <= page {
+		return rows
+	}
+
+	offset := 0
+	if cursor >= page {
+		offset = cursor - page + 1
+	}
+	if maxOffset := len(rows) - page; offset > maxOffset {
+		offset = maxOffset
+	}
+
+	out := make([]string, 0, page+2)
+	if offset > 0 {
+		out = append(out, m.st.Hint.Render("  ↑ more"))
+	}
+	out = append(out, rows[offset:offset+page]...)
+	if offset+page < len(rows) {
+		out = append(out, m.st.Hint.Render("  ↓ more"))
+	}
+	return out
 }
 
 // ---- agents (US2) ------------------------------------------------------------
 
 func (m *wizardModel) startAgents() tea.Cmd {
 	m.agentsLoading = true
+	return m.agentsCmd()
+}
+
+// agentsCmd is the flag-free agent-listing command builder.
+func (m wizardModel) agentsCmd() tea.Cmd {
 	agents := m.phases.Agents
 	ctx := m.ctx
 	return func() tea.Msg {

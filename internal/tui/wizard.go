@@ -236,18 +236,55 @@ func newWizardModel(ctx context.Context, cfg WizardConfig) wizardModel {
 	}
 	if m.session.SourceAnswered {
 		m.step = stepWelcome
+		m.markWelcomeLoading()
 	} else {
 		m.step = stepSource
 	}
 	return m
 }
 
-// Init implements tea.Model: it kicks off discovery when the source is known.
-func (m wizardModel) Init() tea.Cmd {
-	if m.step == stepWelcome {
-		return m.startDiscover()
+// markWelcomeLoading flags the async loads Init (or the source step) is about
+// to fire, so the welcome step renders loading states instead of empty data.
+// Version and agent listings are fetched only when their step will be shown.
+func (m *wizardModel) markWelcomeLoading() {
+	m.discovering = true
+	m.versionsLoading = m.phases.Versions != nil && !m.skipped(stepVersion) && len(m.versions.Candidates) == 0
+	m.agentsLoading = m.phases.Agents != nil && len(m.agentChoices) == 0
+}
+
+// firstErrorProblem returns the first error-severity diagnostic message of a
+// discovered skill, for the invalid-row reason display (FR-011).
+func firstErrorProblem(s discovery.DiscoveredSkill) string {
+	for _, p := range s.Problems {
+		if p.Severity == discovery.SeverityError {
+			return p.Message
+		}
 	}
-	return nil
+	return ""
+}
+
+// Init implements tea.Model: with the source known it kicks off discovery plus
+// the agent and version listings, so the welcome step can report what was
+// detected (FR-005). The corresponding loading flags were set by the
+// constructor (Init cannot persist model mutations).
+func (m wizardModel) Init() tea.Cmd {
+	if m.step != stepWelcome {
+		return nil
+	}
+	return m.welcomeLoads()
+}
+
+// welcomeLoads returns the batched commands for everything the welcome step
+// reports on. Callers must have set the matching loading flags.
+func (m wizardModel) welcomeLoads() tea.Cmd {
+	cmds := []tea.Cmd{m.discoverCmd()}
+	if m.versionsLoading {
+		cmds = append(cmds, m.versionsCmd())
+	}
+	if m.agentsLoading {
+		cmds = append(cmds, m.agentsCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 // Outcome reports the run's result to the CLI.
@@ -258,6 +295,11 @@ func (m wizardModel) Outcome() WizardOutcome {
 // startDiscover launches phase 1 as a command.
 func (m *wizardModel) startDiscover() tea.Cmd {
 	m.discovering = true
+	return m.discoverCmd()
+}
+
+// discoverCmd is the flag-free phase-1 command builder.
+func (m wizardModel) discoverCmd() tea.Cmd {
 	discover := m.phases.Discover
 	ctx := m.ctx
 	return func() tea.Msg {
@@ -393,7 +435,14 @@ func (m *wizardModel) syncSelector() {
 	for i, s := range m.disc.Skills {
 		// Every remote-origin string is sanitized before it can reach the
 		// terminal (constitution VI: escape-sequence injection from SKILL.md).
-		items[i] = SkillItem{ID: Sanitize(s.ID), DisplayName: Sanitize(s.DisplayName), RepoPath: Sanitize(s.RepoPath), Valid: s.Valid}
+		items[i] = SkillItem{
+			ID:            Sanitize(s.ID),
+			DisplayName:   Sanitize(s.DisplayName),
+			Description:   Sanitize(s.Description),
+			RepoPath:      Sanitize(s.RepoPath),
+			Valid:         s.Valid,
+			InvalidReason: Sanitize(firstErrorProblem(s)),
+		}
 		if chosen[s.ID] {
 			m.sel.chosen[i] = true
 		}

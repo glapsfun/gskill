@@ -24,8 +24,12 @@ const (
 type SkillItem struct {
 	ID          string
 	DisplayName string
+	Description string
 	RepoPath    string
 	Valid       bool
+	// InvalidReason is the first error-severity diagnostic for an invalid
+	// skill, shown when the cursor is on its row (FR-011).
+	InvalidReason string
 }
 
 // SelectSkills runs the interactive multi-select picker and returns the indices
@@ -89,15 +93,17 @@ func (m selectorModel) pageSize() int {
 }
 
 // recomputeVisible rebuilds the filtered index list from the current query
-// (case-insensitive substring match over ID and RepoPath) and re-clamps the
-// cursor and scroll offset. It never touches the selection set.
+// (case-insensitive substring match over ID, RepoPath, and Description —
+// FR-010) and re-clamps the cursor and scroll offset. It never touches the
+// selection set.
 func (m *selectorModel) recomputeVisible() {
 	q := strings.ToLower(strings.TrimSpace(m.query))
 	m.visible = m.visible[:0]
 	for i, it := range m.items {
 		if q == "" ||
 			strings.Contains(strings.ToLower(it.ID), q) ||
-			strings.Contains(strings.ToLower(it.RepoPath), q) {
+			strings.Contains(strings.ToLower(it.RepoPath), q) ||
+			strings.Contains(strings.ToLower(it.Description), q) {
 			m.visible = append(m.visible, i)
 		}
 	}
@@ -299,7 +305,9 @@ func (m selectorModel) emptyMessage() string {
 	return "  (no matches)\n"
 }
 
-// writeRow renders a single skill row at the given index into visible.
+// writeRow renders a single skill row at the given index into visible: the
+// checkbox, id, in-repo path, and the short description (FR-009). An invalid
+// row under the cursor also shows its reason (FR-011).
 func (m selectorModel) writeRow(b *strings.Builder, vi int) {
 	orig := m.visible[vi]
 	it := m.items[orig]
@@ -315,12 +323,18 @@ func (m selectorModel) writeRow(b *strings.Builder, vi int) {
 	if !it.Valid {
 		check = "[-]"
 		suffix = " (invalid)"
+		if vi == m.cursor && it.InvalidReason != "" {
+			suffix = " (invalid: " + it.InvalidReason + ")"
+		}
 	}
 	path := it.RepoPath
 	if path == "" {
 		path = "."
 	}
 	row := fmt.Sprintf("%s %s %s  %s%s", cursor, check, it.ID, path, suffix)
+	if it.Description != "" {
+		row += "  — " + it.Description
+	}
 	b.WriteString(m.truncateToWidth(row))
 	b.WriteByte('\n')
 }

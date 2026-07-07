@@ -87,7 +87,8 @@ func (m wizardModel) acceptSource(value string) (wizardModel, tea.Cmd, bool) {
 	}
 	m.history = append(m.history, m.step)
 	m.step = stepWelcome
-	return m, m.startDiscover(), true
+	m.markWelcomeLoading()
+	return m, m.welcomeLoads(), true
 }
 
 func (m wizardModel) viewSource() string {
