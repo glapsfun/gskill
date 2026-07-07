@@ -128,6 +128,9 @@ func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root pro
 		Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
 			return a.AgentChoices(ctx, string(root))
 		},
+		Versions: func(ctx context.Context) (app.VersionList, error) {
+			return a.ListVersions(ctx, string(root), c.Source, g.Offline)
+		},
 	}
 	if len(c.Skill) > 0 || c.All {
 		phases.ResolveSelection = func(_ context.Context, d app.DiscoverResult) ([]discovery.DiscoveredSkill, error) {

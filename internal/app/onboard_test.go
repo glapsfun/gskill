@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -550,5 +551,155 @@ func TestExecutePlan_MultiAgentRecordsBothTargets(t *testing.T) {
 		if !strings.Contains(string(data), `"`+id+`"`) {
 			t.Errorf("lockfile does not record agent %q", id)
 		}
+	}
+}
+
+// ---- US3: version listing and pinning (spec 011 T025/T028) ---------------------
+
+// gitSource builds a local git repo with one skill and two tagged versions,
+// returning the repo path and each tag's commit.
+func gitSource(t *testing.T) (repo, commitV1, commitV2 string) {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo = t.TempDir()
+	run := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(context.Background(), "git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, "SKILL.md"),
+			[]byte("---\nname: demo\ndescription: "+body+"\n---\n# demo "+body+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run("init", "--quiet", "-b", "main")
+	write("one")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "v1")
+	run("tag", "v1.0.0")
+	commitV1 = run("rev-parse", "HEAD")
+	write("two")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "v2")
+	run("tag", "v2.0.0")
+	commitV2 = run("rev-parse", "HEAD")
+	return repo, commitV1, commitV2
+}
+
+func TestListVersions_GitSourceOffersReleasesAndBranches(t *testing.T) {
+	t.Parallel()
+
+	repo, _, _ := gitSource(t)
+	root := projectWithAgent(t)
+
+	vl, err := onboardApp().ListVersions(context.Background(), root, repo, false)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if vl.Degraded {
+		t.Fatalf("Degraded = true for a healthy local git source: %s", vl.DegradedReason)
+	}
+	var labels []string
+	for _, c := range vl.Candidates {
+		labels = append(labels, c.Label)
+	}
+	if len(vl.Candidates) == 0 || vl.Candidates[0].Kind != app.VersionLatest {
+		t.Fatalf("first candidate must be latest, got %v", labels)
+	}
+	joined := strings.Join(labels, " ")
+	for _, want := range []string{"v2.0.0", "v1.0.0", "main"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("candidates %v missing %q", labels, want)
+		}
+	}
+}
+
+func TestListVersions_OfflineDegradesGracefully(t *testing.T) {
+	t.Parallel()
+
+	repo, _, _ := gitSource(t)
+	root := projectWithAgent(t)
+
+	vl, err := onboardApp().ListVersions(context.Background(), root, repo, true)
+	if err != nil {
+		t.Fatalf("ListVersions offline must not fail the flow: %v", err)
+	}
+	if !vl.Degraded || vl.DegradedReason == "" {
+		t.Errorf("offline listing must be marked degraded with a reason: %+v", vl)
+	}
+	if len(vl.Candidates) == 0 || vl.Candidates[0].Kind != app.VersionLatest {
+		t.Errorf("degraded listing must still preselect latest: %+v", vl.Candidates)
+	}
+}
+
+func TestListVersions_PlainLocalSourceIsLatestOnly(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha") // not a git repo
+	root := projectWithAgent(t)
+
+	vl, err := onboardApp().ListVersions(context.Background(), root, src, false)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(vl.Candidates) != 1 || vl.Candidates[0].Kind != app.VersionLatest {
+		t.Errorf("plain local source must offer only latest: %+v", vl.Candidates)
+	}
+}
+
+// TestPlanInstall_ReResolvesChangedVersionPin is the FR-013 correctness gate:
+// picking a version in the wizard AFTER discovery must re-pin the plan to that
+// version's exact commit, not keep the discovery-time (latest) resolution.
+func TestPlanInstall_ReResolvesChangedVersionPin(t *testing.T) {
+	t.Parallel()
+
+	repo, commitV1, commitV2 := gitSource(t)
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+
+	disc := discover(t, a, root, repo) // default resolution → v2.0.0
+	if disc.Revision.Commit != commitV2 {
+		t.Fatalf("discovery resolved %s, want latest %s", disc.Revision.Commit, commitV2)
+	}
+
+	plan, err := a.PlanInstall(ctx, app.PlanRequest{
+		Root: root, Source: repo, Ref: "v1.0.0",
+		Discover: disc, Selected: disc.Skills[:1], AgentIDs: []string{"claude"},
+	})
+	if err != nil {
+		t.Fatalf("PlanInstall: %v", err)
+	}
+	if plan.Revision.Commit != commitV1 {
+		t.Fatalf("plan.Revision.Commit = %s, want v1.0.0's %s (stale discovery pin, FR-013)", plan.Revision.Commit, commitV1)
+	}
+
+	if _, err := a.ExecutePlan(ctx, plan, nil); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	lock, err := os.ReadFile(filepath.Join(root, "gskill.lock")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	if !strings.Contains(string(lock), commitV1) {
+		t.Errorf("lockfile does not pin v1.0.0's commit %s", commitV1)
+	}
+	if strings.Contains(string(lock), commitV2) {
+		t.Errorf("lockfile still references the stale latest commit %s", commitV2)
 	}
 }

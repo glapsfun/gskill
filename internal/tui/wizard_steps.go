@@ -219,6 +219,9 @@ func (m wizardModel) onVersionsDone(msg versionsDoneMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m wizardModel) versionKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
+	if m.versionTyping {
+		return m.versionTypedKey(key)
+	}
 	switch key.String() {
 	case keyUp, "k":
 		if m.versionCursor > 0 {
@@ -226,16 +229,69 @@ func (m wizardModel) versionKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
 		}
 		return m, nil, true
 	case keyDown, "j":
-		if m.versionCursor < len(m.versions.Candidates)-1 {
+		// The row after the last candidate is the typed-exact-ref entry.
+		if m.versionCursor < len(m.versions.Candidates) {
 			m.versionCursor++
 		}
 		return m, nil, true
 	case keyEnter:
+		if m.versionCursor == len(m.versions.Candidates) {
+			m.versionTyping = true
+			return m, nil, true
+		}
 		m.applyVersionChoice()
 		next, cmd := m.goForward()
 		return next, cmd, true
 	}
 	return m, nil, false
+}
+
+// versionTypedKey edits and applies a typed exact ref or commit (FR-012): a
+// full 40-hex value pins a commit, anything else is requested as a ref.
+func (m wizardModel) versionTypedKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
+	switch key.Type { //nolint:exhaustive // text entry handles only these keys
+	case tea.KeyEnter:
+		value := strings.TrimSpace(m.versionTyped)
+		if value == "" {
+			m.versionTyping = false
+			return m, nil, true
+		}
+		m.session.Version, m.session.RefSpec, m.session.Commit = "", "", ""
+		if isFullSHA(value) {
+			m.session.Commit = value
+		} else {
+			m.session.RefSpec = value
+		}
+		m.session.VersionLabel = value
+		next, cmd := m.goForward()
+		return next, cmd, true
+	case tea.KeyEsc:
+		m.versionTyping = false
+		return m, nil, true
+	case tea.KeyBackspace:
+		if r := []rune(m.versionTyped); len(r) > 0 {
+			m.versionTyped = string(r[:len(r)-1])
+		}
+		return m, nil, true
+	case tea.KeyRunes:
+		m.versionTyped += string(key.Runes)
+		return m, nil, true
+	default:
+		return m, nil, true
+	}
+}
+
+// isFullSHA reports whether s looks like a full 40-hex commit SHA.
+func isFullSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // applyVersionChoice writes the highlighted candidate into the session's
@@ -283,6 +339,20 @@ func (m wizardModel) viewVersion() string {
 		}
 		b.WriteString("\n")
 	}
+
+	// Synthetic last row: type an exact ref or commit (FR-012).
+	typedCursor := "  "
+	typedLabel := "type an exact ref or commit…"
+	if m.versionCursor == len(m.versions.Candidates) {
+		typedCursor = m.st.Cursor.Render("❯") + " "
+		typedLabel = m.st.Selected.Render(typedLabel)
+	}
+	if m.versionTyping {
+		fmt.Fprintf(&b, "%s%s %s█\n", typedCursor, m.st.Selected.Render("ref:"), Sanitize(m.versionTyped))
+		b.WriteString(m.hintLine("enter apply · esc cancel input"))
+		return b.String()
+	}
+	b.WriteString(typedCursor + typedLabel + "\n")
 	b.WriteString(m.hintLine("↑/↓ move · enter choose · esc back · q cancel"))
 	return b.String()
 }

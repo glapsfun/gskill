@@ -574,3 +574,107 @@ func TestWizardAgents_RequiresAtLeastOne(t *testing.T) {
 		t.Errorf("session.AgentIDs = %v, want two agents", m.session.AgentIDs)
 	}
 }
+
+// ---- US3: version step (spec 011 T025) -----------------------------------------
+
+func versionPhases(calls *phaseCalls, vl app.VersionList) WizardPhases {
+	phases := fakePhases(calls, fakeSkills("alpha"), nil)
+	phases.Versions = func(context.Context) (app.VersionList, error) { return vl, nil }
+	return phases
+}
+
+func toVersionStep(t *testing.T, m wizardModel) wizardModel {
+	t.Helper()
+
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter")) // welcome → select alpha → version
+	if m.step != stepVersion {
+		t.Fatalf("step = %v, want version", m.step)
+	}
+	return m
+}
+
+func TestWizardVersion_PreselectsLatestAndPicksRelease(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	vl := app.VersionList{Candidates: []app.VersionCandidate{
+		{Kind: app.VersionLatest, Label: "latest → v2.0.0"},
+		{Kind: app.VersionRelease, Label: "v2.0.0", Ref: "v2.0.0", Metadata: "c2"},
+		{Kind: app.VersionRelease, Label: "v1.0.0", Ref: "v1.0.0", Metadata: "c1"},
+		{Kind: app.VersionBranch, Label: "main", Ref: "main"},
+	}}
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, vl),
+	}))
+
+	view := m.View()
+	for _, want := range []string{"latest → v2.0.0", "v1.0.0", "main"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("version view missing %q:\n%s", want, view)
+		}
+	}
+
+	// Pick v1.0.0 (two rows down from the preselected latest).
+	m = drive(t, m, key("down"), key("down"), key("enter"))
+	if m.session.RefSpec != "v1.0.0" {
+		t.Errorf("session.RefSpec = %q, want v1.0.0", m.session.RefSpec)
+	}
+	if m.session.VersionLabel != "v1.0.0" {
+		t.Errorf("session.VersionLabel = %q, want v1.0.0", m.session.VersionLabel)
+	}
+}
+
+func TestWizardVersion_DegradedShowsNoteAndAcceptsTypedRef(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	vl := app.VersionList{
+		Candidates:     []app.VersionCandidate{{Kind: app.VersionLatest, Label: "latest"}},
+		Degraded:       true,
+		DegradedReason: "offline mode: version browsing needs the remote",
+	}
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, vl),
+	}))
+
+	if v := m.View(); !strings.Contains(v, "version browsing unavailable") || !strings.Contains(v, "offline mode") {
+		t.Errorf("degraded note missing (FR-012):\n%s", v)
+	}
+
+	// Type an exact ref: move to the typed-ref row and enter it.
+	m = drive(t, m, key("down"), key("enter")) // the synthetic "type an exact ref" row
+	for _, r := range "v9.9.9" {
+		m = drive(t, m, key(string(r)))
+	}
+	m = drive(t, m, key("enter"))
+	if m.session.RefSpec != "v9.9.9" {
+		t.Errorf("typed ref not applied: RefSpec = %q, want v9.9.9", m.session.RefSpec)
+	}
+}
+
+func TestWizardVersion_TypedFullSHAPinsCommit(t *testing.T) {
+	t.Parallel()
+
+	sha := strings.Repeat("a1", 20) // 40 hex chars
+	var calls phaseCalls
+	vl := app.VersionList{Candidates: []app.VersionCandidate{{Kind: app.VersionLatest, Label: "latest"}}}
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, vl),
+	}))
+
+	m = drive(t, m, key("down"), key("enter"))
+	for _, r := range sha {
+		m = drive(t, m, key(string(r)))
+	}
+	m = drive(t, m, key("enter"))
+	if m.session.Commit != sha {
+		t.Errorf("typed SHA not pinned as commit: Commit = %q", m.session.Commit)
+	}
+	if m.session.RefSpec != "" {
+		t.Errorf("typed SHA must not set RefSpec, got %q", m.session.RefSpec)
+	}
+}

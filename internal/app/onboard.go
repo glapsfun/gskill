@@ -127,6 +127,64 @@ func (a *App) DiscoverSource(ctx context.Context, req DiscoverRequest) (Discover
 	}, nil
 }
 
+// ListVersions lists the selectable versions of a source for the wizard's
+// version step: a synthetic "latest" first, then releases (semver descending),
+// other tags, and branch heads. Listing problems never fail the flow: offline
+// mode, network errors, and rate limits all return a Degraded listing with a
+// reason while "latest" stays selectable and a typed exact ref is still
+// accepted downstream (FR-012).
+func (a *App) ListVersions(ctx context.Context, root, src string, offline bool) (VersionList, error) {
+	ref, err := source.Parse(src)
+	if err != nil {
+		return VersionList{}, err
+	}
+	ref = promoteLocalGit(ref)
+	_ = root // reserved for cache-backed offline listings
+
+	latest := VersionCandidate{Kind: VersionLatest, Label: "latest"}
+	if ref.Type != source.TypeGit {
+		// A plain local directory has no browsable versions.
+		return VersionList{Candidates: []VersionCandidate{latest}}, nil
+	}
+	if offline {
+		return VersionList{
+			Candidates:     []VersionCandidate{latest},
+			Degraded:       true,
+			DegradedReason: "offline mode: version browsing needs the remote",
+		}, nil
+	}
+
+	versions, err := resolver.ListVersions(ctx, a.git, ref)
+	if err != nil {
+		// Deliberate degrade-not-fail: listing problems must never abort the
+		// flow (FR-012); the reason is surfaced in the step instead.
+		return VersionList{ //nolint:nilerr // degradation is the contract, not an error path
+			Candidates:     []VersionCandidate{latest},
+			Degraded:       true,
+			DegradedReason: err.Error(),
+		}, nil
+	}
+
+	candidates := make([]VersionCandidate, 0, len(versions)+1)
+	for _, v := range versions {
+		c := VersionCandidate{Label: v.Name, Ref: v.Name, Metadata: shortCommit(v.Commit)}
+		switch v.Kind {
+		case resolver.VersionKindRelease:
+			c.Kind = VersionRelease
+			c.Version = v.Name
+		case resolver.VersionKindTag:
+			c.Kind = VersionRelease
+		case resolver.VersionKindBranch:
+			c.Kind = VersionBranch
+		}
+		candidates = append(candidates, c)
+	}
+	if len(candidates) > 0 && candidates[0].Kind == VersionRelease {
+		latest.Label = "latest → " + candidates[0].Label
+	}
+	return VersionList{Candidates: append([]VersionCandidate{latest}, candidates...)}, nil
+}
+
 // AgentChoices returns the wizard's agent step data: every registered agent,
 // which ones are detected for this project, and — preselected — the exact set a
 // non-guided add would target (explicit-free resolution: manifest defaults,

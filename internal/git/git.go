@@ -16,11 +16,19 @@ type TagRef struct {
 	Commit string
 }
 
+// BranchRef pairs a branch name with its head commit.
+type BranchRef struct {
+	Name   string
+	Commit string
+}
+
 // Runner is the git capability gskill needs. The system implementation shells
 // out to the git binary; the interface lets it be swapped (e.g. go-git) later.
 type Runner interface {
 	// LsRemoteTags lists the repo's tags and the commits they point to.
 	LsRemoteTags(ctx context.Context, url string) ([]TagRef, error)
+	// LsRemoteHeads lists the repo's branches and their head commits.
+	LsRemoteHeads(ctx context.Context, url string) ([]BranchRef, error)
 	// ResolveRef resolves a branch, tag, or commit ref to an immutable commit SHA.
 	ResolveRef(ctx context.Context, url, ref string) (string, error)
 	// FetchCommit materializes the tree at commit into dest, without a .git dir.

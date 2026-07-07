@@ -114,6 +114,21 @@ type InstallPlan struct {
 	Warnings  []string        `json:"warnings,omitempty"`
 }
 
+// revisionSatisfies reports whether an already-resolved revision matches the
+// requested pin, so PlanInstall re-resolves only on a genuine change.
+func revisionSatisfies(rev resolver.Revision, req PlanRequest) bool {
+	switch {
+	case req.Commit != "":
+		return rev.Commit == req.Commit
+	case req.Ref != "":
+		return rev.Tag == req.Ref || rev.Branch == req.Ref
+	default:
+		// No pin, or a semver constraint the discovery resolution already
+		// honored (Add passes the same constraint to DiscoverSource).
+		return true
+	}
+}
+
 // PlanInstall derives the installation plan for the selected skills: per
 // skill × agent destinations, merge-vs-fresh decisions, and conflicts. It is
 // pure computation over the manifest, lockfile, and discovery result — it
@@ -136,6 +151,22 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 		Selected:        req.Selected,
 		ExplicitAgents:  req.AgentIDs,
 		Warnings:        req.Discover.Warnings,
+	}
+
+	// A version picked in the wizard AFTER discovery must re-pin the plan:
+	// the discovery-time resolution reflects the default (latest), not the
+	// user's later choice (FR-013). Requested pins the resolution already
+	// satisfies are not re-resolved, so the Add composition costs no extra
+	// network round-trip.
+	if !revisionSatisfies(plan.Revision, req) {
+		rev, warnings, err := resolver.Resolve(ctx, a.git, req.Discover.Ref, resolver.Requested{
+			Version: req.Version, Ref: req.Ref, Commit: req.Commit,
+		})
+		if err != nil {
+			return InstallPlan{}, err
+		}
+		plan.Revision = rev
+		plan.Warnings = append(plan.Warnings, warnings...)
 	}
 
 	m := manifest.New()

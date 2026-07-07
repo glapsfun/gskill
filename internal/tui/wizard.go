@@ -186,6 +186,8 @@ type wizardModel struct {
 	versions        app.VersionList
 	versionsLoading bool
 	versionCursor   int
+	versionTyping   bool   // the "type an exact ref" row is active
+	versionTyped    string // typed ref/commit buffer
 
 	// Agents step (US2).
 	agentChoices  []app.AgentChoice
