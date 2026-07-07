@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -676,5 +677,82 @@ func TestWizardVersion_TypedFullSHAPinsCommit(t *testing.T) {
 	}
 	if m.session.RefSpec != "" {
 		t.Errorf("typed SHA must not set RefSpec, got %q", m.session.RefSpec)
+	}
+}
+
+// ---- US4: deep preview and back-navigation (spec 011 T030) ---------------------
+
+func TestWizardPreview_BoundedViewportScrolls(t *testing.T) {
+	t.Parallel()
+
+	ids := make([]string, 30)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("skill-%02d", i)
+	}
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills(ids...), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, win(80, 24))
+	m = drive(t, m, key("enter")) // → select
+	// Select all 30 via toggling each row.
+	for range ids {
+		m = drive(t, m, key(" "), key("down"))
+	}
+	m = drive(t, m, key("enter"))
+	m = advanceToPreview(t, m)
+	if m.step != stepPreview {
+		t.Fatalf("step = %v, want preview", m.step)
+	}
+
+	view := m.View()
+	if got := strings.Count(view, "\n"); got > 24 {
+		t.Errorf("preview renders %d lines at a 24-row terminal; it must stay bounded", got)
+	}
+	if !strings.Contains(view, "more") {
+		t.Errorf("bounded preview missing a more-content marker:\n%s", view)
+	}
+
+	before := m.View()
+	m = drive(t, m, key("down"), key("down"), key("down"))
+	if m.View() == before {
+		t.Error("preview does not scroll on ↓")
+	}
+}
+
+func TestWizardBackNavigation_EditSelectionUpdatesPlan(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha", "beta"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"))                                  // → select
+	m = drive(t, m, key(" "), key("down"), key(" "), key("enter")) // pick both
+	m = advanceToPreview(t, m)
+	if !strings.Contains(m.View(), "beta") {
+		t.Fatalf("preview missing beta:\n%s", m.View())
+	}
+
+	// Go back (possibly through several steps) to the selection and drop beta.
+	for i := 0; i < 4 && m.step != stepSelect; i++ {
+		m = drive(t, m, key("esc"))
+	}
+	if m.step != stepSelect {
+		t.Fatalf("could not navigate back to selection, stuck at %v", m.step)
+	}
+	m = drive(t, m, key("down"), key(" "), key("enter")) // deselect beta, confirm
+	m = advanceToPreview(t, m)
+
+	view := m.View()
+	if strings.Contains(view, "+ beta") {
+		t.Errorf("preview still plans beta after it was deselected:\n%s", view)
+	}
+	if !strings.Contains(view, "+ alpha") {
+		t.Errorf("preview lost alpha:\n%s", view)
 	}
 }

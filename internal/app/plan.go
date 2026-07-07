@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/glapsfun/gskill/internal/discovery"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
@@ -196,9 +199,6 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
 		Agents: req.AgentIDs, Force: req.Force, Scope: req.Scope, Mode: req.Mode,
 	}
-	home, _ := os.UserHomeDir()
-	global := scopeOr(req.Scope) == installer.ScopeGlobal
-
 	for _, s := range req.Selected {
 		ap, planErr := a.planAdd(m, lf, s.ID, addReq, reqIDs)
 		if planErr != nil {
@@ -211,18 +211,73 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 			}
 			return InstallPlan{}, planErr
 		}
-		for _, ag := range ap.activate {
-			dir := ag.ProjectSkillDir(req.Root)
-			if global {
-				dir = ag.GlobalSkillDir(home)
-			}
-			plan.Actions = append(plan.Actions, PlannedAction{
-				Skill:       s.ID,
-				AgentID:     ag.ID(),
-				Destination: filepath.Join(dir, s.ID),
-				MergeInto:   ap.mergeInto,
-			})
-		}
+		_, declared := m.Skills[s.ID]
+		appendSkillActions(&plan, req, s, ap, declared)
 	}
 	return plan, nil
+}
+
+// appendSkillActions adds one selected skill's per-agent actions to the plan,
+// flagging foreign-destination overwrites as conflicts: a destination that
+// already exists for a skill gskill does not track is surfaced before approval
+// rather than as an install failure afterward (FR-016, US4).
+func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.DiscoveredSkill, ap addPlan, declared bool) {
+	home, _ := os.UserHomeDir()
+	global := scopeOr(req.Scope) == installer.ScopeGlobal
+
+	for _, ag := range ap.activate {
+		dir := ag.ProjectSkillDir(req.Root)
+		if global {
+			dir = ag.GlobalSkillDir(home)
+		}
+		dest := filepath.Join(dir, s.ID)
+
+		if !ap.mergeInto && !declared {
+			if _, statErr := os.Stat(dest); statErr == nil {
+				err := &ConflictError{Skill: s.ID, Kind: ConflictFileOverwrite, err: fmt.Errorf(
+					"%w: destination %s already exists and is not managed by gskill; remove it or choose a different skill",
+					errs.ErrInvalidManifest, dest)}
+				plan.Conflicts = append(plan.Conflicts, PlanConflict{
+					Skill: s.ID, Kind: ConflictFileOverwrite, Detail: err.Error(), Err: err,
+				})
+				continue
+			}
+		}
+
+		plan.Actions = append(plan.Actions, PlannedAction{
+			Skill:       s.ID,
+			AgentID:     ag.ID(),
+			Destination: dest,
+			MergeInto:   ap.mergeInto,
+			FileOps:     planFileOps(s.Dir, dest),
+		})
+	}
+}
+
+// planFileOps enumerates the files an action will place under dest,
+// classifying each as create or update by whether the target already exists.
+// Enumeration is read-only over the already-materialized skill dir; errors
+// degrade to an empty list (the preview then shows only the destination).
+func planFileOps(skillDir, dest string) []PlannedFileOp {
+	if skillDir == "" {
+		return nil
+	}
+	var ops []PlannedFileOp
+	_ = filepath.WalkDir(skillDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil //nolint:nilerr // best-effort preview enumeration
+		}
+		rel, relErr := filepath.Rel(skillDir, path)
+		if relErr != nil {
+			return nil //nolint:nilerr // best-effort preview enumeration
+		}
+		target := filepath.Join(dest, rel)
+		op := "create"
+		if _, statErr := os.Stat(target); statErr == nil {
+			op = "update"
+		}
+		ops = append(ops, PlannedFileOp{Path: target, Op: op})
+		return nil
+	})
+	return ops
 }

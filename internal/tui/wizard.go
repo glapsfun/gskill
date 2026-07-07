@@ -197,9 +197,10 @@ type wizardModel struct {
 	agentErr      string
 
 	// Preview / plan.
-	planning  bool
-	planReady bool
-	plan      app.InstallPlan
+	planning      bool
+	planReady     bool
+	plan          app.InstallPlan
+	previewOffset int // scroll offset into the preview body (bounded viewport)
 
 	// Execution.
 	executing bool
@@ -344,6 +345,7 @@ func (m wizardModel) enterStep(s stepID) (wizardModel, tea.Cmd) {
 	case stepVersion, stepAgents:
 		return m, m.loadChoices(s)
 	case stepPreview:
+		m.previewOffset = 0
 		return m, m.startPlan()
 	case stepProgress:
 		return m, m.startExecute()

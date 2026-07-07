@@ -466,6 +466,14 @@ func (m wizardModel) previewKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
 		}
 		next, cmd := m.approve()
 		return next, cmd, true
+	case keyUp, "k":
+		if m.previewOffset > 0 {
+			m.previewOffset--
+		}
+		return m, nil, true
+	case keyDown, "j":
+		m.previewOffset++ // clamped against the body length at render time
+		return m, nil, true
 	}
 	return m, nil, false
 }
@@ -479,13 +487,33 @@ func (m wizardModel) viewPreview() string {
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "Source:  %s\n", m.st.Accent.Render(Sanitize(m.plan.Source)))
-	fmt.Fprintf(&b, "Version: %s\n", m.st.Accent.Render(Sanitize(m.versionDisplay())))
-	fmt.Fprintf(&b, "Agents:  %s\n\n", m.st.Accent.Render(strings.Join(m.plan.AgentIDs, ", ")))
-
-	if m.plan.InitProject {
-		b.WriteString(m.st.Warning.Render("• gskill.toml will be created (new project)") + "\n")
+	body := m.previewBody()
+	for _, line := range m.windowLines(body) {
+		b.WriteString(line + "\n")
 	}
+
+	if len(m.plan.Conflicts) > 0 {
+		b.WriteString(m.hintLine("↑/↓ scroll · esc/b go back and edit · q cancel"))
+		return b.String()
+	}
+	b.WriteString(m.hintLine("enter approve & install · ↑/↓ scroll · esc/b go back and edit · q cancel"))
+	return b.String()
+}
+
+// previewBody renders the full plan as lines: metadata, per-agent actions with
+// file operations, warnings, and conflicts (FR-015).
+func (m wizardModel) previewBody() []string {
+	var lines []string
+	lines = append(lines,
+		"Source:  "+m.st.Accent.Render(Sanitize(m.plan.Source)),
+		"Version: "+m.st.Accent.Render(Sanitize(m.versionDisplay())),
+		"Agents:  "+m.st.Accent.Render(strings.Join(m.plan.AgentIDs, ", ")),
+		"",
+	)
+	if m.plan.InitProject {
+		lines = append(lines, m.st.Warning.Render("• gskill.toml will be created (new project)"))
+	}
+
 	byAgent := map[string][]app.PlannedAction{}
 	for _, act := range m.plan.Actions {
 		byAgent[act.AgentID] = append(byAgent[act.AgentID], act)
@@ -496,29 +524,63 @@ func (m wizardModel) viewPreview() string {
 	}
 	sort.Strings(agents)
 	for _, id := range agents {
-		fmt.Fprintf(&b, "%s\n", m.st.Subtitle.Render(id+":"))
+		lines = append(lines, m.st.Subtitle.Render(id+":"))
 		for _, act := range byAgent[id] {
-			fmt.Fprintf(&b, "  + %s → %s\n", Sanitize(act.Skill), Sanitize(act.Destination))
+			lines = append(lines, fmt.Sprintf("  + %s → %s", Sanitize(act.Skill), Sanitize(act.Destination)))
 			for _, op := range act.FileOps {
-				fmt.Fprintf(&b, "      %s %s\n", op.Op, Sanitize(op.Path))
+				lines = append(lines, fmt.Sprintf("      %s %s", op.Op, Sanitize(op.Path)))
 			}
 		}
 	}
 	for _, w := range m.plan.Warnings {
-		b.WriteString(m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")
+		lines = append(lines, m.st.Warning.Render("warning: "+Sanitize(w)))
 	}
-
 	if len(m.plan.Conflicts) > 0 {
-		b.WriteString("\n" + m.st.Error.Render("Conflicts block approval:") + "\n")
+		lines = append(lines, "", m.st.Error.Render("Conflicts block approval:"))
 		for _, c := range m.plan.Conflicts {
-			fmt.Fprintf(&b, "  %s %s\n", m.st.Error.Render("✗"), Sanitize(c.Detail))
+			lines = append(lines, "  "+m.st.Error.Render("✗")+" "+Sanitize(c.Detail))
 		}
-		b.WriteString(m.hintLine("esc/b go back and edit · q cancel"))
-		return b.String()
+	}
+	return lines
+}
+
+// previewReservedRows is the frame around the preview's scrollable window:
+// header (2), the two more-markers, and the hint footer (2).
+const previewReservedRows = 6
+
+// windowLines bounds body to the terminal height with more-markers, clamping
+// the scroll offset so small terminals stay readable (FR-022, SC at 80×24).
+func (m wizardModel) windowLines(body []string) []string {
+	page := defaultPageSize
+	if m.height > 0 {
+		if p := m.height - previewReservedRows; p > 0 {
+			page = p
+		} else {
+			page = 1
+		}
+	}
+	if len(body) <= page {
+		return body
 	}
 
-	b.WriteString(m.hintLine("enter approve & install · esc/b go back and edit · q cancel"))
-	return b.String()
+	maxOffset := len(body) - page
+	offset := m.previewOffset
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	out := make([]string, 0, page+2)
+	if offset > 0 {
+		out = append(out, m.st.Hint.Render("  ↑ more"))
+	}
+	out = append(out, body[offset:offset+page]...)
+	if offset < maxOffset {
+		out = append(out, m.st.Hint.Render("  ↓ more"))
+	}
+	return out
 }
 
 // versionDisplay renders the chosen version for the preview and summary.
