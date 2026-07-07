@@ -496,3 +496,81 @@ func TestWizard_ResolveSelectionPrefillsSkills(t *testing.T) {
 		t.Errorf("session.Selected = %+v, want alpha", m.session.Selected)
 	}
 }
+
+// ---- US2: agent selection step (spec 011 T020) --------------------------------
+
+func agentPhases(calls *phaseCalls, choices []app.AgentChoice) WizardPhases {
+	phases := fakePhases(calls, fakeSkills("alpha"), nil)
+	phases.Agents = func(context.Context) ([]app.AgentChoice, error) { return choices, nil }
+	return phases
+}
+
+func TestWizardAgents_ListsMarksAndPreselects(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	choices := []app.AgentChoice{
+		{ID: "claude", DisplayName: "Claude", Detected: true, Preselected: true},
+		{ID: "codex", DisplayName: "Codex"},
+		{ID: "cursor", DisplayName: "Cursor"},
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  agentPhases(&calls, choices),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter")) // welcome → select alpha → agents
+	if m.step != stepAgents {
+		t.Fatalf("step = %v, want agents", m.step)
+	}
+
+	view := m.View()
+	for _, want := range []string{"Claude", "Codex", "Cursor", "(detected)"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("agents view missing %q:\n%s", want, view)
+		}
+	}
+	if !strings.Contains(view, "[x] Claude") {
+		t.Errorf("detected default agent not preselected (FR-014):\n%s", view)
+	}
+
+	// Continue with the preselection: session carries claude.
+	m = drive(t, m, key("enter"))
+	if len(m.session.AgentIDs) != 1 || m.session.AgentIDs[0] != "claude" {
+		t.Errorf("session.AgentIDs = %v, want [claude]", m.session.AgentIDs)
+	}
+	if m.step != stepPreview {
+		t.Errorf("step = %v, want preview after agents", m.step)
+	}
+}
+
+func TestWizardAgents_RequiresAtLeastOne(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	choices := []app.AgentChoice{
+		{ID: "claude", DisplayName: "Claude", Detected: true, Preselected: true},
+		{ID: "codex", DisplayName: "Codex"},
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  agentPhases(&calls, choices),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter")) // → agents
+	m = drive(t, m, key(" "))                             // deselect the preselected claude
+	m = drive(t, m, key("enter"))                         // must be blocked
+
+	if m.step != stepAgents {
+		t.Fatalf("step = %v, want to stay on agents with zero selected (FR-014)", m.step)
+	}
+	if !strings.Contains(m.View(), "at least one agent") {
+		t.Errorf("missing validation message:\n%s", m.View())
+	}
+
+	// Multi-select: pick both and continue.
+	m = drive(t, m, key(" "), key("down"), key(" "), key("enter"))
+	if len(m.session.AgentIDs) != 2 {
+		t.Errorf("session.AgentIDs = %v, want two agents", m.session.AgentIDs)
+	}
+}

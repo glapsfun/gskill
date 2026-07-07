@@ -127,6 +127,50 @@ func (a *App) DiscoverSource(ctx context.Context, req DiscoverRequest) (Discover
 	}, nil
 }
 
+// AgentChoices returns the wizard's agent step data: every registered agent,
+// which ones are detected for this project, and — preselected — the exact set a
+// non-guided add would target (explicit-free resolution: manifest defaults,
+// then detection, then the default agent), per FR-014.
+func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, error) {
+	var defaults []string
+	p := openProject(root)
+	if p.manifestExists() {
+		if m, err := manifest.Load(p.manifestPath); err == nil {
+			defaults = m.Defaults.Agents
+		}
+	}
+
+	pre, err := a.targetAgents(ctx, root, nil, defaults)
+	if err != nil {
+		return nil, err
+	}
+	preselected := make(map[string]bool, len(pre))
+	for _, ag := range pre {
+		preselected[ag.ID()] = true
+	}
+
+	detected, err := a.agents.Detect(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	detectedIDs := make(map[string]bool, len(detected))
+	for _, ag := range detected {
+		detectedIDs[ag.ID()] = true
+	}
+
+	all := a.agents.All()
+	choices := make([]AgentChoice, 0, len(all))
+	for _, ag := range all {
+		choices = append(choices, AgentChoice{
+			ID:          ag.ID(),
+			DisplayName: ag.DisplayName(),
+			Detected:    detectedIDs[ag.ID()],
+			Preselected: preselected[ag.ID()],
+		})
+	}
+	return choices, nil
+}
+
 // SelectByFlags resolves explicit --skill/--all selectors against a discovered
 // source, exactly as the non-guided add does, so a flag-preselected wizard
 // session and a scripted add choose identically (FR-004).

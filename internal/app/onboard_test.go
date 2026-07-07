@@ -483,3 +483,72 @@ func TestExecutePlan_CancelledMidInstallRollsBack(t *testing.T) {
 	assertNoPartialInstall(t, root, "alpha")
 	assertNoPartialInstall(t, root, "beta")
 }
+
+// ---- US2: agent choices and multi-agent plans (spec 011 T021/T022) -------------
+
+func TestAgentChoices_MarksDetectedAndPreselectsDefaults(t *testing.T) {
+	t.Parallel()
+
+	root := projectWithAgent(t) // .claude marker only
+	choices, err := onboardApp().AgentChoices(context.Background(), root)
+	if err != nil {
+		t.Fatalf("AgentChoices: %v", err)
+	}
+	if len(choices) < 3 {
+		t.Fatalf("got %d choices, want the full registry", len(choices))
+	}
+	byID := map[string]app.AgentChoice{}
+	for _, c := range choices {
+		byID[c.ID] = c
+	}
+	claude := byID["claude"]
+	if !claude.Detected || !claude.Preselected {
+		t.Errorf("claude = %+v, want detected and preselected", claude)
+	}
+	if codex := byID["codex"]; codex.Detected || codex.Preselected {
+		t.Errorf("codex = %+v, want neither detected nor preselected", codex)
+	}
+}
+
+func TestExecutePlan_MultiAgentRecordsBothTargets(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	if err := os.MkdirAll(filepath.Join(root, ".codex"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	a := onboardApp()
+	ctx := context.Background()
+
+	disc := discover(t, a, root, src)
+	plan, err := a.PlanInstall(ctx, app.PlanRequest{
+		Root: root, Source: src, Discover: disc,
+		Selected: selectByID(t, disc, "alpha"),
+		AgentIDs: []string{"claude", "codex"},
+	})
+	if err != nil {
+		t.Fatalf("PlanInstall: %v", err)
+	}
+	if len(plan.Actions) != 2 {
+		t.Fatalf("got %d actions, want 2 (1 skill × 2 agents)", len(plan.Actions))
+	}
+
+	if _, err := a.ExecutePlan(ctx, plan, nil); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	for _, dir := range []string{".claude", ".codex"} {
+		if _, err := os.Stat(filepath.Join(root, dir, "skills", "alpha")); err != nil {
+			t.Errorf("agent target %s/skills/alpha missing: %v", dir, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(root, "gskill.lock")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("read lock: %v", err)
+	}
+	for _, id := range []string{"claude", "codex"} {
+		if !strings.Contains(string(data), `"`+id+`"`) {
+			t.Errorf("lockfile does not record agent %q", id)
+		}
+	}
+}

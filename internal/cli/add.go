@@ -125,6 +125,9 @@ func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root pro
 		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.ProgressEvent)) (app.AddResult, error) {
 			return a.ExecutePlan(ctx, plan, progress)
 		},
+		Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
+			return a.AgentChoices(ctx, string(root))
+		},
 	}
 	if len(c.Skill) > 0 || c.All {
 		phases.ResolveSelection = func(_ context.Context, d app.DiscoverResult) ([]discovery.DiscoveredSkill, error) {
