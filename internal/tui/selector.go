@@ -178,19 +178,19 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // navigation.
 func (m selectorModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
-	case "ctrl+c":
+	case keyCtrlC:
 		m.cancelled = true
 		return m, tea.Quit
-	case "enter":
+	case keyEnter:
 		m.done = true
 		return m, tea.Quit
-	case "up":
+	case keyUp:
 		m.moveUp()
 		return m, nil
-	case "down":
+	case keyDown:
 		m.moveDown()
 		return m, nil
-	case "esc":
+	case keyEsc:
 		if m.filtering {
 			// Commit the filter: unfocus the input but keep the query, so the
 			// filtered list stays navigable and toggleable (FR-006).
