@@ -19,3 +19,4 @@ Every `gskill` command exits with one of these codes. Scripts and CI can branch 
 | 10 | partial installation |
 | 11 | authentication failure |
 | 12 | cache or lock failure (incl. lock-acquire timeout) |
+| 130 | cancelled by the user before approval (guided flow; nothing written) |

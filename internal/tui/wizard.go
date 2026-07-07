@@ -57,12 +57,19 @@ type WizardPhases struct {
 	// ResolveSelection, when set, resolves flag-given skill selectors against
 	// the discovery result; the selection step is then skipped (FR-004).
 	ResolveSelection func(context.Context, app.DiscoverResult) ([]discovery.DiscoveredSkill, error)
+	// SourceChosen, when set, is called with the source accepted on the
+	// source step, before discovery starts — the CLI's phase closures read
+	// the chosen source through it (US5).
+	SourceChosen func(string)
 }
 
 // WizardConfig configures a wizard run.
 type WizardConfig struct {
 	Session Session
 	Phases  WizardPhases
+	// SourceSuggestions are configured sources offered as a pick list on the
+	// source step (US5), above the free-form input.
+	SourceSuggestions []string
 }
 
 // WizardOutcome is what a finished wizard reports back to the CLI.
@@ -170,8 +177,10 @@ type wizardModel struct {
 	width, height int
 
 	// Source-input step (US5).
-	srcInput sourceInputModel
-	srcErr   string
+	srcInput       sourceInputModel
+	srcErr         string
+	srcSuggestions []string
+	srcCursor      int // index into srcSuggestions; == len means the input row
 
 	// Discovery (welcome step).
 	discovering bool
@@ -222,6 +231,9 @@ func newWizardModel(ctx context.Context, cfg WizardConfig) wizardModel {
 		agentChosen: make(map[int]bool),
 	}
 	m.srcInput = newSourceInputModel()
+	for _, s := range cfg.SourceSuggestions {
+		m.srcSuggestions = append(m.srcSuggestions, Sanitize(s))
+	}
 	if m.session.SourceAnswered {
 		m.step = stepWelcome
 	} else {

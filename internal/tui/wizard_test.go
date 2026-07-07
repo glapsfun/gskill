@@ -756,3 +756,89 @@ func TestWizardBackNavigation_EditSelectionUpdatesPlan(t *testing.T) {
 		t.Errorf("preview lost alpha:\n%s", view)
 	}
 }
+
+// ---- US5: source-input step (spec 011 T033) -------------------------------------
+
+func sourcelessConfig(calls *phaseCalls, validate func(string) error, suggestions []string) WizardConfig {
+	phases := fakePhases(calls, fakeSkills("alpha"), nil)
+	phases.ValidateSource = validate
+	return WizardConfig{
+		Session:           Session{}, // no source: wizard starts at the source step
+		Phases:            phases,
+		SourceSuggestions: suggestions,
+	}
+}
+
+func TestWizardSource_ValidatesInlineAndRecovers(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	validate := func(s string) error {
+		if s == "bad" {
+			return errors.New("unrecognized source")
+		}
+		return nil
+	}
+	m := newWizardModel(context.Background(), sourcelessConfig(&calls, validate, nil))
+	m = start(t, m)
+	if m.step != stepSource {
+		t.Fatalf("step = %v, want source", m.step)
+	}
+
+	m = drive(t, m, key("b"), key("a"), key("d"), key("enter"))
+	if m.step != stepSource {
+		t.Fatalf("invalid source advanced the flow (US5 scenario 2), step = %v", m.step)
+	}
+	if !strings.Contains(m.View(), "unrecognized source") {
+		t.Errorf("validation error not shown inline:\n%s", m.View())
+	}
+
+	// Correct the input without leaving the flow.
+	m = drive(t, m, key("backspace"), key("backspace"), key("backspace"))
+	for _, r := range "example/repo" {
+		m = drive(t, m, key(string(r)))
+	}
+	m = drive(t, m, key("enter"))
+	if m.step != stepWelcome {
+		t.Fatalf("corrected source did not continue to welcome, step = %v", m.step)
+	}
+	if m.session.Source != "example/repo" || calls.discover != 1 {
+		t.Errorf("session.Source = %q, discover calls = %d", m.session.Source, calls.discover)
+	}
+}
+
+func TestWizardSource_EmptyInputIsRejected(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), sourcelessConfig(&calls, nil, nil))
+	m = start(t, m)
+	m = drive(t, m, key("enter"))
+	if m.step != stepSource {
+		t.Fatalf("empty source advanced the flow, step = %v", m.step)
+	}
+	if !strings.Contains(m.View(), "enter a repository") {
+		t.Errorf("missing empty-input guidance:\n%s", m.View())
+	}
+}
+
+func TestWizardSource_ConfiguredSourcesSelectable(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), sourcelessConfig(&calls, nil,
+		[]string{"github.com/acme/skills", "github.com/other/repo"}))
+	m = start(t, m)
+
+	if v := m.View(); !strings.Contains(v, "github.com/acme/skills") {
+		t.Fatalf("configured sources not offered:\n%s", v)
+	}
+	// The first suggestion is under the cursor; enter selects it.
+	m = drive(t, m, key("enter"))
+	if m.session.Source != "github.com/acme/skills" {
+		t.Errorf("session.Source = %q, want the picked suggestion", m.session.Source)
+	}
+	if m.step != stepWelcome {
+		t.Errorf("step = %v, want welcome after picking a source", m.step)
+	}
+}

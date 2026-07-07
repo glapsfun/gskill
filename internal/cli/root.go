@@ -34,6 +34,7 @@ type rootCLI struct {
 
 	Init    initCmd    `cmd:"" group:"core" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
 	Add     addCmd     `cmd:"" group:"core" help:"Add and install a new skill."`
+	Onboard onboardCmd `cmd:"" group:"core" help:"Guided skill installation without a predefined source."`
 	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent)."`
 	Update  updateCmd  `cmd:"" group:"core" help:"Advance skills within their version constraints."`
 	Remove  removeCmd  `cmd:"" group:"core" help:"Uninstall skills and clean up."`
