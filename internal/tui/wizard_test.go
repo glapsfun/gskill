@@ -312,3 +312,187 @@ func TestWizard_ExecuteErrorIsTerminalAndReported(t *testing.T) {
 		t.Errorf("error not shown to the user:\n%s", m.View())
 	}
 }
+
+// ---- US1 step-depth tests (spec 011 T012) -------------------------------------
+
+func TestWizardView_WelcomeShowsDetection(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	skills := fakeSkills("alpha", "beta")
+	skills = append(skills, discovery.DiscoveredSkill{ID: "broken", Valid: false})
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, skills, nil),
+	})
+	m = start(t, m)
+
+	view := m.View()
+	for _, want := range []string{"example/repo", "2", "(1 invalid)", "Nothing is written until you approve"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("welcome view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestWizardSelect_SearchNarrowsList(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha", "beta", "gamma"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter")) // → select
+
+	m = drive(t, m, key("/"), key("b"), key("e"), key("t"))
+	view := m.View()
+	if !strings.Contains(view, "beta") {
+		t.Errorf("filtered view lost the match:\n%s", view)
+	}
+	if strings.Contains(view, "alpha") || strings.Contains(view, "gamma") {
+		t.Errorf("filter did not narrow the list:\n%s", view)
+	}
+
+	// The narrowed row is selectable and confirms.
+	m = drive(t, m, key("esc"), key(" "), key("enter"))
+	if len(m.session.Selected) != 1 || m.session.Selected[0].ID != "beta" {
+		t.Errorf("selection after filtered toggle = %+v, want beta", m.session.Selected)
+	}
+}
+
+func TestWizardSelect_RequiresAtLeastOne(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha", "beta"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter")) // → select
+	m = drive(t, m, key("enter")) // confirm with nothing chosen
+
+	if m.step != stepSelect {
+		t.Fatalf("step = %v, want to stay on select", m.step)
+	}
+	if !strings.Contains(m.View(), "at least one skill") {
+		t.Errorf("missing validation message:\n%s", m.View())
+	}
+}
+
+func TestWizardPreview_OffersExactlyThreeChoices(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter"))
+	m = advanceToPreview(t, m)
+
+	view := m.View()
+	for _, want := range []string{"approve & install", "go back and edit", "cancel"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("approval choices missing %q (FR-017):\n%s", want, view)
+		}
+	}
+	if !strings.Contains(view, "/tmp/dest/alpha") {
+		t.Errorf("preview missing destination path:\n%s", view)
+	}
+}
+
+func TestWizardProgress_RendersEvents(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha", "beta"), nil),
+	})
+	m.step = stepProgress
+	m.session.Selected = fakeSkills("alpha", "beta")
+	m.events = []app.ProgressEvent{{Skill: "alpha", Stage: "install"}, {Skill: "alpha", Stage: "record"}}
+
+	view := m.View()
+	if !strings.Contains(view, "✓ alpha") && !strings.Contains(view, "✓") {
+		t.Errorf("progress view does not mark completed skills:\n%s", view)
+	}
+	if !strings.Contains(view, "beta") {
+		t.Errorf("progress view missing pending skill:\n%s", view)
+	}
+}
+
+func TestWizardSummary_ShowsPathsAndNextCommands(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	phases := fakePhases(&calls, fakeSkills("alpha"), nil)
+	phases.Execute = func(context.Context, app.InstallPlan, func(app.ProgressEvent)) (app.AddResult, error) {
+		calls.execute++
+		return app.AddResult{Installed: []app.InstalledSkill{{
+			Name: "alpha", Targets: map[string]string{"claude": ".claude/skills/alpha"},
+		}}}, nil
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  phases,
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter"))
+	m = advanceToPreview(t, m)
+	m = drive(t, m, key("enter")) // approve
+
+	view := m.View()
+	for _, want := range []string{".claude/skills/alpha", "gskill list", "gskill status", "gskill update", "gskill remove"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("summary missing %q (FR-021):\n%s", want, view)
+		}
+	}
+}
+
+func TestWizard_SanitizesHostileSkillStrings(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	hostile := []discovery.DiscoveredSkill{{
+		ID: "evil\x1b[2Jskill", DisplayName: "evil\x1b]0;pwned\x07", RepoPath: "a\x1b[31mb", Valid: true,
+	}}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, hostile, nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter")) // → select
+
+	if v := m.View(); strings.Contains(v, "\x1b[2J") || strings.Contains(v, "\x1b]0;") || strings.Contains(v, "\x1b[31m") {
+		t.Errorf("select view leaks raw escape sequences:\n%q", v)
+	}
+}
+
+func TestWizard_ResolveSelectionPrefillsSkills(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	skills := fakeSkills("alpha", "beta")
+	phases := fakePhases(&calls, skills, nil)
+	phases.ResolveSelection = func(_ context.Context, disc app.DiscoverResult) ([]discovery.DiscoveredSkill, error) {
+		return disc.Skills[:1], nil // what --skill alpha would resolve to
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  phases,
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter")) // leave welcome
+
+	if m.step != stepPreview {
+		t.Fatalf("step = %v, want preview (selection pre-resolved from flags must skip select)", m.step)
+	}
+	if len(m.session.Selected) != 1 || m.session.Selected[0].ID != "alpha" {
+		t.Errorf("session.Selected = %+v, want alpha", m.session.Selected)
+	}
+}

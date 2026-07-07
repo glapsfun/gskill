@@ -12,12 +12,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/store"
 )
 
 // Phase-API integration tests for spec 011 (contracts/app-phases.md):
@@ -366,4 +368,118 @@ func normalizedLock(t *testing.T, path string) string {
 		t.Fatalf("re-marshal lock: %v", err)
 	}
 	return string(out)
+}
+
+// ---- SC-006 failure classes (spec 011 T013) ----------------------------------
+
+// assertNoPartialInstall checks that a failed execute left no lockfile, no
+// manifest entry, and no activated agent target (FR-020).
+func assertNoPartialInstall(t *testing.T, root, skill string) {
+	t.Helper()
+
+	if _, err := os.Stat(filepath.Join(root, "gskill.lock")); err == nil {
+		t.Error("lockfile exists after failed install")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "gskill.toml")) //nolint:gosec // test-controlled temp path
+	if err == nil && len(data) > 0 && contains(string(data), skill) {
+		t.Errorf("manifest records %q after failed install", skill)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", skill)); err == nil {
+		t.Error("agent target exists after failed install (rollback missed it)")
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(sub) > 0 && len(s) >= len(sub) && strings.Contains(s, sub)
+}
+
+func TestDiscoverSource_UnreachableSourceFailsTyped(t *testing.T) {
+	t.Parallel()
+
+	root := projectWithAgent(t)
+	_, err := onboardApp().DiscoverSource(context.Background(), app.DiscoverRequest{
+		Root:   root,
+		Source: filepath.Join(t.TempDir(), "definitely-missing"),
+	})
+	if err == nil {
+		t.Fatal("DiscoverSource succeeded for a nonexistent source")
+	}
+	assertNoPartialInstall(t, root, "alpha")
+}
+
+func TestExecutePlan_ChecksumMismatchFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	a := onboardApp()
+	ctx := context.Background()
+
+	// Learn the content hash from a clean install elsewhere.
+	seed := projectWithAgent(t)
+	seedRes, err := a.Add(ctx, app.AddRequest{Root: seed, Source: src})
+	if err != nil {
+		t.Fatalf("seed Add: %v", err)
+	}
+	hash := seedRes.Installed[0].ContentHash
+
+	// Tamper the victim project's store entry for that hash, so stage-and-verify
+	// re-hashes different content than the key promises.
+	root := projectWithAgent(t)
+	storeEntry := store.New(filepath.Join(root, ".gskill", "store")).Path(hash)
+	if err := os.MkdirAll(storeEntry, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeEntry, "SKILL.md"), []byte("---\nname: alpha\ndescription: tampered\n---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	disc := discover(t, a, root, src)
+	plan, err := a.PlanInstall(ctx, app.PlanRequest{
+		Root: root, Source: src, Discover: disc,
+		Selected: selectByID(t, disc, "alpha"), AgentIDs: []string{"claude"},
+	})
+	if err != nil {
+		t.Fatalf("PlanInstall: %v", err)
+	}
+	_, err = a.ExecutePlan(ctx, plan, nil)
+	if err == nil {
+		t.Fatal("ExecutePlan succeeded with a tampered store entry")
+	}
+	if !errors.Is(err, errs.ErrIntegrity) {
+		t.Errorf("err = %v, want errs.ErrIntegrity", err)
+	}
+	assertNoPartialInstall(t, root, "alpha")
+}
+
+func TestExecutePlan_CancelledMidInstallRollsBack(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha", "skills/beta")
+	root := projectWithAgent(t)
+	a := onboardApp()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	disc := discover(t, a, root, src)
+	plan, err := a.PlanInstall(ctx, app.PlanRequest{
+		Root: root, Source: src, Discover: disc,
+		Selected: selectByID(t, disc, "alpha", "beta"), AgentIDs: []string{"claude"},
+	})
+	if err != nil {
+		t.Fatalf("PlanInstall: %v", err)
+	}
+
+	// Cancel as soon as the first skill records: the second iteration must
+	// abort, and the already-activated first skill must be rolled back.
+	_, err = a.ExecutePlan(ctx, plan, func(e app.ProgressEvent) {
+		if e.Stage == "record" {
+			cancel()
+		}
+	})
+	if err == nil {
+		t.Fatal("ExecutePlan succeeded despite mid-install cancellation")
+	}
+	assertNoPartialInstall(t, root, "alpha")
+	assertNoPartialInstall(t, root, "beta")
 }

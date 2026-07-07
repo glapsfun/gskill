@@ -25,6 +25,10 @@ const (
 	CodePartialInstall    Code = 10 // partial installation
 	CodeAuth              Code = 11 // authentication failure
 	CodeCacheLock         Code = 12 // cache / lock failure (incl. lock-acquire timeout)
+	// CodeCancelled follows the shell convention for a user-interrupted run
+	// (128+SIGINT). The guided add flow returns it when the user quits before
+	// approving, with zero writes performed (spec 011).
+	CodeCancelled Code = 130
 )
 
 // Error carries a gskill exit Code and, optionally, an underlying cause that
@@ -77,6 +81,7 @@ var (
 	ErrPartialInstall    = &Error{Code: CodePartialInstall, Msg: "partial installation"}
 	ErrAuth              = &Error{Code: CodeAuth, Msg: "authentication failure"}
 	ErrCacheLock         = &Error{Code: CodeCacheLock, Msg: "cache or lock failure"}
+	ErrCancelled         = &Error{Code: CodeCancelled, Msg: "cancelled"}
 )
 
 // New returns an *Error carrying code and msg with no underlying cause.

@@ -382,6 +382,13 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 		}
 
 		for _, s := range selected {
+			// Honor interruption between skills: an interrupted multi-skill add
+			// rolls back what it activated instead of committing a partial set
+			// (spec 011 FR-020, SC-006 interrupt class).
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				rollback()
+				return ctxErr
+			}
 			emit(s.ID, "install")
 			plan, planErr := a.planAdd(m, lf, s.ID, req, reqIDs)
 			if planErr != nil {

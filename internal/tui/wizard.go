@@ -54,6 +54,9 @@ type WizardPhases struct {
 	Execute  func(context.Context, app.InstallPlan, func(app.ProgressEvent)) (app.AddResult, error)
 	// ValidateSource vets typed source input on the source step (US5).
 	ValidateSource func(string) error
+	// ResolveSelection, when set, resolves flag-given skill selectors against
+	// the discovery result; the selection step is then skipped (FR-004).
+	ResolveSelection func(context.Context, app.DiscoverResult) ([]discovery.DiscoveredSkill, error)
 }
 
 // WizardConfig configures a wizard run.
@@ -372,7 +375,9 @@ func (m *wizardModel) syncSelector() {
 	}
 	m.sel = newSelectorModel(items)
 	for i, s := range m.disc.Skills {
-		items[i] = SkillItem{ID: s.ID, DisplayName: Sanitize(s.DisplayName), RepoPath: Sanitize(s.RepoPath), Valid: s.Valid}
+		// Every remote-origin string is sanitized before it can reach the
+		// terminal (constitution VI: escape-sequence injection from SKILL.md).
+		items[i] = SkillItem{ID: Sanitize(s.ID), DisplayName: Sanitize(s.DisplayName), RepoPath: Sanitize(s.RepoPath), Valid: s.Valid}
 		if chosen[s.ID] {
 			m.sel.chosen[i] = true
 		}
@@ -431,6 +436,15 @@ func (m wizardModel) onDiscoverDone(msg discoverDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.discovered = true
 	m.disc = msg.res
+	if m.phases.ResolveSelection != nil && !m.session.SkillsAnswered {
+		selected, err := m.phases.ResolveSelection(m.ctx, m.disc)
+		if err != nil {
+			m.failed = err
+			return m, nil
+		}
+		m.session.Selected = selected
+		m.session.SkillsAnswered = true
+	}
 	return m, nil
 }
 

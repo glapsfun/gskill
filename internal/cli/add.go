@@ -3,12 +3,23 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
+
+	"golang.org/x/term"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/tui"
+)
+
+// Test seams for the interactive branch: the stdin-TTY probe and the wizard
+// runner are swappable so the wizard wiring is unit-testable without a PTY.
+var (
+	stdinIsTTY  = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+	runWizardFn = tui.RunWizard
 )
 
 // addCmd adds and installs one or more skills discovered in a source.
@@ -45,8 +56,102 @@ func (addCmd) Help() string {
 	)
 }
 
-// Run executes `gskill add`.
-func (c addCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+// Run executes `gskill add`. On an interactive terminal it opens the guided
+// onboarding wizard (spec 011 FR-001); everywhere else — non-TTY, --json,
+// --no-interactive, --list, or every wizard question already answered by flags
+// — it keeps the pre-wizard direct behavior byte-for-byte (FR-003, SC-004).
+func (c addCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
+	if out.Interactive() && stdinIsTTY() && !c.List && !c.answersComplete(g.Yes) {
+		return c.runWizard(ctx, out, a, root, g)
+	}
+	return c.runDirect(ctx, out, a, root)
+}
+
+// answersComplete reports whether flags answer every wizard question, in which
+// case the flow collapses to the direct install (contracts/cli-onboarding.md).
+// Version is not required: --yes accepts the "latest" default.
+func (c addCmd) answersComplete(yes bool) bool {
+	return (len(c.Skill) > 0 || c.All) && len(c.Agent) > 0 && yes
+}
+
+// wizardSession pre-fills the wizard session from flags so answered steps are
+// skipped (FR-004).
+func (c addCmd) wizardSession(yes bool) tui.Session {
+	return tui.Session{
+		Source:           c.Source,
+		SourceAnswered:   true,
+		SkillsAnswered:   false, // resolved post-discovery via ResolveSelection
+		Version:          c.Version,
+		RefSpec:          c.Ref,
+		Commit:           c.Commit,
+		VersionAnswered:  c.Version != "" || c.Ref != "" || c.Commit != "",
+		AgentIDs:         c.Agent,
+		AgentsAnswered:   len(c.Agent) > 0,
+		ApprovalAnswered: yes,
+	}
+}
+
+// runWizard drives the guided flow over the phased app API and maps its
+// outcome to the CLI contract (cancel → exit 130, zero writes).
+func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
+	// The Plan closure needs the discovery result the wizard obtained; the
+	// phases run strictly in order on one wizard, so a captured local is safe.
+	var disc app.DiscoverResult
+
+	phases := tui.WizardPhases{
+		Discover: func(ctx context.Context) (app.DiscoverResult, error) {
+			d, err := a.DiscoverSource(ctx, app.DiscoverRequest{
+				Root: string(root), Source: c.Source,
+				Version: c.Version, Ref: c.Ref, Commit: c.Commit,
+				Scope: scopeFlag(c.Global), Mode: modeFromFlags(c.Copy, c.Symlink, c.Auto),
+				MaxDepth: c.MaxDepth, Include: c.Include, Exclude: c.Exclude,
+			})
+			if err != nil {
+				return app.DiscoverResult{}, err
+			}
+			disc = d
+			return d, nil
+		},
+		Plan: func(ctx context.Context, s *tui.Session) (app.InstallPlan, error) {
+			return a.PlanInstall(ctx, app.PlanRequest{
+				Root: string(root), Source: c.Source,
+				Version: s.Version, Ref: s.RefSpec, Commit: s.Commit,
+				Discover: disc, Selected: s.Selected,
+				AgentIDs: s.AgentIDs,
+				Scope:    scopeFlag(c.Global), Mode: modeFromFlags(c.Copy, c.Symlink, c.Auto),
+				Force: c.Force,
+			})
+		},
+		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.ProgressEvent)) (app.AddResult, error) {
+			return a.ExecutePlan(ctx, plan, progress)
+		},
+	}
+	if len(c.Skill) > 0 || c.All {
+		phases.ResolveSelection = func(_ context.Context, d app.DiscoverResult) ([]discovery.DiscoveredSkill, error) {
+			return a.SelectByFlags(d, c.Skill, c.All, c.Path)
+		}
+	}
+
+	outcome, err := runWizardFn(ctx, tui.WizardConfig{Session: c.wizardSession(g.Yes), Phases: phases}, true)
+	if err != nil {
+		return err
+	}
+	if outcome.Cancelled {
+		return fmt.Errorf("%w — nothing was changed", errs.ErrCancelled)
+	}
+	if outcome.Err != nil {
+		return outcome.Err
+	}
+	if outcome.Executed {
+		// Repeat the summary on plain stdout so it survives the wizard's
+		// alternate screen (contracts/cli-onboarding.md, FR-021).
+		return c.renderInstalled(out, outcome.Result)
+	}
+	return nil
+}
+
+// runDirect executes the pre-wizard, non-interactive add path unchanged.
+func (c addCmd) runDirect(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	res, err := a.Add(ctx, app.AddRequest{
 		Root:        string(root),
 		Source:      c.Source,

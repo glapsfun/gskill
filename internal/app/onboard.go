@@ -127,6 +127,13 @@ func (a *App) DiscoverSource(ctx context.Context, req DiscoverRequest) (Discover
 	}, nil
 }
 
+// SelectByFlags resolves explicit --skill/--all selectors against a discovered
+// source, exactly as the non-guided add does, so a flag-preselected wizard
+// session and a scripted add choose identically (FR-004).
+func (a *App) SelectByFlags(disc DiscoverResult, selectors []string, all bool, path string) ([]discovery.DiscoveredSkill, error) {
+	return a.resolveSelection(disc.Scan, AddRequest{Selectors: selectors, All: all, Path: path}, disc.Ref.Path)
+}
+
 // ExecutePlan performs a previously computed InstallPlan: optional project
 // initialization (FR-023), then the staged, checksum-verified, rollback-on-
 // failure install and the atomic manifest+lockfile commit — the exact pipeline
