@@ -4,11 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
 )
@@ -840,5 +846,233 @@ func TestWizardSource_ConfiguredSourcesSelectable(t *testing.T) {
 	}
 	if m.step != stepWelcome {
 		t.Errorf("step = %v, want welcome after picking a source", m.step)
+	}
+}
+
+// ---- Polish: security sanitization table (spec 011 T039) -----------------------
+
+// TestWizard_ViewsNeverLeakEscapeSequences injects hostile escape sequences
+// into every remote-origin field each view renders (constitution VI).
+func TestWizard_ViewsNeverLeakEscapeSequences(t *testing.T) {
+	t.Parallel()
+
+	const evil = "\x1b[2J\x1b]0;pwned\x07\x1b[31m"
+
+	var calls phaseCalls
+	base := func() wizardModel {
+		m := newWizardModel(context.Background(), WizardConfig{
+			Session: Session{Source: "safe" + evil, SourceAnswered: true},
+			Phases:  fakePhases(&calls, fakeSkills("alpha"), nil),
+		})
+		return start(t, m)
+	}
+
+	views := map[string]func() string{
+		"welcome with hostile source and warning": func() string {
+			m := base()
+			m.disc.Warnings = []string{"warn" + evil}
+			return m.View()
+		},
+		"version with hostile label and metadata": func() string {
+			m := base()
+			m.step = stepVersion
+			m.versions = app.VersionList{
+				Candidates:     []app.VersionCandidate{{Kind: app.VersionRelease, Label: "v1" + evil, Metadata: "meta" + evil}},
+				Degraded:       true,
+				DegradedReason: "reason" + evil,
+			}
+			return m.View()
+		},
+		"preview with hostile conflict and action": func() string {
+			m := base()
+			m.step = stepPreview
+			m.planReady = true
+			m.plan = app.InstallPlan{
+				Source:    "src" + evil,
+				AgentIDs:  []string{"claude"},
+				Actions:   []app.PlannedAction{{Skill: "s" + evil, AgentID: "claude", Destination: "d" + evil}},
+				Conflicts: []app.PlanConflict{{Skill: "s", Kind: app.ConflictCrossSource, Detail: "boom" + evil}},
+				Warnings:  []string{"w" + evil},
+			}
+			return m.View()
+		},
+		"summary with hostile names and targets": func() string {
+			m := base()
+			m.step = stepSummary
+			m.result = app.AddResult{Installed: []app.InstalledSkill{{
+				Name: "n" + evil, Targets: map[string]string{"claude": "t" + evil},
+			}}}
+			return m.View()
+		},
+		"error with hostile message": func() string {
+			m := base()
+			m.failed = errors.New("bad" + evil)
+			return m.View()
+		},
+	}
+	for name, render := range views {
+		v := render()
+		for _, seq := range []string{"\x1b[2J", "\x1b]0;", "\x1b[31m", "\x07"} {
+			if strings.Contains(v, seq) {
+				t.Errorf("%s leaks %q:\n%q", name, seq, v)
+			}
+		}
+	}
+}
+
+// ---- Polish: SC-005 quantified responsiveness (spec 011 T040) -------------------
+
+func TestWizardSelect_ResponsiveAt200PlusSkills(t *testing.T) {
+	t.Parallel()
+
+	ids := make([]string, 250)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("skill-%03d-%s", i, strings.Repeat("x", i%7))
+	}
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills(ids...), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, win(80, 24))
+
+	startRender := time.Now()
+	m = drive(t, m, key("enter")) // enter select: list built and rendered
+	_ = m.View()
+	if d := time.Since(startRender); d > 500*time.Millisecond {
+		t.Errorf("selection list took %v to open at 250 skills, SC-005 requires < 500ms", d)
+	}
+
+	m = drive(t, m, key("/"))
+	for _, r := range "skill-1" {
+		startKey := time.Now()
+		m = drive(t, m, key(string(r)))
+		_ = m.View()
+		if d := time.Since(startKey); d > 50*time.Millisecond {
+			t.Errorf("filter keystroke %q took %v at 250 skills, SC-005 requires < 50ms", r, d)
+		}
+	}
+}
+
+// ---- Polish: end-to-end wizard over the real app phases (spec 011 T040) --------
+
+// realProject builds an inited project with a .claude marker plus a two-skill
+// local source, and wires wizard phases exactly as the CLI does.
+func realPhases(t *testing.T, a *app.App, root, src string) WizardPhases {
+	t.Helper()
+
+	var disc app.DiscoverResult
+	return WizardPhases{
+		Discover: func(ctx context.Context) (app.DiscoverResult, error) {
+			d, err := a.DiscoverSource(ctx, app.DiscoverRequest{Root: root, Source: src})
+			if err != nil {
+				return app.DiscoverResult{}, err
+			}
+			disc = d
+			return d, nil
+		},
+		Plan: func(ctx context.Context, s *Session) (app.InstallPlan, error) {
+			return a.PlanInstall(ctx, app.PlanRequest{
+				Root: root, Source: src,
+				Version: s.Version, Ref: s.RefSpec, Commit: s.Commit,
+				Discover: disc, Selected: s.Selected, AgentIDs: s.AgentIDs,
+			})
+		},
+		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.ProgressEvent)) (app.AddResult, error) {
+			return a.ExecutePlan(ctx, plan, progress)
+		},
+		Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
+			return a.AgentChoices(ctx, root)
+		},
+	}
+}
+
+func realWizardFixture(t *testing.T) (root, src string, a *app.App) {
+	t.Helper()
+
+	root = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	src = t.TempDir()
+	for _, name := range []string{"alpha", "beta"} {
+		dir := filepath.Join(src, "skills", name)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + name + "\ndescription: a skill\n---\n# " + name + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a = app.New(app.Options{Agents: agent.NewDefaultRegistry(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if _, err := a.Init(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	return root, src, a
+}
+
+func TestWizard_EndToEndAgainstRealApp(t *testing.T) {
+	t.Parallel()
+
+	root, src, a := realWizardFixture(t)
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: src, SourceAnswered: true},
+		Phases:  realPhases(t, a, root, src),
+	})
+
+	m = start(t, m)
+	m = drive(t, m, key("enter"))           // welcome → select
+	m = drive(t, m, key(" "), key("enter")) // pick alpha → agents
+	m = drive(t, m, key("enter"))           // accept preselected claude → preview
+	if m.step != stepPreview {
+		t.Fatalf("step = %v, want preview", m.step)
+	}
+	m = drive(t, m, key("enter")) // approve → execute → summary
+	if m.step != stepSummary {
+		t.Fatalf("step = %v, want summary; failed=%v", m.step, m.failed)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "alpha", "SKILL.md")); err != nil {
+		t.Errorf("skill not installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "gskill.lock")); err != nil {
+		t.Errorf("lockfile not written: %v", err)
+	}
+}
+
+func TestWizard_CancelAgainstRealAppWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	root, src, a := realWizardFixture(t)
+	manifestBefore, err := os.ReadFile(filepath.Join(root, "gskill.toml")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: src, SourceAnswered: true},
+		Phases:  realPhases(t, a, root, src),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter"), key("enter")) // reach preview
+	m = drive(t, m, key("q"))                                           // cancel at preview
+
+	if !m.Outcome().Cancelled {
+		t.Fatal("expected a cancelled outcome")
+	}
+	manifestAfter, err := os.ReadFile(filepath.Join(root, "gskill.toml")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(manifestBefore) != string(manifestAfter) {
+		t.Error("cancel changed the manifest (SC-002)")
+	}
+	if _, err := os.Stat(filepath.Join(root, "gskill.lock")); err == nil {
+		t.Error("cancel left a lockfile behind (SC-002)")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "alpha")); err == nil {
+		t.Error("cancel left installed files behind (SC-002)")
 	}
 }

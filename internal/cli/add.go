@@ -49,10 +49,12 @@ type addCmd struct {
 // Help returns the detailed help shown by `gskill add --help`.
 func (addCmd) Help() string {
 	return examplesHelp(
+		"gskill add github.com/owner/repo                # guided wizard on a terminal",
 		"gskill add github.com/owner/repo --agent claude",
 		"gskill add github.com/owner/repo --skill deploy-helper --version '^2.0.0'",
 		"gskill add ./local/skills --all",
 		"gskill add github.com/owner/repo --list",
+		"gskill add github.com/owner/repo --dry-run      # print the plan, write nothing",
 	)
 }
 
@@ -61,10 +63,68 @@ func (addCmd) Help() string {
 // --no-interactive, --list, or every wizard question already answered by flags
 // — it keeps the pre-wizard direct behavior byte-for-byte (FR-003, SC-004).
 func (c addCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
+	if g.DryRun && !c.List {
+		return c.runDryRun(ctx, out, a, root)
+	}
 	if out.Interactive() && stdinIsTTY() && !c.List && !c.answersComplete(g.Yes) {
 		return c.runWizard(ctx, out, a, root, g)
 	}
 	return c.runDirect(ctx, out, a, root)
+}
+
+// runDryRun computes and renders the installation plan without executing it
+// (FR-024): scripts get non-interactive access to exactly what the wizard's
+// preview shows. Selection follows the same rules as a direct add.
+func (c addCmd) runDryRun(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+	disc, err := a.DiscoverSource(ctx, app.DiscoverRequest{
+		Root: string(root), Source: c.Source,
+		Version: c.Version, Ref: c.Ref, Commit: c.Commit,
+		Scope: scopeFlag(c.Global), Mode: modeFromFlags(c.Copy, c.Symlink, c.Auto),
+		MaxDepth: c.MaxDepth, Include: c.Include, Exclude: c.Exclude,
+	})
+	if err != nil {
+		return err
+	}
+	selected, err := a.SelectByFlags(disc, c.Skill, c.All, c.Path)
+	if err != nil {
+		return err
+	}
+	plan, err := a.PlanInstall(ctx, app.PlanRequest{
+		Root: string(root), Source: c.Source,
+		Version: c.Version, Ref: c.Ref, Commit: c.Commit,
+		Discover: disc, Selected: selected,
+		AgentIDs: c.Agent, Scope: scopeFlag(c.Global),
+		Mode: modeFromFlags(c.Copy, c.Symlink, c.Auto), Force: c.Force,
+	})
+	if err != nil {
+		return err
+	}
+	return out.Result(renderPlanText(plan), plan)
+}
+
+// renderPlanText renders an InstallPlan for humans, mirroring the wizard's
+// preview content.
+func renderPlanText(plan app.InstallPlan) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Plan (dry run — nothing will be written):\n")
+	fmt.Fprintf(&b, "  source: %s\n", plan.Source)
+	fmt.Fprintf(&b, "  agents: %s\n", strings.Join(plan.AgentIDs, ", "))
+	if plan.InitProject {
+		b.WriteString("  gskill.toml will be created (new project)\n")
+	}
+	for _, act := range plan.Actions {
+		fmt.Fprintf(&b, "  + %s → %s\n", act.Skill, act.Destination)
+		for _, op := range act.FileOps {
+			fmt.Fprintf(&b, "      %s %s\n", op.Op, op.Path)
+		}
+	}
+	for _, w := range plan.Warnings {
+		fmt.Fprintf(&b, "  warning: %s\n", w)
+	}
+	for _, cf := range plan.Conflicts {
+		fmt.Fprintf(&b, "  conflict: %s\n", cf.Detail)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // answersComplete reports whether flags answer every wizard question, in which

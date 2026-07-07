@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -191,5 +194,52 @@ func TestAddRun_NoStdinTTYKeepsDirectPath(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Installed 1 skill(s): alpha") {
 		t.Errorf("stdout = %q, want direct single-skill install", out.String())
+	}
+}
+
+// ---- FR-024: add --dry-run renders the plan without executing ------------------
+
+func TestAddDryRun_RendersPlanWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	src := addSourceTree(t, "alpha", "beta")
+	dir := agentProject(t)
+
+	stdout, stderr, code := runCLI(t, newTestApp(), "-C", dir, "--dry-run", "add", src, "--all")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %q", code, stderr)
+	}
+	for _, want := range []string{"alpha", "beta", ".claude"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("dry-run output missing %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "Installed") {
+		t.Errorf("dry-run must not claim an install happened:\n%s", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "gskill.lock")); err == nil {
+		t.Error("dry-run wrote a lockfile")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "alpha")); err == nil {
+		t.Error("dry-run installed files")
+	}
+}
+
+func TestAddDryRun_JSONPlan(t *testing.T) {
+	t.Parallel()
+
+	src := addSourceTree(t, "alpha")
+	dir := agentProject(t)
+
+	stdout, stderr, code := runCLI(t, newTestApp(), "-C", dir, "--json", "--dry-run", "add", src)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %q", code, stderr)
+	}
+	var v map[string]any
+	if err := json.Unmarshal([]byte(stdout), &v); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, stdout)
+	}
+	if _, ok := v["actions"]; !ok {
+		t.Errorf("JSON plan missing actions: %s", stdout)
 	}
 }
