@@ -10,11 +10,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/resolver"
@@ -277,10 +279,23 @@ func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents [
 		return InstallPlan{}, fmt.Errorf("resolve home directory for a global install: %w", homeErr)
 	}
 
+	if err := a.planSelectedActions(&plan, req, p, m, lf, selected, reqIDs, home, global); err != nil {
+		return InstallPlan{}, err
+	}
+	return plan, nil
+}
+
+// planSelectedActions runs per-skill conflict detection and action planning
+// over the selected skills, appending actions and conflicts to the plan.
+func (a *App) planSelectedActions(plan *InstallPlan, req PlanRequest, p *project, m *manifest.Manifest, lf *lockfile.Lockfile, selected []discovery.DiscoveredSkill, reqIDs []string, home string, global bool) error {
 	addReq := AddRequest{
 		Root: req.Root, Source: req.Source,
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
 		Agents: req.AgentIDs, Force: req.Force, Scope: req.Scope, Mode: req.Mode,
+	}
+	roots := a.managedRoots(p)
+	if cfgDir, cfgErr := config.Dir(); cfgErr == nil {
+		roots = append(roots, cfgDir)
 	}
 	for _, s := range selected {
 		ap, planErr := a.planAdd(m, lf, s.ID, addReq, reqIDs)
@@ -292,12 +307,16 @@ func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents [
 				})
 				continue
 			}
-			return InstallPlan{}, planErr
+			return planErr
 		}
 		_, declared := m.Skills[s.ID]
-		appendSkillActions(&plan, req, s, ap, declared, home, global)
+		priorHash := ""
+		if locked, ok := lf.Skills[s.ID]; ok {
+			priorHash = locked.Resolved.ContentHash
+		}
+		appendSkillActions(plan, req, s, ap, declared, home, global, roots, priorHash)
 	}
-	return plan, nil
+	return nil
 }
 
 // rePinPlan resolves the requested pin and re-discovers at that revision — the
@@ -371,13 +390,33 @@ func revisionLabel(rev resolver.Revision) string {
 }
 
 // appendSkillActions adds one selected skill's per-agent actions to the plan,
-// flagging foreign-destination overwrites as conflicts: a destination that
-// already exists for a skill gskill does not track is surfaced before approval
-// rather than as an install failure afterward (FR-016, US4). --force is the
-// documented escape hatch and overrides the conflict; a symlink resolving into
-// a gskill-managed root (store, state dir, active layer) is gskill's own
-// content — e.g. a lost lockfile — not foreign (review finding).
-func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.DiscoveredSkill, ap addPlan, declared bool, home string, global bool) {
+// flagging foreign-destination overwrites as conflicts: content gskill does
+// not own — per-agent destinations AND the shared active-layer entry — is
+// surfaced before approval rather than as an install failure afterward
+// (FR-016, US4). Ownership is the shared active.Owned predicate the installer
+// enforces at execute time, so plan and execution cannot drift; --force is the
+// documented escape hatch. A copy-mode install (real dir whose hash matches
+// the incoming or previously locked content) is gskill's own, not foreign.
+func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.DiscoveredSkill, ap addPlan, declared bool, home string, global bool, roots []string, priorHash string) {
+	guarded := !ap.mergeInto && !declared && !req.Force
+	acceptHashes := func() []string {
+		hashes := []string{priorHash}
+		if h, err := integrity.HashDir(s.Dir); err == nil {
+			hashes = append(hashes, h.ContentHash)
+		}
+		return hashes
+	}
+
+	// The shared active entry is ensured before any agent target; a foreign
+	// occupant there fails execution, so surface it pre-approval too.
+	if guarded && !global {
+		activeDest := active.Path(req.Root, s.ID)
+		if _, statErr := os.Lstat(activeDest); statErr == nil && !active.Owned(activeDest, roots, acceptHashes()...) {
+			plan.Conflicts = append(plan.Conflicts, overwriteConflict(s.ID, activeDest))
+			return
+		}
+	}
+
 	for _, ag := range ap.activate {
 		dir := ag.ProjectSkillDir(req.Root)
 		if global {
@@ -385,14 +424,9 @@ func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.Discover
 		}
 		dest := filepath.Join(dir, s.ID)
 
-		if !ap.mergeInto && !declared && !req.Force {
-			if _, statErr := os.Stat(dest); statErr == nil && !destIsManaged(req.Root, dest) {
-				err := &ConflictError{Skill: s.ID, Kind: ConflictFileOverwrite, err: fmt.Errorf(
-					"%w: destination %s already exists and is not managed by gskill; remove it, or re-run with --force to overwrite",
-					errs.ErrInvalidManifest, dest)}
-				plan.Conflicts = append(plan.Conflicts, PlanConflict{
-					Skill: s.ID, Kind: ConflictFileOverwrite, Detail: err.Error(), Err: err,
-				})
+		if guarded {
+			if _, statErr := os.Lstat(dest); statErr == nil && !active.Owned(dest, roots, acceptHashes()...) {
+				plan.Conflicts = append(plan.Conflicts, overwriteConflict(s.ID, dest))
 				continue
 			}
 		}
@@ -407,45 +441,12 @@ func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.Discover
 	}
 }
 
-// destIsManaged reports whether dest is a symlink pointing into a
-// gskill-managed root: the project state dir (.gskill), the active layer
-// (.agents), or the global config/store directory.
-func destIsManaged(root, dest string) bool {
-	fi, err := os.Lstat(dest)
-	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
-		return false
-	}
-	target, err := os.Readlink(dest)
-	if err != nil {
-		return false
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(dest), target)
-	}
-	target = filepath.Clean(target)
-
-	managed := []string{
-		filepath.Join(root, stateDirName),
-		filepath.Join(root, ".agents"),
-	}
-	if cfgDir, err := config.Dir(); err == nil {
-		managed = append(managed, cfgDir)
-	}
-	for _, r := range managed {
-		if pathWithin(target, r) {
-			return true
-		}
-	}
-	return false
-}
-
-// pathWithin reports whether path is inside root (or is root itself).
-func pathWithin(path, root string) bool {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+// overwriteConflict builds the blocking foreign-destination conflict.
+func overwriteConflict(skill, dest string) PlanConflict {
+	err := &ConflictError{Skill: skill, Kind: ConflictFileOverwrite, err: fmt.Errorf(
+		"%w: destination %s already exists and is not managed by gskill; remove it, or re-run with --force to overwrite",
+		errs.ErrInvalidManifest, dest)}
+	return PlanConflict{Skill: skill, Kind: ConflictFileOverwrite, Detail: err.Error(), Err: err}
 }
 
 // planFileOps enumerates the files an action will place under dest,

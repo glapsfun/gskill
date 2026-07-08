@@ -35,6 +35,16 @@ type Request struct {
 	// ExpectContentHash, when set, must equal the materialized content hash or
 	// the install fails closed (used by frozen restore, FR-015/FR-037).
 	ExpectContentHash string
+	// PreserveForeign makes activation fail closed instead of replacing a
+	// destination gskill does not own (add paths, spec 011 FR-016 — the
+	// overwrite guard lives at the point of destruction). Reconcile paths
+	// (install/sync/repair/update) leave it false: restoring drifted targets
+	// is their contract.
+	PreserveForeign bool
+	// PriorContentHash is the lockfile-recorded content hash of the previous
+	// install at this skill's destinations, accepted as owned content when
+	// PreserveForeign is set (a copy-mode install is a real directory).
+	PriorContentHash string
 }
 
 // Result is the outcome of a successful install, sufficient to build a lock entry.
@@ -254,6 +264,9 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 
 	for idx, ag := range req.Agents {
 		dest := i.targetDir(ag, req, name)
+		if err := i.guardForeignTarget(req, dest, storePath); err != nil {
+			return "", "", nil, nil, err
+		}
 		usedMode, err := activateAgent(linkTarget, copySource, dest, agentActivation(req.ModePref, ag))
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
@@ -268,6 +281,32 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 		targets[ag.ID()] = i.recordTarget(req, dest)
 	}
 	return primary, activeRel, targets, modes, nil
+}
+
+// guardForeignTarget fails closed when a PreserveForeign activation would
+// replace a destination gskill does not own: not a symlink into the store or
+// active layer, and not a directory matching the incoming or previously locked
+// content (spec 011 FR-016; the guard sits directly before the destructive
+// RemoveAll so no caller can bypass it).
+func (i *Installer) guardForeignTarget(req Request, dest, storePath string) error {
+	if !req.PreserveForeign {
+		return nil
+	}
+	if _, err := os.Lstat(dest); err != nil {
+		return nil //nolint:nilerr // absent destination: nothing to protect, activation proceeds
+	}
+	roots := []string{i.store.Root(), active.Dir(req.ProjectRoot)}
+	hashes := []string{req.PriorContentHash, req.ExpectContentHash}
+	if h, err := integrity.HashDir(storePath); err == nil {
+		hashes = append(hashes, h.ContentHash)
+	}
+	if active.Owned(dest, roots, hashes...) {
+		return nil
+	}
+	return errs.WithHint(
+		fmt.Errorf("%w: destination %s already exists and is not managed by gskill",
+			errs.ErrInvalidManifest, dest),
+		"remove it, or re-run with --force to overwrite")
 }
 
 // targetDir resolves the per-agent destination directory for the skill.

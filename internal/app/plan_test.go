@@ -219,3 +219,137 @@ func TestInstallPlan_LinesCoverEveryPlanElement(t *testing.T) {
 		}
 	}
 }
+
+// ---- Review round 2, Phase 1: ownership at the point of destruction --------------
+
+func TestAgentAdd_FastPathDoesNotClobberForeignTarget(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+
+	if _, err := a.Add(ctx, app.AddRequest{Root: root, Source: src}); err != nil {
+		t.Fatalf("seed Add: %v", err)
+	}
+
+	// Hand-written content at the cursor destination.
+	foreign := filepath.Join(root, ".cursor", "skills", "alpha")
+	if err := os.MkdirAll(foreign, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreign, "NOTES.md"), []byte("mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pure agent-add: takes the tryLocalAgentAdd fast path.
+	_, err := a.Add(ctx, app.AddRequest{Root: root, Source: src, Agents: []string{"cursor"}})
+	if err == nil {
+		t.Fatal("agent-add clobbered a foreign destination without error")
+	}
+	if !strings.Contains(err.Error(), foreign) {
+		t.Errorf("error does not name the foreign destination: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(foreign, "NOTES.md")); statErr != nil {
+		t.Errorf("foreign content destroyed despite the error: %v", statErr)
+	}
+}
+
+func TestAgentAdd_MergePathDoesNotClobberForeignTarget(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+
+	if _, err := a.Add(ctx, app.AddRequest{Root: root, Source: src}); err != nil {
+		t.Fatalf("seed Add: %v", err)
+	}
+	foreign := filepath.Join(root, ".cursor", "skills", "alpha")
+	if err := os.MkdirAll(foreign, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreign, "NOTES.md"), []byte("mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// --all disqualifies the local fast path, driving the full merge path
+	// (planAdd → mergeInto → installSelected → installer).
+	_, err := a.Add(ctx, app.AddRequest{Root: root, Source: src, Agents: []string{"cursor"}, All: true})
+	if err == nil {
+		t.Fatal("merge-path agent-add clobbered a foreign destination without error")
+	}
+	if _, statErr := os.Stat(filepath.Join(foreign, "NOTES.md")); statErr != nil {
+		t.Errorf("foreign content destroyed despite the error: %v", statErr)
+	}
+
+	// --force is the documented escape hatch: the overwrite proceeds.
+	if _, err := a.Add(ctx, app.AddRequest{Root: root, Source: src, Agents: []string{"cursor"}, All: true, Force: true}); err != nil {
+		t.Fatalf("--force agent-add failed: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".cursor", "skills", "alpha", "SKILL.md")); statErr != nil {
+		t.Errorf("forced install did not place the skill: %v", statErr)
+	}
+}
+
+func TestPlanInstall_CopyModeReonboardIsUpdateNotConflict(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+
+	// Install in copy mode, then simulate manifest+lock loss.
+	if _, err := a.Add(ctx, app.AddRequest{Root: root, Source: src, Mode: "copy"}); err != nil {
+		t.Fatalf("seed Add: %v", err)
+	}
+	for _, f := range []string{"gskill.toml", "gskill.lock"} {
+		if err := os.Remove(filepath.Join(root, f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := a.Init(ctx, root); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-onboarding the same content: the copy-mode dir is gskill's own
+	// (hash-matching) content, not a foreign occupant.
+	plan := planFor(t, a, root, src, false, "alpha")
+	if len(plan.Conflicts) != 0 {
+		t.Fatalf("gskill's own copy-mode install flagged as foreign after manifest loss: %+v", plan.Conflicts)
+	}
+	for _, act := range plan.Actions {
+		for _, op := range act.FileOps {
+			if filepath.Base(op.Path) == "SKILL.md" && op.Op != "update" {
+				t.Errorf("existing owned copy should plan as update, got %+v", op)
+			}
+		}
+	}
+}
+
+func TestPlanInstall_ForeignActiveEntryIsConflict(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+
+	// The user's own content occupies the shared active entry.
+	activeDir := filepath.Join(root, ".agents", "skills", "alpha")
+	if err := os.MkdirAll(activeDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(activeDir, "SKILL.md"), []byte("# mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := planFor(t, onboardApp(), root, src, false, "alpha")
+	if len(plan.Conflicts) != 1 || plan.Conflicts[0].Kind != app.ConflictFileOverwrite {
+		t.Fatalf("foreign active entry not surfaced pre-approval (FR-016): %+v", plan.Conflicts)
+	}
+	if !strings.Contains(plan.Conflicts[0].Detail, ".agents") {
+		t.Errorf("conflict does not name the active path: %s", plan.Conflicts[0].Detail)
+	}
+}

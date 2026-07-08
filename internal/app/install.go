@@ -248,7 +248,7 @@ func (a *App) relinkAgents(ctx context.Context, p *project, m *manifest.Manifest
 	if err != nil {
 		return err
 	}
-	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root})
+	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root}, true)
 	if err != nil {
 		return err
 	}
@@ -401,6 +401,13 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 			ir.Name = s.ID
 			ir.Path = s.RepoPath
 			ir.Agents = plan.activate
+			// Adds never clobber content gskill does not own; --force is the
+			// documented override (spec 011 FR-016). The previously locked
+			// hash marks copy-mode installs as gskill's own.
+			ir.PreserveForeign = !req.Force
+			if locked, ok := lf.Skills[s.ID]; ok {
+				ir.PriorContentHash = locked.Resolved.ContentHash
+			}
 			result, instErr := inst.Install(ctx, ir)
 			if instErr != nil {
 				rollback()
