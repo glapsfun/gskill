@@ -403,3 +403,47 @@ func TestSelector_HelpAndInvalidMarking(t *testing.T) {
 		t.Errorf("invalid item selectable: %v", m.chosenIndices())
 	}
 }
+
+func TestSelector_SpaceTogglesWhileFilterFocused(t *testing.T) {
+	t.Parallel()
+
+	its := []SkillItem{
+		{ID: "alpha", RepoPath: "skills/alpha", Valid: true},
+		{ID: "beta", RepoPath: "skills/beta", Valid: true},
+		{ID: "gamma", RepoPath: "skills/gamma", Valid: true},
+	}
+	// Filter to "beta" and — with the filter input still focused — toggle with
+	// space, exactly as the keyboard contract promises ("space toggle" on every
+	// step, no esc needed first).
+	m := update(t, newSelectorModel(its),
+		key("/"), key("b"), key("e"), key("t"),
+		key(" "),
+	)
+	if m.filter.value != "bet" {
+		t.Errorf("space leaked into the filter query: %q", m.filter.value)
+	}
+	m = update(t, m, key("enter"))
+	if got := m.chosenIndices(); len(got) != 1 || got[0] != 1 {
+		t.Errorf("space while filtering chose %v, want [1] (beta)", got)
+	}
+}
+
+func TestSelector_PositionShowsSelectedCount(t *testing.T) {
+	t.Parallel()
+
+	its := []SkillItem{
+		{ID: "alpha", RepoPath: "skills/alpha", Valid: true},
+		{ID: "beta", RepoPath: "skills/beta", Valid: true},
+		{ID: "gamma", RepoPath: "skills/gamma", Valid: true},
+	}
+	// Toggle one item, then filter it out of view: the footer must still say
+	// how many are selected, so a filtered list never hides the running count.
+	m := update(t, newSelectorModel(its), win(80, 24), key(" "))
+	if v := m.View(); !strings.Contains(v, "1 selected") {
+		t.Errorf("footer missing selected count after toggle:\n%s", v)
+	}
+	m = update(t, m, key("/"), key("g"), key("a"), key("m"))
+	if v := m.View(); !strings.Contains(v, "1 selected") {
+		t.Errorf("footer lost selected count while filtered:\n%s", v)
+	}
+}

@@ -215,8 +215,14 @@ func (m selectorModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // handleFilterKey edits the filter query through the shared line editor and
-// recomputes the visible set after each edit.
+// recomputes the visible set after each edit. Space is not query text: it
+// toggles the highlighted row, so multi-select works mid-search without an
+// esc first (keyboard contract: space toggles on every step).
 func (m selectorModel) handleFilterKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.String() == " " {
+		m.toggle()
+		return m, nil
+	}
 	if m.filter.handleKey(key) {
 		m.recomputeVisible()
 	}
@@ -282,13 +288,28 @@ func (m selectorModel) viewBody() string {
 	return b.String()
 }
 
-// position renders the cursor position and filtered/total counts.
+// position renders the cursor position, filtered/total counts, and the running
+// selection count — kept visible while a filter hides selected rows.
 func (m selectorModel) position() string {
 	pos := fmt.Sprintf("%d/%d", min(m.cursor+1, len(m.visible)), len(m.visible))
 	if len(m.visible) != len(m.items) {
 		pos += fmt.Sprintf(" (of %d)", len(m.items))
 	}
+	if n := m.chosenCount(); n > 0 {
+		pos += fmt.Sprintf(" · %d selected", n)
+	}
 	return pos
+}
+
+// chosenCount counts the selected valid items without allocating.
+func (m selectorModel) chosenCount() int {
+	n := 0
+	for i, on := range m.chosen {
+		if on && m.items[i].Valid {
+			n++
+		}
+	}
+	return n
 }
 
 // emptyMessage returns the line shown when no rows are visible, distinguishing a

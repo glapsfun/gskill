@@ -163,6 +163,9 @@ func (m wizardModel) selectKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
 		if sm, ok := next.(selectorModel); ok {
 			m.sel = sm
 		}
+		if key.String() == " " {
+			m.selErr = "" // the selector toggled, so the ≥1 error may be stale
+		}
 		return m, nil, true
 	}
 	return m.selectNavKey(key)

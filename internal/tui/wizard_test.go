@@ -1601,3 +1601,35 @@ func TestWizardSelect_BoundedAt80x24(t *testing.T) {
 		t.Errorf("bounded select step missing a more-content marker:\n%s", m.View())
 	}
 }
+
+// Regression: with the filter input still focused, space must toggle the
+// highlighted skill instead of typing into the (trimmed, hence invisible)
+// query — otherwise enter reports "select at least one skill" and the advice
+// it gives keeps not working (contracts/cli-onboarding.md keyboard contract).
+func TestWizardSelect_SpaceTogglesWhileFilterFocused(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha", "beta", "gamma"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter")) // → select
+
+	// The reported sequence: filter narrows to beta, enter with nothing chosen
+	// shows the validation error, then space — with the filter still focused —
+	// must toggle (clearing the error), and enter confirms.
+	m = drive(t, m, key("/"), key("b"), key("e"), key("t"), key("enter"))
+	if m.selErr == "" {
+		t.Fatal("confirming with nothing chosen should set the validation error")
+	}
+	m = drive(t, m, key(" "))
+	if m.selErr != "" {
+		t.Fatalf("selErr = %q after toggle, want cleared", m.selErr)
+	}
+	m = drive(t, m, key("enter"))
+	if len(m.session.Selected) != 1 || m.session.Selected[0].ID != "beta" {
+		t.Errorf("selection = %+v, want beta", m.session.Selected)
+	}
+}
