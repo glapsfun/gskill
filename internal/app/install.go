@@ -138,8 +138,10 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	}
 
 	// An install needs a target agent. Resolve it before any interactive
-	// selection so the user is not asked to pick skills only to fail afterward.
-	if _, err := a.targetAgents(ctx, req.Root, req.Agents, m.Defaults.Agents); err != nil {
+	// selection so the user is not asked to pick skills only to fail afterward;
+	// the resolved set is threaded into the plan so detection runs once.
+	agents, err := a.targetAgents(ctx, req.Root, req.Agents, m.Defaults.Agents)
+	if err != nil {
 		return AddResult{}, err
 	}
 
@@ -151,12 +153,12 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	// Phases 3+4: plan (pure) then execute. Add is the linear composition of
 	// the wizard's phases, so guided and non-guided installs cannot drift
 	// (spec 011 SC-004, constitution I).
-	plan, err := a.PlanInstall(ctx, PlanRequest{
+	plan, err := a.planInstallResolved(ctx, PlanRequest{
 		Root: req.Root, Source: req.Source,
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
 		Discover: disc, Selected: selected,
 		AgentIDs: req.Agents, Scope: req.Scope, Mode: req.Mode, Force: req.Force,
-	})
+	}, agents)
 	if err != nil {
 		return AddResult{}, err
 	}

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/agent"
@@ -806,5 +807,63 @@ func TestPlanInstall_RePinMissingSkillFailsBeforeApproval(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "newcomer") {
 		t.Errorf("error does not name the missing skill: %v", err)
+	}
+}
+
+// ---- Review fixes, Phase D: single agent detection pass --------------------------
+
+// countingAgent wraps an agent adapter and counts Detect calls.
+type countingAgent struct {
+	agent.Agent
+	detects *int32
+}
+
+func (c countingAgent) Detect(ctx context.Context, root string) (bool, error) {
+	atomic.AddInt32(c.detects, 1)
+	return c.Agent.Detect(ctx, root)
+}
+
+func countingApp(t *testing.T) (*app.App, *int32) {
+	t.Helper()
+
+	var detects int32
+	reg := agent.NewRegistry()
+	if err := reg.Register(countingAgent{Agent: agent.NewClaudeCode(), detects: &detects}); err != nil {
+		t.Fatal(err)
+	}
+	a := app.New(app.Options{Agents: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	return a, &detects
+}
+
+func TestAdd_DetectsAgentsOnce(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	a, detects := countingApp(t)
+
+	if _, err := a.Add(context.Background(), app.AddRequest{Root: root, Source: src}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if got := atomic.LoadInt32(detects); got > 1 {
+		t.Errorf("agent detection ran %d times during one add, want 1", got)
+	}
+}
+
+func TestAgentChoices_DetectsOnce(t *testing.T) {
+	t.Parallel()
+
+	root := projectWithAgent(t)
+	a, detects := countingApp(t)
+
+	choices, err := a.AgentChoices(context.Background(), root)
+	if err != nil {
+		t.Fatalf("AgentChoices: %v", err)
+	}
+	if got := atomic.LoadInt32(detects); got > 1 {
+		t.Errorf("agent detection ran %d times in AgentChoices, want 1", got)
+	}
+	if len(choices) != 1 || !choices[0].Detected || !choices[0].Preselected {
+		t.Errorf("choices = %+v, want claude detected and preselected", choices)
 	}
 }

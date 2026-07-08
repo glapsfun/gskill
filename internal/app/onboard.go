@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/manifest"
@@ -198,15 +199,10 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 		}
 	}
 
-	pre, err := a.targetAgents(ctx, root, nil, defaults)
-	if err != nil {
-		return nil, err
-	}
-	preselected := make(map[string]bool, len(pre))
-	for _, ag := range pre {
-		preselected[ag.ID()] = true
-	}
-
+	// One registry-wide detection pass serves both the "detected" markers and
+	// the preselection (defaults → detected → the default agent), mirroring
+	// targetAgents' explicit-free resolution without re-probing (review
+	// finding: doubled detection I/O on the welcome path).
 	detected, err := a.agents.Detect(ctx, root)
 	if err != nil {
 		return nil, err
@@ -214,6 +210,22 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 	detectedIDs := make(map[string]bool, len(detected))
 	for _, ag := range detected {
 		detectedIDs[ag.ID()] = true
+	}
+
+	pre := detected
+	if len(defaults) > 0 {
+		pre, err = a.agentsByID(defaults)
+		if err != nil {
+			return nil, errs.WithHint(err, "run 'gskill doctor' to list detected agents")
+		}
+	} else if len(pre) == 0 {
+		if def, ok := a.agents.Get(agent.DefaultID); ok {
+			pre = []agent.Agent{def}
+		}
+	}
+	preselected := make(map[string]bool, len(pre))
+	for _, ag := range pre {
+		preselected[ag.ID()] = true
 	}
 
 	all := a.agents.All()

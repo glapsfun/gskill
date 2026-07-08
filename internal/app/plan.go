@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
@@ -140,6 +141,14 @@ func revisionSatisfies(rev resolver.Revision, req PlanRequest) bool {
 // acquires no lock and writes nothing (SC-002 is structural: only ExecutePlan
 // writes).
 func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, error) {
+	return a.planInstallResolved(ctx, req, nil)
+}
+
+// planInstallResolved is PlanInstall with optionally pre-resolved target
+// agents, so callers that already ran agent resolution (App.Add's fail-fast
+// check) do not pay for a second registry-wide detection pass (review
+// finding). agents == nil resolves here.
+func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents []agent.Agent) (InstallPlan, error) {
 	p := openProject(req.Root)
 
 	plan := InstallPlan{
@@ -185,9 +194,12 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 		plan.InitProject = true
 	}
 
-	agents, err := a.targetAgents(ctx, req.Root, req.AgentIDs, m.Defaults.Agents)
-	if err != nil {
-		return InstallPlan{}, err
+	if agents == nil {
+		resolved, err := a.targetAgents(ctx, req.Root, req.AgentIDs, m.Defaults.Agents)
+		if err != nil {
+			return InstallPlan{}, err
+		}
+		agents = resolved
 	}
 	reqIDs := agentIDs(agents)
 	plan.AgentIDs = reqIDs
