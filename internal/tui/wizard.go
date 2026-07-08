@@ -135,15 +135,19 @@ func (s stepID) String() string {
 	}
 }
 
-// Async phase messages.
+// Async phase messages. Source-scoped results (discovery, version listing)
+// carry the sourceGen that requested them, so a slow result from an abandoned
+// source can never land as current (review finding: stale-result races).
 type discoverDoneMsg struct {
 	res app.DiscoverResult
 	err error
+	gen int
 }
 
 type versionsDoneMsg struct {
 	res app.VersionList
 	err error
+	gen int
 }
 
 type agentsDoneMsg struct {
@@ -185,7 +189,9 @@ type wizardModel struct {
 	srcSuggestions []string
 	srcCursor      int // index into srcSuggestions; == len means the input row
 
-	// Discovery (welcome step).
+	// Discovery (welcome step). sourceGen identifies the current source's
+	// request wave; results from earlier waves are dropped.
+	sourceGen   int
 	discovering bool
 	discovered  bool
 	disc        app.DiscoverResult
@@ -259,6 +265,7 @@ func newWizardModel(ctx context.Context, cfg WizardConfig) wizardModel {
 // Version and agent listings are fetched only when their step will be shown —
 // a flag-answered step must never fetch (or fail on) data it will not use.
 func (m *wizardModel) markWelcomeLoading() {
+	m.sourceGen++
 	m.discovering = true
 	m.versionsLoading = m.phases.Versions != nil && !m.skipped(stepVersion) && len(m.versions.Candidates) == 0
 	m.agentsLoading = m.phases.Agents != nil && !m.skipped(stepAgents) && len(m.agentChoices) == 0
@@ -303,9 +310,10 @@ func (m *wizardModel) startDiscover() tea.Cmd {
 func (m wizardModel) discoverCmd() tea.Cmd {
 	discover := m.phases.Discover
 	ctx := m.ctx
+	gen := m.sourceGen
 	return func() tea.Msg {
 		res, err := discover(ctx)
-		return discoverDoneMsg{res: res, err: err}
+		return discoverDoneMsg{res: res, err: err, gen: gen}
 	}
 }
 
@@ -500,6 +508,9 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // return to the source step with an inline error so the user can correct the
 // input without the flow exiting (US5/AC2, review finding).
 func (m wizardModel) onDiscoverDone(msg discoverDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.sourceGen {
+		return m, nil // result from an abandoned source: drop
+	}
 	m.discovering = false
 	if msg.err != nil {
 		return m.discoverFailed(msg.err)

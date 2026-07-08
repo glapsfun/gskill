@@ -84,6 +84,14 @@ func (m wizardModel) acceptSource(value string) (wizardModel, tea.Cmd, bool) {
 		}
 	}
 	m.srcErr = ""
+	if value == m.session.Source && m.discovered {
+		// Re-accepting the unchanged source: the catalog is already loaded —
+		// no redundant network round-trip, no chance to turn a success into a
+		// failure (review finding).
+		m.history = append(m.history, m.step)
+		m.step = stepWelcome
+		return m, nil, true
+	}
 	if value != m.session.Source {
 		m.resetSourceDerivedState()
 	}

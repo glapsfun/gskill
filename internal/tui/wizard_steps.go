@@ -244,20 +244,28 @@ func (m *wizardModel) startVersions() tea.Cmd {
 func (m wizardModel) versionsCmd() tea.Cmd {
 	versions := m.phases.Versions
 	ctx := m.ctx
+	gen := m.sourceGen
 	return func() tea.Msg {
 		res, err := versions(ctx)
-		return versionsDoneMsg{res: res, err: err}
+		return versionsDoneMsg{res: res, err: err, gen: gen}
 	}
 }
 
 func (m wizardModel) onVersionsDone(msg versionsDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.sourceGen {
+		return m, nil // listing from an abandoned source: drop
+	}
 	m.versionsLoading = false
 	if msg.err != nil {
 		// Version listing is never fatal (FR-012): degrade in place.
 		m.versions = app.VersionList{Degraded: true, DegradedReason: msg.err.Error()}
-		return m, nil
+	} else {
+		m.versions = msg.res
 	}
-	m.versions = msg.res
+	// A shrunken listing must never leave the cursor past the typed-ref row.
+	if m.versionCursor > len(m.versions.Candidates) {
+		m.versionCursor = len(m.versions.Candidates)
+	}
 	return m, nil
 }
 

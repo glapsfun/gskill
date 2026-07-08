@@ -1480,3 +1480,98 @@ func TestWizardVersion_TypedModeResetsAfterCommit(t *testing.T) {
 		t.Fatalf("stale typed buffer: %q", m.versionInput.value)
 	}
 }
+
+// ---- Review round 2, Phase 2: async generations ----------------------------------
+
+func TestWizard_StaleDiscoveryResultDropped(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	var versionCalls []string
+	phases, _ := sourceAwarePhases(&calls, &versionCalls)
+	m := newWizardModel(context.Background(), WizardConfig{Phases: phases})
+	m = start(t, m)
+
+	m = typeString(t, m, "srcA")
+	m = drive(t, m, key("enter")) // gen 1: A's catalog loads
+	m = drive(t, m, key("esc"))   // back to source
+	for range len("srcA") {
+		m = drive(t, m, key("backspace"))
+	}
+	m = typeString(t, m, "srcB")
+	m = drive(t, m, key("enter")) // gen 2: B's catalog loads
+
+	// A slow gen-1 discovery result lands late: it must be dropped, leaving
+	// the catalog and selector consistent with source B.
+	stale := discoverDoneMsg{res: app.DiscoverResult{Skills: fakeSkills("a1")}, gen: m.sourceGen - 1}
+	m = drive(t, m, stale)
+	m = drive(t, m, key("enter")) // welcome → select
+	if v := m.View(); !strings.Contains(v, "b1") || strings.Contains(v, "a1") {
+		t.Fatalf("stale discovery overwrote source B's catalog:\n%s", v)
+	}
+	m = drive(t, m, key(" "), key("enter"))
+	if len(m.session.Selected) != 1 || m.session.Selected[0].ID != "b1" {
+		t.Fatalf("selection desynced from catalog: %+v", m.session.Selected)
+	}
+}
+
+func TestWizardVersion_StaleListingDroppedAndCursorClamped(t *testing.T) {
+	t.Parallel()
+
+	candidates := []app.VersionCandidate{{Kind: app.VersionLatest, Label: "latest"}}
+	for i := range 10 {
+		candidates = append(candidates, app.VersionCandidate{Kind: app.VersionRelease, Label: fmt.Sprintf("v%d.0.0", i), Ref: fmt.Sprintf("v%d.0.0", i)})
+	}
+	var calls phaseCalls
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, app.VersionList{Candidates: candidates}),
+	}))
+	for range 8 {
+		m = drive(t, m, key("down")) // cursor deep into the list
+	}
+
+	// A stale (older-generation) listing must be dropped outright.
+	staleList := versionsDoneMsg{res: app.VersionList{Candidates: candidates[:1]}, gen: m.sourceGen - 1}
+	m = drive(t, m, staleList)
+	if len(m.versions.Candidates) != 11 {
+		t.Fatalf("stale versions listing replaced the current one: %d candidates", len(m.versions.Candidates))
+	}
+
+	// A legitimate shrink (same generation) must clamp the cursor.
+	fresh := versionsDoneMsg{res: app.VersionList{Candidates: candidates[:1]}, gen: m.sourceGen}
+	m = drive(t, m, fresh)
+	m = drive(t, m, key("enter")) // must not panic (index into 1-element slice)
+	if m.failed != nil {
+		t.Fatalf("unexpected failure after clamped listing: %v", m.failed)
+	}
+}
+
+func TestWizard_SameSourceReacceptSkipsRediscovery(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	var versionCalls []string
+	phases, _ := sourceAwarePhases(&calls, &versionCalls)
+	m := newWizardModel(context.Background(), WizardConfig{Phases: phases})
+	m = start(t, m)
+
+	m = typeString(t, m, "srcA")
+	m = drive(t, m, key("enter")) // discover once
+	if calls.discover != 1 {
+		t.Fatalf("discover calls = %d, want 1", calls.discover)
+	}
+	m = drive(t, m, key("esc"))   // welcome → source (input still "srcA")
+	m = drive(t, m, key("enter")) // re-accept the same source
+
+	if calls.discover != 1 {
+		t.Fatalf("re-accepting the unchanged source refired discovery: %d calls", calls.discover)
+	}
+	if m.step != stepWelcome || m.discovering {
+		t.Fatalf("step = %v discovering=%v, want welcome with the cached catalog", m.step, m.discovering)
+	}
+	m = drive(t, m, key("enter")) // welcome must not be blocked
+	if m.step != stepSelect {
+		t.Fatalf("step = %v, want select", m.step)
+	}
+}
