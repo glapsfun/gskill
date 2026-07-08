@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/glapsfun/gskill/internal/errs"
 )
@@ -69,12 +70,14 @@ type selectorModel struct {
 	filter    lineInput
 	visible   []int // original indices matching query, in order
 	reserved  int   // frame rows around the row window (embedders override)
+	st        Theme
+	nameW     int // aligned name-column width, recomputed with the visible set
 	done      bool
 	cancelled bool
 }
 
 func newSelectorModel(items []SkillItem) selectorModel {
-	m := selectorModel{items: items, chosen: make(map[int]bool), reserved: reservedRows}
+	m := selectorModel{items: items, chosen: make(map[int]bool), reserved: reservedRows, st: DefaultTheme()}
 	m.recomputeVisible()
 	return m
 }
@@ -101,6 +104,15 @@ func (m *selectorModel) recomputeVisible() {
 			strings.Contains(strings.ToLower(it.Description), q) {
 			m.visible = append(m.visible, i)
 		}
+	}
+	m.nameW = 0
+	for _, i := range m.visible {
+		if n := len([]rune(m.items[i].ID)); n > m.nameW {
+			m.nameW = n
+		}
+	}
+	if m.nameW > 24 {
+		m.nameW = 24
 	}
 	m.clamp()
 }
@@ -251,9 +263,11 @@ func (m selectorModel) handleNavKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 // bounded scrolling window), and a position + help footer.
 func (m selectorModel) View() string {
 	var b strings.Builder
-	b.WriteString("Select skills to install:\n")
+	b.WriteString(m.st.Title.Render("Select skills to install:") + "\n")
 	b.WriteString(m.viewBody())
-	fmt.Fprintf(&b, "\n%s  •  ↑/↓ move · space toggle · / filter · enter confirm · q cancel\n", m.position())
+	fmt.Fprintf(&b, "\n%s  •  %s\n",
+		m.st.Badge.Render(m.position()),
+		m.st.Hint.Render("↑/↓ move · space toggle · / filter · enter confirm · q cancel"))
 	return b.String()
 }
 
@@ -263,7 +277,7 @@ func (m selectorModel) View() string {
 func (m selectorModel) viewBody() string {
 	var b strings.Builder
 	if m.filtering || m.filter.value != "" {
-		fmt.Fprintf(&b, "Filter: %s\n", m.filter.value)
+		fmt.Fprintf(&b, "%s %s\n", m.st.Accent.Render("Filter:"), m.filter.value)
 	} else {
 		b.WriteString("\n")
 	}
@@ -321,53 +335,57 @@ func (m selectorModel) emptyMessage() string {
 	return "  (no matches)\n"
 }
 
-// rowString renders a single skill row at the given index into visible: the
-// checkbox, id, in-repo path, and the short description (FR-009). An invalid
-// row under the cursor also shows its reason (FR-011).
+// rowString renders one row as aligned columns — checkbox, name (padded to
+// the shared column width), description, and in-repo path (FR-009). Invalid
+// rows render struck-through with ✗ and show their reason under the cursor
+// (FR-011).
 func (m selectorModel) rowString(vi int) string {
 	orig := m.visible[vi]
 	it := m.items[orig]
-	cursor := " "
+
+	cursor := "  "
 	if vi == m.cursor {
-		cursor = ">"
+		cursor = m.st.Cursor.Render("❯") + " "
 	}
-	check := "[ ]"
+	check := "[ ] "
 	if m.chosen[orig] {
-		check = "[x]"
+		check = m.st.Success.Render("[✓]") + " "
 	}
-	suffix := ""
-	if !it.Valid {
-		check = "[-]"
-		suffix = " (invalid)"
-		if vi == m.cursor && it.InvalidReason != "" {
-			suffix = " (invalid: " + it.InvalidReason + ")"
-		}
+
+	name := it.ID
+	if pad := m.nameW - len([]rune(name)); pad > 0 {
+		name += strings.Repeat(" ", pad)
 	}
 	path := it.RepoPath
 	if path == "" {
 		path = "."
 	}
-	row := fmt.Sprintf("%s %s %s  %s%s", cursor, check, it.ID, path, suffix)
-	if it.Description != "" {
-		row += "  — " + it.Description
+
+	if !it.Valid {
+		check = "[✗] "
+		reason := "invalid"
+		if vi == m.cursor && it.InvalidReason != "" {
+			reason = "invalid: " + it.InvalidReason
+		}
+		return m.truncateToWidth(cursor + m.st.Invalid.Render(check+name+"  "+reason+"  "+path))
 	}
+
+	if vi == m.cursor {
+		name = m.st.Selected.Render(name)
+	}
+	row := cursor + check + name + "  " + m.st.Subtitle.Render(it.Description) + "  " + m.st.Hint.Render(path)
 	return m.truncateToWidth(row)
 }
 
 // truncateToWidth shortens a row to the terminal width (when known) so a long
 // id or path cannot soft-wrap and push rows past the bounded viewport height.
+// Truncation is ANSI-aware: styled rows carry escape sequences that must not
+// count against the visible width.
 func (m selectorModel) truncateToWidth(s string) string {
 	if m.width <= 0 {
 		return s
 	}
-	r := []rune(s)
-	if len(r) <= m.width {
-		return s
-	}
-	if m.width == 1 {
-		return string(r[:1])
-	}
-	return string(r[:m.width-1]) + "…"
+	return ansi.Truncate(s, m.width, "…")
 }
 
 // chosenIndices returns the original indices of selected valid items in order.

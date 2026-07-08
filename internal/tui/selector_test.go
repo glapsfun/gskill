@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -390,7 +391,7 @@ func TestSelector_HelpAndInvalidMarking(t *testing.T) {
 	}
 	m := update(t, newSelectorModel(its), win(80, 24))
 	v := m.View()
-	if !strings.Contains(v, "(invalid)") {
+	if !strings.Contains(v, "[✗]") || !strings.Contains(v, "invalid") {
 		t.Errorf("invalid item not marked:\n%s", v)
 	}
 	for _, ctrl := range []string{"toggle", "confirm", "filter"} {
@@ -445,5 +446,36 @@ func TestSelector_PositionShowsSelectedCount(t *testing.T) {
 	m = update(t, m, key("/"), key("g"), key("a"), key("m"))
 	if v := m.View(); !strings.Contains(v, "1 selected") {
 		t.Errorf("footer lost selected count while filtered:\n%s", v)
+	}
+}
+
+func TestSelector_AlignedColumnsAndCheckboxes(t *testing.T) {
+	t.Parallel()
+	its := []SkillItem{
+		{ID: "a", RepoPath: "skills/a", Description: "Alpha skill", Valid: true},
+		{ID: "long-name", RepoPath: "skills/b", Description: "Beta", Valid: true},
+		{ID: "broken", RepoPath: "skills/c", Valid: false, InvalidReason: "no description"},
+	}
+	m := update(t, newSelectorModel(its), win(80, 24), key(" "))
+	v := m.View()
+	if !strings.Contains(v, "[✓]") {
+		t.Errorf("chosen row must render a ✓ checkbox:\n%s", v)
+	}
+	if !strings.Contains(v, "[✗]") {
+		t.Errorf("invalid row must render ✗:\n%s", v)
+	}
+	// Column alignment: the description column starts at the same offset on
+	// every row (name column padded to the longest name).
+	var offsets []int
+	for _, line := range strings.Split(v, "\n") {
+		if i := strings.Index(line, "Alpha skill"); i >= 0 {
+			offsets = append(offsets, utf8.RuneCountInString(line[:i]))
+		}
+		if i := strings.Index(line, "Beta"); i >= 0 {
+			offsets = append(offsets, utf8.RuneCountInString(line[:i]))
+		}
+	}
+	if len(offsets) == 2 && offsets[0] != offsets[1] {
+		t.Errorf("description column not aligned: %v\n%s", offsets, v)
 	}
 }
