@@ -12,6 +12,8 @@ import (
 // SkillRow is one entry shown in the dashboard.
 type SkillRow struct {
 	Name     string
+	Version  string
+	Source   string
 	Status   string
 	Markdown string // SKILL.md content for the preview pane
 }
