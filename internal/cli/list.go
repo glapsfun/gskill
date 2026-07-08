@@ -25,7 +25,11 @@ func (listCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoo
 	if err != nil {
 		return err
 	}
-	return out.Result(renderListTable(skills), ListJSON(skills))
+	human := renderListTable(skills)
+	if out.Interactive() {
+		human = renderListStyled(skills)
+	}
+	return out.Result(human, ListJSON(skills))
 }
 
 // ListJSON builds the stable --json object for a list result.
