@@ -30,9 +30,7 @@ func (initCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoo
 		out.Diag("already initialized")
 	}
 	human := "Initialized gskill project at " + res.ManifestPath
-	if out.Interactive() {
-		human = styledSummary(human)
-	}
+	human = out.summary(human)
 	if len(created) > 0 {
 		human += "\nCreated: " + strings.Join(created, ", ")
 	}

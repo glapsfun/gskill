@@ -321,9 +321,7 @@ func (c addCmd) renderInstalled(out *Output, res app.AddResult) error {
 		names = append(names, s.Name)
 	}
 	human := fmt.Sprintf("Installed %d skill(s): %s", len(res.Installed), strings.Join(names, ", "))
-	if out.Interactive() {
-		human = styledSummary(human)
-	}
+	human = out.summary(human)
 	return out.Result(human, map[string]any{
 		"installed": res.Installed,
 		"warnings":  res.Warnings,

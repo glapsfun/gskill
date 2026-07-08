@@ -19,6 +19,9 @@ const (
 	// defaultPageSize bounds the list before the first WindowSizeMsg arrives, so
 	// a large list never renders unbounded even if a size is never reported.
 	defaultPageSize = 10
+	// nameColMax caps the aligned name column; longer IDs are truncated to it
+	// so a single outlier cannot push every description off screen.
+	nameColMax = 24
 )
 
 // SkillItem is one selectable skill in the interactive picker.
@@ -107,12 +110,14 @@ func (m *selectorModel) recomputeVisible() {
 	}
 	m.nameW = 0
 	for _, i := range m.visible {
-		if n := len([]rune(m.items[i].ID)); n > m.nameW {
+		// Display width, not rune count: double-width runes (CJK, emoji) in an
+		// ID would otherwise pad short and break the column alignment.
+		if n := ansi.StringWidth(m.items[i].ID); n > m.nameW {
 			m.nameW = n
 		}
 	}
-	if m.nameW > 24 {
-		m.nameW = 24
+	if m.nameW > nameColMax {
+		m.nameW = nameColMax
 	}
 	m.clamp()
 }
@@ -352,8 +357,10 @@ func (m selectorModel) rowString(vi int) string {
 		check = m.st.Success.Render("[✓]") + " "
 	}
 
-	name := it.ID
-	if pad := m.nameW - len([]rune(name)); pad > 0 {
+	// Fit the name to the shared column: truncate an over-long ID, pad a
+	// short one. Both by display width, so alignment survives wide runes.
+	name := ansi.Truncate(it.ID, m.nameW, "…")
+	if pad := m.nameW - ansi.StringWidth(name); pad > 0 {
 		name += strings.Repeat(" ", pad)
 	}
 	path := it.RepoPath
@@ -367,7 +374,11 @@ func (m selectorModel) rowString(vi int) string {
 		if vi == m.cursor && it.InvalidReason != "" {
 			reason = "invalid: " + it.InvalidReason
 		}
-		return m.truncateToWidth(cursor + m.st.Invalid.Render(check+name+"  "+reason+"  "+path))
+		row := check + name + "  " + reason
+		if it.Description != "" {
+			row += "  " + it.Description
+		}
+		return m.truncateToWidth(cursor + m.st.Invalid.Render(row+"  "+path))
 	}
 
 	if vi == m.cursor {

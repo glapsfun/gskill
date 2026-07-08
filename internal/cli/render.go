@@ -49,6 +49,9 @@ func renderAligned(st tui.Theme, headers []string, rows [][]string) string {
 	b.WriteString(st.TableHeader.Render(strings.Join(head, "")) + "\n")
 	for _, row := range rows {
 		for i, c := range row {
+			if i >= len(widths) {
+				break // cells beyond the headers have no column
+			}
 			b.WriteString(pad(c, i))
 		}
 		b.WriteByte('\n')
@@ -104,18 +107,30 @@ func renderInfoStyled(info app.SkillInfo) string {
 	return b.String()
 }
 
-// styledSummary decorates a one-line success summary with the shared ✓.
-func styledSummary(text string) string {
+// summary decorates a one-line success summary with the shared ✓ on
+// interactive terminals; piped output passes through unchanged. The
+// interactivity decision lives here, not at the call sites, so every command
+// styles (and degrades) the same way.
+func (o *Output) summary(text string) string {
+	if !o.interactive {
+		return text
+	}
 	return tui.DefaultTheme().Success.Render("✓ ") + text
 }
 
-// styledWarnSummary decorates an attention summary (drift, updates pending).
-func styledWarnSummary(text string) string {
+// warnSummary decorates an attention summary (drift, updates pending).
+func (o *Output) warnSummary(text string) string {
+	if !o.interactive {
+		return text
+	}
 	return tui.DefaultTheme().Warning.Render("◐ ") + text
 }
 
-// styledErrSummary decorates a failure summary.
-func styledErrSummary(text string) string {
+// errSummary decorates a failure summary.
+func (o *Output) errSummary(text string) string {
+	if !o.interactive {
+		return text
+	}
 	return tui.DefaultTheme().Error.Render("✗ ") + text
 }
 

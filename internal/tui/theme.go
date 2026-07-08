@@ -101,7 +101,9 @@ func (t Theme) Panel() lipgloss.Style {
 
 // TableStyles adapts the theme for bubbles/table: subtle bold headers over a
 // thin rule and a foreground-accent (not background-highlight) cursor row,
-// per the indigo-minimal design.
+// per the indigo-minimal design. Cell keeps bubbles' default Padding(0,1) —
+// Header carries the same padding, so replacing Cell with an unpadded style
+// would shift every header right of its column and delete the gutters.
 func (t Theme) TableStyles() table.Styles {
 	s := table.DefaultStyles()
 	s.Header = s.Header.
@@ -111,7 +113,6 @@ func (t Theme) TableStyles() table.Styles {
 		BorderForeground(t.Border.GetForeground()).
 		BorderBottom(true)
 	s.Selected = lipgloss.NewStyle().Foreground(t.Accent.GetForeground()).Bold(true)
-	s.Cell = lipgloss.NewStyle()
 	return s
 }
 

@@ -119,6 +119,7 @@ func (m *wizardModel) resetSourceDerivedState() {
 	m.versions = app.VersionList{}
 	m.versionsLoading = false
 	m.versionForm = nil
+	m.versionSel = nil // buildVersionForm seeds the highlight from it
 	m.refForm = nil
 	m.versionPick = nil
 	m.refValue = nil

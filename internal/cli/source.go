@@ -142,8 +142,8 @@ func (c sourceCheckCmd) Run(ctx context.Context, out *Output, a *app.App) error 
 	human := "no problems found"
 	if report.HasProblems() {
 		human = strings.Join(lines, "\n")
-	} else if out.Interactive() {
-		human = styledSummary(human)
+	} else {
+		human = out.summary(human)
 	}
 	if rErr := out.Result(human, map[string]any{"invalid": invalid, "duplicates": dups}); rErr != nil {
 		return rErr

@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/glapsfun/gskill/internal/errs"
 )
@@ -46,6 +47,11 @@ type model struct {
 	vp           viewport.Model
 	focusPreview bool
 
+	// previewCache memoizes rendered SKILL.md previews per row index for the
+	// current viewport width (cleared on resize): glamour builds a fresh
+	// renderer per call, which is too slow to repeat on every cursor move.
+	previewCache map[int]string
+
 	width, height int
 }
 
@@ -58,19 +64,21 @@ func newModel(rows []SkillRow) model {
 		table.WithFocused(true),
 	)
 	tbl.SetStyles(st.TableStyles())
-	m := model{rows: rows, st: st, tbl: tbl, vp: viewport.New(defaultWidth, 6), width: defaultWidth}
+	m := model{
+		rows: rows, st: st, tbl: tbl, vp: viewport.New(defaultWidth, 6),
+		previewCache: make(map[int]string), width: defaultWidth,
+	}
 	m.refreshPreview()
 	return m
 }
 
 // dashColumns sizes the table columns for a terminal width: VERSION and
-// STATUS are fixed, NAME and SOURCE flex.
+// STATUS are fixed, NAME and SOURCE flex. pad reserves the per-column cell
+// padding bubbles renders around each of the four columns (2 × 4) plus a
+// right margin (6).
 func dashColumns(width int) []table.Column {
-	const version, status, pad = 10, 24, 6
-	flex := width - version - status - pad
-	if flex < 20 {
-		flex = 20
-	}
+	const version, status, pad = 10, 24, 14
+	flex := max(20, width-version-status-pad)
 	return []table.Column{
 		{Title: "NAME", Width: flex / 2},
 		{Title: "VERSION", Width: version},
@@ -79,12 +87,17 @@ func dashColumns(width int) []table.Column {
 	}
 }
 
-// dashRowsData renders SkillRows as table rows with sanitized, themed cells.
+// dashRowsData renders SkillRows as table rows with sanitized cells. Cells
+// must stay free of ANSI sequences: bubbles/table truncates every cell with a
+// width function that counts escape bytes as visible columns, so a styled
+// cell gets cut mid-sequence and its color bleeds into the rest of the table.
+// StatusCell supplies the glyph vocabulary; Strip removes its styling.
 func dashRowsData(rows []SkillRow, st Theme) []table.Row {
 	out := make([]table.Row, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, table.Row{
-			Sanitize(r.Name), Sanitize(r.Version), Sanitize(r.Source), st.StatusCell(Sanitize(r.Status)),
+			Sanitize(r.Name), Sanitize(r.Version), Sanitize(r.Source),
+			ansi.Strip(st.StatusCell(Sanitize(r.Status))),
 		})
 	}
 	return out
@@ -102,6 +115,10 @@ func (m *model) layout() {
 	previewH := 0
 	if m.showPreview() {
 		previewH = m.height / 3
+	} else {
+		// The preview strip is gone; keys must go back to the table, or
+		// navigation would scroll an invisible viewport.
+		m.focusPreview = false
 	}
 	// Frame: header (2 lines) + footer (1 line) + the preview's title line and
 	// panel border (3 lines when shown).
@@ -109,16 +126,14 @@ func (m *model) layout() {
 	if m.showPreview() {
 		tableH -= 3
 	}
-	if tableH < 3 {
-		tableH = 3
-	}
-	m.tbl.SetHeight(tableH)
+	m.tbl.SetHeight(max(3, tableH))
 	m.vp.Width = m.width - 4
 	if previewH > 3 {
 		m.vp.Height = previewH - 3
 	} else {
 		m.vp.Height = 1
 	}
+	clear(m.previewCache) // renders are width-specific
 	m.refreshPreview()
 }
 
@@ -131,9 +146,13 @@ func (m *model) refreshPreview() {
 	if i < 0 || i >= len(m.rows) {
 		i = 0
 	}
-	body, err := Preview(m.rows[i].Markdown, m.vp.Width)
-	if err != nil {
-		body = Sanitize(m.rows[i].Markdown)
+	body, ok := m.previewCache[i]
+	if !ok {
+		var err error
+		if body, err = Preview(m.rows[i].Markdown, m.vp.Width); err != nil {
+			body = Sanitize(m.rows[i].Markdown)
+		}
+		m.previewCache[i] = body
 	}
 	m.vp.SetContent(body)
 	m.vp.GotoTop()
@@ -191,19 +210,11 @@ func (m model) View() string {
 		i := m.tbl.Cursor()
 		title := fmt.Sprintf("%s %s", Sanitize(m.rows[i].Name), Sanitize(m.rows[i].Version))
 		b.WriteString(m.st.Accent.Render(" "+title) + "\n")
-		panel := m.st.Panel().Width(maxInt(20, m.width-2))
+		panel := m.st.Panel().Width(max(20, m.width-2))
 		b.WriteString(panel.Render(m.vp.View()) + "\n")
 	}
 
 	pos := fmt.Sprintf("%d skills · %d/%d", len(m.rows), m.tbl.Cursor()+1, len(m.rows))
 	b.WriteString(m.st.Hint.Render(" ↑/↓ move · tab focus · q quit") + "  " + m.st.Badge.Render(pos) + "\n")
 	return b.String()
-}
-
-// maxInt is a tiny helper until the package settles on Go's builtin max.
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

@@ -45,6 +45,14 @@ func TestThemeAdapters_NotNil(t *testing.T) {
 	if !ts.Header.GetBold() {
 		t.Error("Header style must be bold")
 	}
+	// Header and Cell must carry the same horizontal padding, or every header
+	// renders offset from its column and the data cells lose their gutters.
+	if ts.Header.GetPaddingLeft() != ts.Cell.GetPaddingLeft() ||
+		ts.Header.GetPaddingRight() != ts.Cell.GetPaddingRight() {
+		t.Errorf("header/cell padding mismatch: header (%d,%d) vs cell (%d,%d)",
+			ts.Header.GetPaddingLeft(), ts.Header.GetPaddingRight(),
+			ts.Cell.GetPaddingLeft(), ts.Cell.GetPaddingRight())
+	}
 }
 
 func TestHealthCell_Vocabulary(t *testing.T) {

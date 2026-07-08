@@ -479,3 +479,38 @@ func TestSelector_AlignedColumnsAndCheckboxes(t *testing.T) {
 		t.Errorf("description column not aligned: %v\n%s", offsets, v)
 	}
 }
+
+func TestSelector_OverlongIDTruncatedKeepsAlignment(t *testing.T) {
+	t.Parallel()
+	its := []SkillItem{
+		{ID: strings.Repeat("x", 30), RepoPath: "skills/x", Description: "Long skill", Valid: true},
+		{ID: "short", RepoPath: "skills/s", Description: "Tiny", Valid: true},
+	}
+	m := update(t, newSelectorModel(its), win(120, 24))
+	v := m.View()
+	if strings.Contains(v, strings.Repeat("x", 30)) {
+		t.Errorf("an over-long ID must be truncated to the name column:\n%s", v)
+	}
+	var offsets []int
+	for _, line := range strings.Split(v, "\n") {
+		for _, desc := range []string{"Long skill", "Tiny"} {
+			if i := strings.Index(line, desc); i >= 0 {
+				offsets = append(offsets, utf8.RuneCountInString(line[:i]))
+			}
+		}
+	}
+	if len(offsets) != 2 || offsets[0] != offsets[1] {
+		t.Errorf("description column not aligned with an over-long ID: %v\n%s", offsets, v)
+	}
+}
+
+func TestSelector_InvalidRowShowsDescription(t *testing.T) {
+	t.Parallel()
+	its := []SkillItem{
+		{ID: "bad", RepoPath: "p/bad", Description: "half-written helper", Valid: false},
+	}
+	m := update(t, newSelectorModel(its), win(120, 24))
+	if v := m.View(); !strings.Contains(v, "half-written helper") {
+		t.Errorf("invalid rows must keep their description (FR-009):\n%s", v)
+	}
+}

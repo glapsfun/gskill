@@ -24,9 +24,7 @@ func (repairCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 		return err
 	}
 	human := fmt.Sprintf("Repaired %d skill(s); cleaned %d staging dir(s)", len(res.Repaired), res.StagingCleaned)
-	if out.Interactive() {
-		human = styledSummary(human)
-	}
+	human = out.summary(human)
 	return out.Result(human, map[string]any{
 		"repaired":        res.Repaired,
 		"staging_cleaned": res.StagingCleaned,

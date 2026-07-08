@@ -259,9 +259,24 @@ func (m wizardModel) versionsCmd() tea.Cmd {
 
 // buildVersionForm constructs the candidate select; the synthetic last option
 // (index len(candidates)) opens the typed-ref input (FR-012). The pick target
-// is heap-allocated (see buildAgentForm).
+// is heap-allocated (see buildAgentForm). Rebuilds (resize, back-navigation)
+// land the cursor on the previously highlighted candidate — Value positions
+// the select on the option matching the seeded pick — so a resize mid-scroll
+// or a return visit never silently resets the choice to the first option.
 func (m *wizardModel) buildVersionForm() {
+	prev := 0
+	if m.versionPick != nil {
+		prev = *m.versionPick
+	}
+	if m.versionSel != nil {
+		if v, ok := m.versionSel.Hovered(); ok {
+			prev = v
+		}
+	}
 	pick := new(int)
+	if prev > 0 && prev <= len(m.versions.Candidates) {
+		*pick = prev
+	}
 	opts := make([]huh.Option[int], 0, len(m.versions.Candidates)+1)
 	for i, c := range m.versions.Candidates {
 		label := Sanitize(c.Label)
@@ -279,8 +294,15 @@ func (m *wizardModel) buildVersionForm() {
 		Value(pick)
 	m.versionPick = pick
 	m.versionSel = sel
+	// huh enables '/'-filtering on selects by default, but the wizard's
+	// contract keys (q cancel, b/esc back) are intercepted before the form
+	// sees them — typing them into a filter would abandon the step — so the
+	// filter is disabled, matching the agents multi-select.
+	keymap := huh.NewDefaultKeyMap()
+	keymap.Select.Filter.SetEnabled(false)
 	m.versionForm = huh.NewForm(huh.NewGroup(sel)).
 		WithTheme(m.st.Huh()).
+		WithKeyMap(keymap).
 		WithShowHelp(false).
 		WithWidth(m.width)
 	m.versionForm.Init()
@@ -610,7 +632,7 @@ func (m wizardModel) viewPreview() string {
 
 	body := m.previewBody()
 	lines := windowRows(body, pageFor(m.height, wizardReservedRows+2), m.previewOffset, m.st.Hint)
-	panel := m.st.Panel().Width(maxInt(20, m.width-2))
+	panel := m.st.Panel().Width(max(20, m.width-2))
 	b.WriteString(panel.Render(strings.Join(lines, "\n")) + "\n")
 
 	if len(m.plan.Conflicts) > 0 {
@@ -639,7 +661,9 @@ func (m wizardModel) previewBody() []string {
 		case app.PlanLineAction:
 			lines = append(lines, "  + "+text)
 		case app.PlanLineFileOp:
-			lines = append(lines, "      "+text)
+			// Hint-styled to match renderPlanTextStyled: the two plan surfaces
+			// must not drift apart (FR-015/FR-024).
+			lines = append(lines, "      "+m.st.Hint.Render(text))
 		case app.PlanLineWarning:
 			lines = append(lines, m.st.Warning.Render("warning: "+text))
 		case app.PlanLineConflict:

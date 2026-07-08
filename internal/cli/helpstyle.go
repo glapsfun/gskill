@@ -124,10 +124,9 @@ func styleHelp(text string) string {
 		kind, state = classifyHelpLine(state, line)
 		switch kind {
 		case helpUsage:
-			lines[i] = "Usage: " + st.Accent.Render("gskill") + strings.TrimPrefix(line, "Usage: gskill")
-			if !strings.HasPrefix(line, "Usage: gskill") {
-				lines[i] = line // unexpected program name: leave untouched
-			}
+			if rest, ok := strings.CutPrefix(line, "Usage: gskill"); ok {
+				lines[i] = "Usage: " + st.Accent.Render("gskill") + rest
+			} // unexpected program name: leave untouched
 		case helpSection:
 			lines[i] = st.TableHeader.Render(line)
 		case helpEntryRow:
@@ -169,10 +168,12 @@ func styleCommandRow(st tui.Theme, line string) string {
 
 // styledHelpPrinter returns kong's help printer for interactive runs: the
 // default rendering, colored when stdout is a real terminal and prompts are
-// enabled. root is read at print time so a parsed --no-interactive wins.
-func styledHelpPrinter(stdout io.Writer, root *rootCLI) kong.HelpPrinter {
+// enabled. --no-interactive is read from the parse context, not the grammar
+// struct: kong prints help from the BeforeReset hook, before flag values are
+// applied to the struct, so a root field would still be its zero value here.
+func styledHelpPrinter(stdout io.Writer) kong.HelpPrinter {
 	return func(options kong.HelpOptions, ctx *kong.Context) error {
-		if !isTTY(stdout) || root.NoInteractive {
+		if !isTTY(stdout) || helpNoInteractive(ctx) {
 			return kong.DefaultHelpPrinter(options, ctx)
 		}
 		var buf bytes.Buffer
@@ -186,4 +187,17 @@ func styledHelpPrinter(stdout io.Writer, root *rootCLI) kong.HelpPrinter {
 		_, err = io.WriteString(orig, styleHelp(buf.String()))
 		return err
 	}
+}
+
+// helpNoInteractive reports whether --no-interactive was passed, reading the
+// traced flag value (populated during parsing, so it is available inside the
+// BeforeReset help hook).
+func helpNoInteractive(ctx *kong.Context) bool {
+	for _, f := range ctx.Flags() {
+		if f.Name == "no-interactive" {
+			v, _ := ctx.FlagValue(f).(bool)
+			return v
+		}
+	}
+	return false
 }

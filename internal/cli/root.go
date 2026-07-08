@@ -171,7 +171,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	options := append(grammarOptions(),
 		kong.Writers(stdout, stderr),
 		kong.Exit(func(int) { helpRequested = true }),
-		kong.Help(styledHelpPrinter(stdout, &root)),
+		kong.Help(styledHelpPrinter(stdout)),
 	)
 	parser, err := kong.New(&root, options...)
 	if err != nil {

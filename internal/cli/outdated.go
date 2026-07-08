@@ -40,14 +40,9 @@ func (c outdatedCmd) Run(ctx context.Context, out *Output, a *app.App, root proj
 		})
 	}
 
-	human := fmt.Sprintf("%d skill(s) up to date", len(report.Skills))
+	human := out.summary(fmt.Sprintf("%d skill(s) up to date", len(report.Skills)))
 	if report.AnyAvailable {
-		human = fmt.Sprintf("%d update(s) available", available)
-		if out.Interactive() {
-			human = styledWarnSummary(human)
-		}
-	} else if out.Interactive() {
-		human = styledSummary(human)
+		human = out.warnSummary(fmt.Sprintf("%d update(s) available", available))
 	}
 	if rErr := out.Result(human, map[string]any{"any_available": report.AnyAvailable, "skills": skills}); rErr != nil {
 		return rErr

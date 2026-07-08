@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/alecthomas/kong"
 )
 
 func TestClassifyHelpLines(t *testing.T) {
@@ -61,6 +64,45 @@ func TestClassifyHelpLines(t *testing.T) {
 		kind, state = classifyHelpLine(state, line)
 		if kind != want[i] {
 			t.Errorf("line %d %q: kind = %v, want %v", i, line, kind, want[i])
+		}
+	}
+}
+
+// TestHelpNoInteractive_ReadsParsedFlag proves --no-interactive reaches the
+// help printer: kong prints help from the BeforeReset hook, before flag
+// values are applied to the grammar struct, so the printer must read the
+// traced value from the context instead of the struct field.
+func TestHelpNoInteractive_ReadsParsedFlag(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"--no-interactive", "--help"}, true},
+		{[]string{"--help", "--no-interactive"}, true},
+		{[]string{"--help"}, false},
+	} {
+		var root rootCLI
+		var got, printed bool
+		options := append(grammarOptions(),
+			kong.Writers(io.Discard, io.Discard),
+			kong.Exit(func(int) {}),
+			kong.Help(func(_ kong.HelpOptions, ctx *kong.Context) error {
+				got, printed = helpNoInteractive(ctx), true
+				return nil
+			}),
+		)
+		parser, err := kong.New(&root, options...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = parser.Parse(tc.args)
+		if !printed {
+			t.Fatalf("%v: help printer never ran", tc.args)
+		}
+		if got != tc.want {
+			t.Errorf("helpNoInteractive with %v = %v, want %v", tc.args, got, tc.want)
 		}
 	}
 }
