@@ -197,11 +197,17 @@ func (a *App) tryLocalAgentAdd(ctx context.Context, p *project, m *manifest.Mani
 	return res, true, err
 }
 
-// disqualifiesLocalAdd reports whether a request can't be a pure agent-add (it
-// changes the pin, only lists, or selects everything).
+// disqualifiesLocalAdd reports whether a request can't be a pure agent-add: it
+// changes the pin, only lists, selects everything, or asks for a placement the
+// locked-scope relink cannot honor — an explicit path, a global scope, or an
+// install mode (the fast path reuses the locked scope and mode verbatim, so
+// honoring those flags requires the full plan/install pipeline; review
+// finding: --global/--copy/--path were silently discarded).
 func disqualifiesLocalAdd(req AddRequest) bool {
 	return req.Force || req.ListOnly || req.All ||
-		req.Version != "" || req.Ref != "" || req.Commit != ""
+		req.Version != "" || req.Ref != "" || req.Commit != "" ||
+		req.Path != "" || req.Mode != "" ||
+		req.Scope == string(installer.ScopeGlobal)
 }
 
 // anyNewAgent reports whether any target skill gains a not-yet-installed agent.

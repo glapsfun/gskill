@@ -327,3 +327,28 @@ func TestAddRun_WizardWarningsReachStderr(t *testing.T) {
 		t.Errorf("wizard warnings lost: stderr = %q", errb.String())
 	}
 }
+
+// ---- Review round 2, Phase 3 ------------------------------------------------------
+
+//nolint:paralleltest // swaps package-level wizard seams
+func TestAddRun_GlobalAgentAddStillOpensWizard(t *testing.T) {
+	src := addSourceTree(t, "alpha")
+	dir := agentProject(t)
+	a := newTestApp()
+	if _, _, code := runCLI(t, a, "-C", dir, "add", src); code != 0 {
+		t.Fatal("seed add failed")
+	}
+
+	wizardCalled := false
+	withWizardSeams(t, true, func(context.Context, tui.WizardConfig, bool) (tui.WizardOutcome, error) {
+		wizardCalled = true
+		return tui.WizardOutcome{Cancelled: true}, nil
+	})
+
+	var out, errb bytes.Buffer
+	c := addCmd{Source: src, Agent: []string{"codex"}, Global: true}
+	_ = c.Run(context.Background(), interactiveOutput(&out, &errb), a, projectRoot(dir), Globals{})
+	if !wizardCalled {
+		t.Error("--global agent-add was routed to the locked-scope fast path instead of the wizard")
+	}
+}

@@ -867,3 +867,41 @@ func TestAgentChoices_DetectsOnce(t *testing.T) {
 		t.Errorf("choices = %+v, want claude detected and preselected", choices)
 	}
 }
+
+// ---- Review round 2, Phase 3: fast-path gate fidelity -----------------------------
+
+func TestQualifiesLocalAgentAdd_RespectsScopeModeAndPath(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+	if _, err := a.Add(ctx, app.AddRequest{Root: root, Source: src}); err != nil {
+		t.Fatalf("seed Add: %v", err)
+	}
+
+	base := app.AddRequest{Root: root, Source: src, Agents: []string{"codex"}}
+	if !a.QualifiesLocalAgentAdd(ctx, root, base) {
+		t.Fatal("plain agent-add should qualify for the local fast path")
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*app.AddRequest)
+	}{
+		{"--global changes placement", func(r *app.AddRequest) { r.Scope = "global" }},
+		{"--copy changes mode", func(r *app.AddRequest) { r.Mode = "copy" }},
+		{"--path selects different content", func(r *app.AddRequest) { r.Path = "skills/other" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := base
+			tt.mutate(&req)
+			if a.QualifiesLocalAgentAdd(ctx, root, req) {
+				t.Errorf("%s: request must not take the locked-scope relink fast path", tt.name)
+			}
+		})
+	}
+}

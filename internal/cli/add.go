@@ -85,6 +85,7 @@ func (c addCmd) wizardWanted(ctx context.Context, out *Output, a *app.App, root 
 		Root: string(root), Source: c.Source,
 		Version: c.Version, Ref: c.Ref, Commit: c.Commit,
 		Agents: c.Agent, Force: c.Force,
+		Scope: scopeFlag(c.Global), Mode: modeFromFlags(c.Copy, c.Symlink, c.Auto),
 		Selectors: c.Skill, All: c.All, Path: c.Path, ListOnly: c.List,
 	})
 }
