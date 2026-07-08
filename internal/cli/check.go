@@ -33,6 +33,11 @@ func (c checkCmd) Run(ctx context.Context, out *Output, a *app.App, root project
 	human := fmt.Sprintf("Checked %d skill(s): no drift", len(report.Skills))
 	if report.HasDrift {
 		human = fmt.Sprintf("Drift detected in %d skill(s)", countDrift(report.Skills))
+		if out.Interactive() {
+			human = styledWarnSummary(human)
+		}
+	} else if out.Interactive() {
+		human = styledSummary(human)
 	}
 	if rErr := out.Result(human, map[string]any{"has_drift": report.HasDrift, "skills": skills}); rErr != nil {
 		return rErr

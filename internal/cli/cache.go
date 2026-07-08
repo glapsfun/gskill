@@ -62,6 +62,9 @@ func (cacheStatsCmd) Run(out *Output, root projectRoot) error {
 		return fmt.Errorf("scan cache: %w", err)
 	}
 	human := fmt.Sprintf("%d file(s), %d bytes", files, bytes)
+	if out.Interactive() {
+		human = styledSummary(human)
+	}
 	return out.Result(human, map[string]any{"files": files, "bytes": bytes})
 }
 
@@ -87,6 +90,9 @@ func (cacheListCmd) Run(out *Output, root projectRoot) error {
 		}
 	}
 	human := fmt.Sprintf("%d cached entr(ies)", len(keys))
+	if out.Interactive() {
+		human = styledSummary(human)
+	}
 	return out.Result(human, map[string]any{"entries": keys})
 }
 
@@ -102,5 +108,9 @@ func (cacheCleanCmd) Run(out *Output, root projectRoot) error {
 	if err := os.RemoveAll(cacheDir(string(root))); err != nil {
 		return fmt.Errorf("clean cache: %w", err)
 	}
-	return out.Result("cache cleaned", map[string]any{"cleaned": true})
+	human := "cache cleaned"
+	if out.Interactive() {
+		human = styledSummary(human)
+	}
+	return out.Result(human, map[string]any{"cleaned": true})
 }

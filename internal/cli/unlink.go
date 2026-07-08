@@ -31,11 +31,16 @@ func (c unlinkCmd) Run(ctx context.Context, out *Output, a *app.App, root projec
 	}
 
 	human := fmt.Sprintf("Unlinked %s from %s; %d agent(s) remain", c.Agent, c.Skill, len(res.RemainingAgents))
+	styled := styledSummary
 	switch {
 	case res.Pruned:
 		human = fmt.Sprintf("Unlinked %s from %s and pruned the skill (no agents remain)", c.Agent, c.Skill)
 	case res.Unreferenced:
 		human = fmt.Sprintf("Unlinked %s from %s; skill retained but unreferenced (run with --prune to remove)", c.Agent, c.Skill)
+		styled = styledWarnSummary
+	}
+	if out.Interactive() {
+		human = styled(human)
 	}
 	return out.Result(human, map[string]any{
 		"skill":            res.Skill,

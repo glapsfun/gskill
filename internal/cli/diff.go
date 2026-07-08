@@ -38,5 +38,8 @@ func (diffCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoo
 	if human == "" {
 		human = "No skills declared."
 	}
+	if out.Interactive() {
+		human = renderDiffStyled(entries)
+	}
 	return out.Result(human, map[string]any{"entries": rows})
 }

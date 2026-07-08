@@ -103,3 +103,57 @@ func TestRenderAligned_AnsiAwareWidths(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderFindStyled_Table(t *testing.T) {
+	t.Parallel()
+	got := renderFindStyled([]app.SearchHit{
+		{ID: "deploy", Source: "acme/skills", RepoPath: "ops", Installed: true},
+		{ID: "docs", Source: "acme/skills", RepoPath: ""},
+	})
+	for _, want := range []string{"ID", "SOURCE", "PATH", "deploy", "● installed", "."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("styled find missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderDiffStyled_Table(t *testing.T) {
+	t.Parallel()
+	got := renderDiffStyled([]app.DiffEntry{
+		{Name: "a", InManifest: true, InLock: true, Status: "installed"},
+		{Name: "b", InManifest: true, InLock: false, Status: "missing"},
+	})
+	for _, want := range []string{"NAME", "MANIFEST", "LOCK", "STATUS", "✓", "—", "●", "✗"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("styled diff missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderConfigListStyled_Table(t *testing.T) {
+	t.Parallel()
+	got := renderConfigListStyled(map[string]string{"cache.dir": "/x", "agents": "claude"})
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 || !strings.Contains(lines[0], "KEY") || !strings.Contains(lines[1], "agents") {
+		t.Errorf("styled config list wrong shape (sorted keys, header):\n%s", got)
+	}
+}
+
+func TestRenderDoctorStyled_Fields(t *testing.T) {
+	t.Parallel()
+	got := renderDoctorStyled(app.DoctorReport{GitAvailable: true, DetectedAgents: []string{"claude"}, Warnings: []string{"w"}})
+	for _, want := range []string{"git available", "✓", "claude", "warnings", "1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("styled doctor missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderPlanTextStyled_KeepsText(t *testing.T) {
+	t.Parallel()
+	plan := app.InstallPlan{Actions: []app.PlannedAction{{Skill: "s", AgentID: "claude", Destination: "/d"}}}
+	// Without color the styled rendering must equal the plain one exactly.
+	if got, want := renderPlanTextStyled(plan), renderPlanText(plan); got != want {
+		t.Errorf("styled plan text diverges without color:\n%q\n%q", got, want)
+	}
+}

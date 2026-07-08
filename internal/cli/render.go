@@ -2,11 +2,14 @@ package cli
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
@@ -104,4 +107,133 @@ func renderInfoStyled(info app.SkillInfo) string {
 // styledSummary decorates a one-line success summary with the shared ✓.
 func styledSummary(text string) string {
 	return tui.DefaultTheme().Success.Render("✓ ") + text
+}
+
+// styledWarnSummary decorates an attention summary (drift, updates pending).
+func styledWarnSummary(text string) string {
+	return tui.DefaultTheme().Warning.Render("◐ ") + text
+}
+
+// styledErrSummary decorates a failure summary.
+func styledErrSummary(text string) string {
+	return tui.DefaultTheme().Error.Render("✗ ") + text
+}
+
+// renderFindStyled renders `gskill search` hits for a TTY.
+func renderFindStyled(hits []app.SearchHit) string {
+	if len(hits) == 0 {
+		return "no matching skills found"
+	}
+	st := tui.DefaultTheme()
+	rows := make([][]string, 0, len(hits))
+	for _, h := range hits {
+		installed := ""
+		if h.Installed {
+			installed = st.Success.Render("● installed")
+		}
+		rows = append(rows, []string{
+			st.Accent.Render(h.ID), st.Subtitle.Render(h.Source), pathOrRoot(h.RepoPath), installed,
+		})
+	}
+	return renderAligned(st, []string{"ID", "SOURCE", "PATH", ""}, rows)
+}
+
+// renderSkillCatalogStyled renders discovered skills (`gskill source list`,
+// `gskill add --list`) for a TTY.
+func renderSkillCatalogStyled(skills []discovery.DiscoveredSkill) string {
+	st := tui.DefaultTheme()
+	rows := make([][]string, 0, len(skills))
+	for _, s := range skills {
+		valid := st.Success.Render("✓ ok")
+		if !s.Valid {
+			valid = st.Error.Render("✗ invalid")
+		}
+		rows = append(rows, []string{st.Accent.Render(s.ID), valid, pathOrRoot(s.RepoPath)})
+	}
+	return renderAligned(st, []string{"ID", "VALID", "PATH"}, rows)
+}
+
+// renderDiffStyled renders `gskill project diff` for a TTY.
+func renderDiffStyled(entries []app.DiffEntry) string {
+	if len(entries) == 0 {
+		return "No skills declared."
+	}
+	st := tui.DefaultTheme()
+	mark := func(on bool) string {
+		if on {
+			return st.Success.Render("✓")
+		}
+		return st.Hint.Render("—")
+	}
+	rows := make([][]string, 0, len(entries))
+	for _, e := range entries {
+		rows = append(rows, []string{
+			st.Accent.Render(e.Name), mark(e.InManifest), mark(e.InLock), st.StatusCell(e.Status),
+		})
+	}
+	return renderAligned(st, []string{"NAME", "MANIFEST", "LOCK", "STATUS"}, rows)
+}
+
+// renderConfigListStyled renders `gskill config list` for a TTY.
+func renderConfigListStyled(values map[string]string) string {
+	st := tui.DefaultTheme()
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	rows := make([][]string, 0, len(keys))
+	for _, k := range keys {
+		rows = append(rows, []string{st.Accent.Render(k), values[k]})
+	}
+	return renderAligned(st, []string{"KEY", "VALUE"}, rows)
+}
+
+// renderDoctorStyled renders `gskill doctor` for a TTY.
+func renderDoctorStyled(report app.DoctorReport) string {
+	st := tui.DefaultTheme()
+	label := func(s string) string { return st.Subtitle.Render(fmt.Sprintf("%-16s", s)) }
+	git := st.Error.Render("✗ false")
+	if report.GitAvailable {
+		git = st.Success.Render("✓ true")
+	}
+	warnings := strconv.Itoa(len(report.Warnings))
+	if len(report.Warnings) > 0 {
+		warnings = st.Warning.Render(warnings)
+	}
+	var b strings.Builder
+	b.WriteString(label("git available:") + " " + git + "\n")
+	b.WriteString(label("detected agents:") + " " + st.Accent.Render(strings.Join(report.DetectedAgents, ", ")) + "\n")
+	b.WriteString(label("warnings:") + " " + warnings)
+	return b.String()
+}
+
+// renderPlanTextStyled renders the `add --dry-run` plan for a TTY: the exact
+// text of renderPlanText with the wizard preview's per-kind colors, so the
+// two plan surfaces read identically (FR-015/FR-024).
+func renderPlanTextStyled(plan app.InstallPlan) string {
+	st := tui.DefaultTheme()
+	var b strings.Builder
+	b.WriteString(st.Title.Render("Plan (dry run — nothing will be written):") + "\n")
+	for _, pl := range plan.Lines("") {
+		switch pl.Kind {
+		case app.PlanLineAction:
+			fmt.Fprintf(&b, "  + %s\n", pl.Text)
+		case app.PlanLineFileOp:
+			fmt.Fprintf(&b, "      %s\n", st.Hint.Render(pl.Text))
+		case app.PlanLineWarning:
+			fmt.Fprintf(&b, "  %s\n", st.Warning.Render("warning: "+pl.Text))
+		case app.PlanLineConflict:
+			fmt.Fprintf(&b, "  %s\n", st.Error.Render("conflict: "+pl.Text))
+		case app.PlanLineMeta:
+			fmt.Fprintf(&b, "  %s\n", st.Accent.Render(pl.Text))
+		case app.PlanLineInit:
+			fmt.Fprintf(&b, "  %s\n", st.Warning.Render(pl.Text))
+		case app.PlanLineAgent:
+			fmt.Fprintf(&b, "  %s\n", st.Subtitle.Render(pl.Text))
+		default:
+			fmt.Fprintf(&b, "  %s\n", pl.Text)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

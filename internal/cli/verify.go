@@ -39,6 +39,11 @@ func (verifyCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	human := fmt.Sprintf("Verified %d skill(s): all OK", len(report.Skills))
 	if !report.OK {
 		human = "Integrity verification FAILED"
+		if out.Interactive() {
+			human = styledErrSummary(human)
+		}
+	} else if out.Interactive() {
+		human = styledSummary(human)
 	}
 	if rErr := out.Result(human, map[string]any{"ok": report.OK, "skills": skills}); rErr != nil {
 		return rErr

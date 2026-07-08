@@ -42,5 +42,8 @@ func renderInstallChanges(out *Output, verb string, res app.InstallResult) error
 		})
 	}
 	human := fmt.Sprintf("%s %d skill(s); %d changed", verb, len(res.Skills), changed)
+	if out.Interactive() {
+		human = styledSummary(human)
+	}
 	return out.Result(human, map[string]any{"changed": res.Changed, "skills": skills})
 }

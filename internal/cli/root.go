@@ -14,6 +14,7 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/selection"
+	"github.com/glapsfun/gskill/internal/tui"
 	"github.com/glapsfun/gskill/internal/version"
 )
 
@@ -107,7 +108,11 @@ func (versionCmd) Run(out *Output) error {
 	if out.JSON() {
 		return out.Result("", map[string]string{"version": version.Version()})
 	}
-	return out.Result(version.String(), nil)
+	human := version.String()
+	if out.Interactive() {
+		human = tui.DefaultTheme().Accent.Render(human)
+	}
+	return out.Result(human, nil)
 }
 
 // helpWrapWidth pins help wrapping so output is byte-identical regardless of

@@ -52,5 +52,8 @@ func (c searchCmd) Run(ctx context.Context, out *Output, a *app.App, root projec
 	if len(lines) > 0 {
 		human = strings.Join(lines, "\n")
 	}
+	if out.Interactive() {
+		human = renderFindStyled(hits)
+	}
 	return out.Result(human, hits)
 }
