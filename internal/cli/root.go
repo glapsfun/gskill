@@ -121,12 +121,7 @@ func grammarOptions() []kong.Option {
 	return []kong.Option{
 		kong.Name("gskill"),
 		kong.Description("Reproducible package manager for agentic AI skills."),
-		kong.ExplicitGroups([]kong.Group{
-			{Key: "core", Title: "CORE"},
-			{Key: "inspect", Title: "INSPECT"},
-			{Key: "project", Title: "PROJECT (manifest · lockfile · installed state)"},
-			{Key: "more", Title: "MORE"},
-		}),
+		kong.ExplicitGroups(helpGroupTitles),
 		kong.ConfigureHelp(kong.HelpOptions{
 			NoExpandSubcommands: true,
 			WrapUpperBound:      helpWrapWidth,
@@ -171,6 +166,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	options := append(grammarOptions(),
 		kong.Writers(stdout, stderr),
 		kong.Exit(func(int) { helpRequested = true }),
+		kong.Help(styledHelpPrinter(stdout, &root)),
 	)
 	parser, err := kong.New(&root, options...)
 	if err != nil {
