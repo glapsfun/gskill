@@ -12,13 +12,20 @@ import (
 
 // fakeRunner is a canned git.Runner for resolver tests.
 type fakeRunner struct {
-	tags    []git.TagRef
-	refs    map[string]string // ref -> commit
-	headSHA string
+	tags     []git.TagRef
+	tagsErr  error
+	heads    []git.BranchRef
+	headsErr error
+	refs     map[string]string // ref -> commit
+	headSHA  string
 }
 
 func (f fakeRunner) LsRemoteTags(_ context.Context, _ string) ([]git.TagRef, error) {
-	return f.tags, nil
+	return f.tags, f.tagsErr
+}
+
+func (f fakeRunner) LsRemoteHeads(_ context.Context, _ string) ([]git.BranchRef, error) {
+	return f.heads, f.headsErr
 }
 
 func (f fakeRunner) ResolveRef(_ context.Context, _, ref string) (string, error) {

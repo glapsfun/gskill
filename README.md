@@ -53,6 +53,11 @@ cosign-signed with SBOMs and build-provenance attestations; see
 ```bash
 gskill init                               # scaffold gskill.toml + .gskill/
 gskill add github.com/owner/repo/skill    # resolve, install, lock
+                                          # (on a terminal, add opens a guided
+                                          #  wizard: search/select skills, pick a
+                                          #  version and agents, review, approve)
+gskill onboard                            # guided install without a source in hand
+gskill add github.com/owner/repo --dry-run     # print the plan, write nothing
 gskill add ./local/skill --agent codex    # install a local skill into one agent
 gskill add github.com/openai/skills --skill code-review   # pick one of many
 gskill add github.com/openai/skills --skill '*'           # install all valid skills
@@ -114,7 +119,8 @@ still works as a silent alias of its canonical form.
 | --- | --- |
 | **CORE** | |
 | `init` | Scaffold the manifest, `.gskill/` state dir, and gitignore hints. |
-| `add <source>` | Resolve, install, and record a new skill. |
+| `add <source>` | Resolve, install, and record a new skill (guided wizard on a terminal). |
+| `onboard` | Guided skill installation without a predefined source. |
 | `install` | Materialize all declared skills (additive, idempotent). |
 | `update [name]` | Advance resolutions within constraints; rewrite the lock. |
 | `remove <name>` | Uninstall; drop from manifest + lock; GC the store. |

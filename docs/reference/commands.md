@@ -152,6 +152,11 @@ Install all declared skills (additive, idempotent).
 List installed skills and their status.
 
 
+## `onboard`
+
+Guided skill installation without a predefined source.
+
+
 ## `outdated`
 
 Show skills with newer versions available.

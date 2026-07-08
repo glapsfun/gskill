@@ -122,25 +122,11 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		return res, laErr
 	}
 
-	ref, err := source.Parse(req.Source)
-	if err != nil {
-		return AddResult{}, err
-	}
-	ref = promoteLocalGit(ref)
-
-	rev, warnings, err := resolver.Resolve(ctx, a.git, ref, resolver.Requested{
+	// Phase 1: resolve + discover (read-only outside the cache/store).
+	disc, err := a.DiscoverSource(ctx, DiscoverRequest{
+		Root: req.Root, Source: req.Source,
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
-	})
-	if err != nil {
-		return AddResult{}, err
-	}
-
-	// Discovery and listing are read-only and do not need a target agent; agents
-	// are resolved only when an install is actually about to happen (so `--list`
-	// works even with no agents detected).
-	ireq := a.installRequest(req.Root, ref, rev, nil, req.Scope, modeOr(req.Mode, m.Defaults.InstallMode))
-	inst := a.installerForScope(p, string(ireq.Scope))
-	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{
+		Scope: req.Scope, Mode: req.Mode,
 		MaxDepth: req.MaxDepth, Include: req.Include, Exclude: req.Exclude,
 	})
 	if err != nil {
@@ -148,22 +134,36 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	}
 
 	if req.ListOnly {
-		return AddResult{Listed: skillsInScope(scan, ref.Path), Warnings: warnings}, nil
+		return AddResult{Listed: disc.Skills, Warnings: disc.Warnings}, nil
 	}
 
 	// An install needs a target agent. Resolve it before any interactive
-	// selection so the user is not asked to pick skills only to fail afterward.
+	// selection so the user is not asked to pick skills only to fail afterward;
+	// the resolved set is threaded into the plan so detection runs once.
 	agents, err := a.targetAgents(ctx, req.Root, req.Agents, m.Defaults.Agents)
 	if err != nil {
 		return AddResult{}, err
 	}
-	ireq.Agents = agents
 
-	selected, err := a.resolveSelection(scan, req, ref.Path)
+	selected, err := a.resolveSelection(disc.Scan, req, disc.Ref.Path)
 	if err != nil {
 		return AddResult{}, err
 	}
-	return a.installSelected(ctx, p, m, req, ref, rev, ireq, inst, selected, warnings)
+
+	// Phases 3+4: plan (pure) then execute. Add is the linear composition of
+	// the wizard's phases, so guided and non-guided installs cannot drift
+	// (spec 011 SC-004, constitution I).
+	plan, err := a.planInstallResolved(ctx, PlanRequest{
+		Root: req.Root, Source: req.Source,
+		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
+		Discover: disc, Selected: selected,
+		AgentIDs: req.Agents, Scope: req.Scope, Mode: req.Mode, Force: req.Force,
+		MaxDepth: req.MaxDepth, Include: req.Include, Exclude: req.Exclude,
+	}, agents)
+	if err != nil {
+		return AddResult{}, err
+	}
+	return a.ExecutePlan(ctx, plan, nil)
 }
 
 // tryLocalAgentAdd handles a pure agent-add — adding agents to one or more
@@ -198,11 +198,17 @@ func (a *App) tryLocalAgentAdd(ctx context.Context, p *project, m *manifest.Mani
 	return res, true, err
 }
 
-// disqualifiesLocalAdd reports whether a request can't be a pure agent-add (it
-// changes the pin, only lists, or selects everything).
+// disqualifiesLocalAdd reports whether a request can't be a pure agent-add: it
+// changes the pin, only lists, selects everything, or asks for a placement the
+// locked-scope relink cannot honor — an explicit path, a global scope, or an
+// install mode (the fast path reuses the locked scope and mode verbatim, so
+// honoring those flags requires the full plan/install pipeline; review
+// finding: --global/--copy/--path were silently discarded).
 func disqualifiesLocalAdd(req AddRequest) bool {
 	return req.Force || req.ListOnly || req.All ||
-		req.Version != "" || req.Ref != "" || req.Commit != ""
+		req.Version != "" || req.Ref != "" || req.Commit != "" ||
+		req.Path != "" || req.Mode != "" ||
+		req.Scope == string(installer.ScopeGlobal)
 }
 
 // anyNewAgent reports whether any target skill gains a not-yet-installed agent.
@@ -249,7 +255,7 @@ func (a *App) relinkAgents(ctx context.Context, p *project, m *manifest.Manifest
 	if err != nil {
 		return err
 	}
-	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root})
+	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root}, true)
 	if err != nil {
 		return err
 	}
@@ -362,7 +368,14 @@ func (a *App) chooseInteractive(req AddRequest, candidates []discovery.Discovere
 // conflicts, and the same name from a different source is a collision (FR-029).
 // It stages and activates each skill, rolling back already-activated targets on
 // any failure, and commits the manifest and lockfile only after all succeed.
-func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manifest, req AddRequest, ref source.Ref, rev resolver.Revision, ireq installer.Request, inst *installer.Installer, selected []discovery.DiscoveredSkill, warnings []string) (AddResult, error) {
+// progress, when non-nil, receives a per-skill event before ("install") and
+// after ("record") each skill's placement (spec 011 progress UI).
+func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manifest, req AddRequest, ref source.Ref, rev resolver.Revision, ireq installer.Request, inst *installer.Installer, selected []discovery.DiscoveredSkill, warnings []string, progress func(ProgressEvent)) (AddResult, error) {
+	emit := func(skill, stage string) {
+		if progress != nil {
+			progress(ProgressEvent{Skill: skill, Stage: stage})
+		}
+	}
 	res := AddResult{Warnings: append([]string(nil), warnings...)}
 	reqIDs := agentIDs(ireq.Agents)
 	err := a.withLock(ctx, p, func() error {
@@ -378,6 +391,14 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 		}
 
 		for _, s := range selected {
+			// Honor interruption between skills: an interrupted multi-skill add
+			// rolls back what it activated instead of committing a partial set
+			// (spec 011 FR-020, SC-006 interrupt class).
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				rollback()
+				return ctxErr
+			}
+			emit(s.ID, "install")
 			plan, planErr := a.planAdd(m, lf, s.ID, req, reqIDs)
 			if planErr != nil {
 				rollback()
@@ -387,6 +408,13 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 			ir.Name = s.ID
 			ir.Path = s.RepoPath
 			ir.Agents = plan.activate
+			// Adds never clobber content gskill does not own; --force is the
+			// documented override (spec 011 FR-016). The previously locked
+			// hash marks copy-mode installs as gskill's own.
+			ir.PreserveForeign = !req.Force
+			if locked, ok := lf.Skills[s.ID]; ok {
+				ir.PriorContentHash = locked.Resolved.ContentHash
+			}
 			result, instErr := inst.Install(ctx, ir)
 			if instErr != nil {
 				rollback()
@@ -419,6 +447,7 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 				Name: s.ID, Path: s.RepoPath, ContentHash: result.ContentHash, Targets: result.Targets,
 			})
 			res.Warnings = append(res.Warnings, result.Warnings...)
+			emit(s.ID, "record")
 		}
 
 		if saveErr := manifest.Save(p.manifestPath, m); saveErr != nil {
@@ -457,9 +486,9 @@ func (a *App) planAdd(m *manifest.Manifest, lf *lockfile.Lockfile, id string, re
 	}
 
 	if existing.Source != req.Source {
-		return addPlan{}, fmt.Errorf(
+		return addPlan{}, &ConflictError{Skill: id, Kind: ConflictCrossSource, err: fmt.Errorf(
 			"%w: skill %q is already declared from a different source %q (name collision); use a different name or 'gskill remove %s' first",
-			errs.ErrInvalidManifest, id, existing.Source, id)
+			errs.ErrInvalidManifest, id, existing.Source, id)}
 	}
 
 	current := installedAgentIDs(lf, id, existing)
@@ -489,10 +518,12 @@ func manifestAgentIDs(m *manifest.Manifest, req AddRequest, reqIDs []string) []s
 	return reqIDs
 }
 
-// conflictErr reports an already-declared skill with no new agent to add.
+// conflictErr reports an already-declared skill with no new agent to add, as a
+// typed plan conflict so PlanInstall can classify it (spec 011).
 func conflictErr(id string) error {
-	return fmt.Errorf("%w: skill %q already declared; use 'gskill update %s' or --force",
-		errs.ErrInvalidManifest, id, id)
+	return &ConflictError{Skill: id, Kind: ConflictNoopReadd, err: fmt.Errorf(
+		"%w: skill %q already declared; use 'gskill update %s' or --force",
+		errs.ErrInvalidManifest, id, id)}
 }
 
 // mergeAgentInstall folds an agent-add install result into an existing lock
@@ -578,12 +609,11 @@ func skillsInScope(scan discovery.Result, explicitPath string) []discovery.Disco
 	return out
 }
 
-// firstProblem returns the first error-severity diagnostic message for a skill.
+// firstProblem returns the first error-severity diagnostic message for a
+// skill, with a fallback for error paths that need a non-empty reason.
 func firstProblem(s discovery.DiscoveredSkill) string {
-	for _, p := range s.Problems {
-		if p.Severity == discovery.SeverityError {
-			return p.Message
-		}
+	if msg := s.FirstError(); msg != "" {
+		return msg
 	}
 	return "unknown validation error"
 }

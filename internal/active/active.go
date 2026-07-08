@@ -132,6 +132,40 @@ func underRoot(path, root string) bool {
 	return path == absRoot || strings.HasPrefix(path, absRoot+string(filepath.Separator))
 }
 
+// Owned reports whether dest is gskill-managed content: a symlink resolving
+// under any of the given roots, or a real directory whose content hash matches
+// one of acceptHashes (a copy-mode install). A missing dest is not owned. This
+// is the single ownership predicate shared by the installer's overwrite guard
+// and the plan layer's conflict detection, so the two cannot drift (spec 011
+// FR-016).
+func Owned(dest string, roots []string, acceptHashes ...string) bool {
+	info, err := os.Lstat(dest)
+	if err != nil {
+		return false
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := resolveLink(dest)
+		if err != nil {
+			return false
+		}
+		for _, r := range roots {
+			if underRoot(target, r) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, h := range acceptHashes {
+		if h == "" {
+			continue
+		}
+		if ok, _, err := integrity.VerifyDir(dest, h); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
 // HealthOf reports the active entry's state relative to the expected storePath.
 func HealthOf(root, name, storePath string) (Health, error) {
 	dest := Path(root, name)

@@ -4,10 +4,12 @@ Add and install a new skill.
 
 Examples:
 
+    gskill add github.com/owner/repo                # guided wizard on a terminal
     gskill add github.com/owner/repo --agent claude
     gskill add github.com/owner/repo --skill deploy-helper --version '^2.0.0'
     gskill add ./local/skills --all
     gskill add github.com/owner/repo --list
+    gskill add github.com/owner/repo --dry-run      # print the plan, write nothing
 
 Arguments:
   <source>    Skill source: git shorthand, URL, or local path.

@@ -25,6 +25,10 @@ func (authFailRunner) LsRemoteTags(context.Context, string) ([]git.TagRef, error
 	return nil, errs.Wrap(errs.CodeAuth, "git authentication failed: //***@github.com", nil)
 }
 
+func (authFailRunner) LsRemoteHeads(context.Context, string) ([]git.BranchRef, error) {
+	return nil, errs.Wrap(errs.CodeAuth, "git authentication failed: //***@github.com", nil)
+}
+
 func (authFailRunner) ResolveRef(context.Context, string, string) (string, error) {
 	return "", errs.Wrap(errs.CodeAuth, "git authentication failed: //***@github.com", nil)
 }

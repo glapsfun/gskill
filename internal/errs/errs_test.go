@@ -43,6 +43,7 @@ func TestExitCode_Sentinels(t *testing.T) {
 		{"partial-install", errs.ErrPartialInstall, 10},
 		{"auth", errs.ErrAuth, 11},
 		{"cache-lock", errs.ErrCacheLock, 12},
+		{"cancelled", errs.ErrCancelled, 130},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

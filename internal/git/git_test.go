@@ -187,3 +187,28 @@ func TestSystemRunner_UnavailableSourceErrors(t *testing.T) {
 		t.Error("expected error for nonexistent repo")
 	}
 }
+
+func TestSystemRunner_LsRemoteHeads(t *testing.T) {
+	t.Parallel()
+
+	repo, commit := fixtureRepo(t)
+	branch := exec.CommandContext(context.Background(), "git", "branch", "dev")
+	branch.Dir = repo
+	if out, err := branch.CombinedOutput(); err != nil {
+		t.Fatalf("git branch: %v\n%s", err, out)
+	}
+
+	heads, err := git.NewSystemRunner().LsRemoteHeads(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("LsRemoteHeads: %v", err)
+	}
+	got := map[string]string{}
+	for _, h := range heads {
+		got[h.Name] = h.Commit
+	}
+	for _, name := range []string{"main", "dev"} {
+		if got[name] != commit {
+			t.Errorf("head %q = %q, want %q", name, got[name], commit)
+		}
+	}
+}

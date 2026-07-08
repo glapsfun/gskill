@@ -184,6 +184,7 @@ func RenderExitCodes() string {
 		{errs.CodePartialInstall, "partial installation"},
 		{errs.CodeAuth, "authentication failure"},
 		{errs.CodeCacheLock, "cache or lock failure (incl. lock-acquire timeout)"},
+		{errs.CodeCancelled, "cancelled by the user before approval (guided flow; nothing written)"},
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].code < entries[j].code })
 

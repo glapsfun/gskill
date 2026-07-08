@@ -22,6 +22,9 @@ CORE
   add <source> [flags]
     Add and install a new skill.
 
+  onboard [flags]
+    Guided skill installation without a predefined source.
+
   install [flags]
     Install all declared skills (additive, idempotent).
 

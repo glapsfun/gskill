@@ -186,7 +186,7 @@ func (a *App) reconcileSkill(ctx context.Context, p *project, lf *lockfile.Lockf
 			return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash, Changed: manifestChanged}, lockChanged, manifestChanged, nil
 		}
 		added := subtract(desiredIDs, locked.Installation.Agents)
-		result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req)
+		result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req, false)
 		if rErr != nil {
 			return SyncChange{}, false, false, rErr
 		}
@@ -229,13 +229,18 @@ func (a *App) reconcileNeeded(p *project, name string, locked lockfile.LockedSki
 }
 
 // reconcileFromLock re-materializes a skill for the desired agents using the
-// locked revision and content hash, without re-resolving.
-func (a *App) reconcileFromLock(ctx context.Context, p *project, name string, locked lockfile.LockedSkill, desiredAgents []agent.Agent, req SyncRequest) (installer.Result, error) {
+// locked revision and content hash, without re-resolving. preserveForeign
+// makes the installer fail closed on unowned destinations — set by the
+// agent-add path (adding an agent must never clobber a user's content, spec
+// 011 FR-016), left false by sync/repair whose contract is restoring drift.
+func (a *App) reconcileFromLock(ctx context.Context, p *project, name string, locked lockfile.LockedSkill, desiredAgents []agent.Agent, req SyncRequest, preserveForeign bool) (installer.Result, error) {
 	ireq, err := a.frozenRequest(p, name, locked, InstallRequest{Root: p.root, Offline: req.Offline})
 	if err != nil {
 		return installer.Result{}, err
 	}
 	ireq.Agents = desiredAgents
+	ireq.PreserveForeign = preserveForeign
+	ireq.PriorContentHash = locked.Resolved.ContentHash
 	return a.installerForScope(p, string(ireq.Scope)).Install(ctx, ireq)
 }
 

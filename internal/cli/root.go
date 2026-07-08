@@ -34,6 +34,7 @@ type rootCLI struct {
 
 	Init    initCmd    `cmd:"" group:"core" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
 	Add     addCmd     `cmd:"" group:"core" help:"Add and install a new skill."`
+	Onboard onboardCmd `cmd:"" group:"core" help:"Guided skill installation without a predefined source."`
 	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent)."`
 	Update  updateCmd  `cmd:"" group:"core" help:"Advance skills within their version constraints."`
 	Remove  removeCmd  `cmd:"" group:"core" help:"Uninstall skills and clean up."`
@@ -224,6 +225,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	kctx.Bind(Globals{Offline: root.Offline, NoCache: root.NoCache, DryRun: root.DryRun, Yes: root.Yes})
 
 	if runErr := kctx.Run(out); runErr != nil {
+		if errors.Is(runErr, errs.ErrCancelled) {
+			// A user-initiated cancel is not an error condition: report it
+			// plainly and exit 130 (spec 011, contracts/cli-onboarding.md).
+			out.Diag("%v", runErr)
+			return errs.ExitCode(runErr)
+		}
 		out.Diag("error: %v", runErr)
 		if hint := errs.HintOf(runErr); hint != "" {
 			out.Diag("→ %s", hint)

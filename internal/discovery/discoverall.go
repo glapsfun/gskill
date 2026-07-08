@@ -44,6 +44,18 @@ type DiscoveredSkill struct {
 	Problems    []Diagnostic
 }
 
+// FirstError returns the message of the skill's first error-severity
+// diagnostic, or "" when none exists. It is the single definition of "the
+// reason a skill is invalid" shared by the app and TUI layers.
+func (s DiscoveredSkill) FirstError() string {
+	for _, p := range s.Problems {
+		if p.Severity == SeverityError {
+			return p.Message
+		}
+	}
+	return ""
+}
+
 // DuplicateConflict records two or more discovered skills whose normalized ids
 // collide (FR-011).
 type DuplicateConflict struct {

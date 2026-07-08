@@ -20,6 +20,7 @@ var helpPages = []struct {
 
 	{"init", []string{"init"}},
 	{"add", []string{"add"}},
+	{"onboard", []string{"onboard"}},
 	{"install", []string{"install"}},
 	{"update", []string{"update"}},
 	{"remove", []string{"remove"}},
@@ -54,9 +55,10 @@ var helpPages = []struct {
 	{"version", []string{"version"}},
 }
 
-// visibleTopLevel is the canonical 19-entry command surface (FR-001).
+// visibleTopLevel is the canonical 20-entry command surface (spec 010 FR-001
+// + spec 011 onboard).
 var visibleTopLevel = []string{
-	"init", "add", "install", "update", "remove",
+	"init", "add", "onboard", "install", "update", "remove",
 	"list", "status", "info", "search", "outdated",
 	"project",
 	"source", "cache", "config", "unlink", "doctor", "dashboard", "completion", "version",

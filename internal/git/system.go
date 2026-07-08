@@ -54,6 +54,28 @@ func (SystemRunner) LsRemoteTags(ctx context.Context, url string) ([]TagRef, err
 	return tags, nil
 }
 
+// LsRemoteHeads lists branch heads via "git ls-remote --heads".
+func (SystemRunner) LsRemoteHeads(ctx context.Context, url string) ([]BranchRef, error) {
+	out, err := runGit(ctx, "", "ls-remote", "--heads", url)
+	if err != nil {
+		return nil, err
+	}
+
+	var heads []BranchRef
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		sha, ref, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		heads = append(heads, BranchRef{Name: strings.TrimPrefix(ref, "refs/heads/"), Commit: sha})
+	}
+	return heads, nil
+}
+
 // ResolveRef resolves a ref to an immutable commit SHA. A full SHA is returned
 // as-is; otherwise the ref is looked up via "git ls-remote".
 func (SystemRunner) ResolveRef(ctx context.Context, url, ref string) (string, error) {
