@@ -1,11 +1,18 @@
 package cli
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/tui"
 )
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// stripAnsi removes SGR sequences so tests can assert visible layout.
+func stripAnsi(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
 func TestRenderListStyled_ColumnsAndGlyphs(t *testing.T) {
 	t.Parallel()
@@ -73,5 +80,26 @@ func TestRenderStatusStyled_Empty(t *testing.T) {
 	t.Parallel()
 	if got := renderStatusStyled(app.StatusReport{}); got != "0 skill(s)" {
 		t.Errorf("empty styled status = %q", got)
+	}
+}
+
+func TestRenderAligned_AnsiAwareWidths(t *testing.T) {
+	t.Parallel()
+	st := tui.DefaultTheme()
+	got := renderAligned(st, []string{"A", "BB"}, [][]string{
+		{st.Accent.Render("xxxx"), "y"},
+		{"z", st.Success.Render("● w")},
+	})
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want header + 2 rows, got %d lines:\n%s", len(lines), got)
+	}
+	// The second column starts at the same visible offset on every line: the
+	// first column is 4 wide ("xxxx") plus the 2-space gutter.
+	for i, l := range lines {
+		stripped := stripAnsi(l)
+		if i > 0 && len(stripped) > 6 && stripped[4:6] != "  " {
+			t.Errorf("line %d: gutter misplaced in %q", i, stripped)
+		}
 	}
 }

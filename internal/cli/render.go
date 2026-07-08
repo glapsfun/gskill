@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/tui"
 )
@@ -14,28 +16,56 @@ import (
 // site selects with out.Interactive(), and NO_COLOR/dumb terminals degrade
 // through lipgloss's profile detection inside the shared tui.Theme.
 
+// renderAligned renders a header row and pre-styled cell rows as aligned
+// columns with two-space gutters. Widths are computed with lipgloss.Width, so
+// cells may carry ANSI styling without breaking the alignment.
+func renderAligned(st tui.Theme, headers []string, rows [][]string) string {
+	widths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = lipgloss.Width(h)
+	}
+	for _, row := range rows {
+		for i, c := range row {
+			if i < len(widths) {
+				widths[i] = max(widths[i], lipgloss.Width(c))
+			}
+		}
+	}
+	pad := func(s string, col int) string {
+		if col == len(widths)-1 {
+			return s // last column: no trailing padding
+		}
+		return s + strings.Repeat(" ", widths[col]-lipgloss.Width(s)+2)
+	}
+
+	var b strings.Builder
+	head := make([]string, len(headers))
+	for i, h := range headers {
+		head[i] = pad(h, i)
+	}
+	b.WriteString(st.TableHeader.Render(strings.Join(head, "")) + "\n")
+	for _, row := range rows {
+		for i, c := range row {
+			b.WriteString(pad(c, i))
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // renderListStyled renders `gskill list` for a TTY.
 func renderListStyled(skills []app.ListedSkill) string {
 	if len(skills) == 0 {
 		return "No skills installed."
 	}
 	st := tui.DefaultTheme()
-	nameW, verW, srcW := len("NAME"), len("VERSION"), len("SOURCE")
+	rows := make([][]string, 0, len(skills))
 	for _, s := range skills {
-		nameW, verW, srcW = max(nameW, len(s.Name)), max(verW, len(s.Version)), max(srcW, len(s.Source))
+		rows = append(rows, []string{
+			st.Accent.Render(s.Name), s.Version, st.Subtitle.Render(s.Source), st.StatusCell(s.Status),
+		})
 	}
-	pad := func(s string, w int) string { return s + strings.Repeat(" ", w-len(s)+2) }
-
-	var b strings.Builder
-	b.WriteString(st.TableHeader.Render(pad("NAME", nameW)+pad("VERSION", verW)+pad("SOURCE", srcW)+"STATUS") + "\n")
-	for _, s := range skills {
-		b.WriteString(st.Accent.Render(pad(s.Name, nameW)))
-		b.WriteString(pad(s.Version, verW))
-		b.WriteString(st.Subtitle.Render(pad(s.Source, srcW)))
-		b.WriteString(st.StatusCell(s.Status))
-		b.WriteByte('\n')
-	}
-	return strings.TrimRight(b.String(), "\n")
+	return renderAligned(st, []string{"NAME", "VERSION", "SOURCE", "STATUS"}, rows)
 }
 
 // renderStatusStyled renders `gskill status` for a TTY.
@@ -44,26 +74,17 @@ func renderStatusStyled(report app.StatusReport) string {
 		return "0 skill(s)"
 	}
 	st := tui.DefaultTheme()
-	nameW, activeW := len("NAME"), len("ACTIVE")
+	rows := make([][]string, 0, len(report.Skills))
 	for _, s := range report.Skills {
-		nameW, activeW = max(nameW, len(s.Name)), max(activeW, len(s.Active)+2)
-	}
-	pad := func(s string, w int) string { return s + strings.Repeat(" ", w-len(s)+2) }
-
-	var b strings.Builder
-	b.WriteString(st.TableHeader.Render(pad("NAME", nameW)+pad("ACTIVE", activeW)+"AGENTS") + "\n")
-	for _, s := range report.Skills {
-		b.WriteString(st.Accent.Render(pad(s.Name, nameW)))
-		// The glyph adds two visible runes; pad the raw state to keep columns.
-		b.WriteString(st.HealthCell(s.Active) + strings.Repeat(" ", activeW-len(s.Active)))
 		agents := make([]string, 0, len(s.Agents))
 		for _, ag := range s.Agents {
 			agents = append(agents, st.Subtitle.Render(ag.ID)+" "+st.HealthCell(ag.Health))
 		}
-		b.WriteString(strings.Join(agents, "  "))
-		b.WriteByte('\n')
+		rows = append(rows, []string{
+			st.Accent.Render(s.Name), st.HealthCell(s.Active), strings.Join(agents, "  "),
+		})
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return renderAligned(st, []string{"NAME", "ACTIVE", "AGENTS"}, rows)
 }
 
 // renderInfoStyled renders `gskill info` for a TTY.
