@@ -63,6 +63,13 @@ type PlanRequest struct {
 	Scope    string
 	Mode     string
 	Force    bool
+
+	// Discovery filters, mirrored from the original DiscoverRequest so a
+	// version re-pin re-discovers under the SAME constraints the user set
+	// (review finding: dropping them could remap onto an excluded skill).
+	MaxDepth int
+	Include  []string
+	Exclude  []string
 }
 
 // PlannedFileOp is one file the install will create or update (US4).
@@ -253,9 +260,14 @@ func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents [
 			return InstallPlan{}, err
 		}
 		m = loaded
-		if lfLoaded, err := loadOrNewLock(p.lockPath); err == nil {
-			lf = lfLoaded
+		lfLoaded, lockErr := loadOrNewLock(p.lockPath)
+		if lockErr != nil {
+			// A corrupt lockfile is drift, and drift is an error — planning
+			// against an empty lock would silently flip conflicts into merges
+			// (constitution II; review finding).
+			return InstallPlan{}, fmt.Errorf("load lockfile: %w", lockErr)
 		}
+		lf = lfLoaded
 	} else {
 		plan.InitProject = true
 	}
@@ -334,7 +346,9 @@ func (a *App) rePinPlan(ctx context.Context, req PlanRequest, p *project, plan *
 	plan.Warnings = append(plan.Warnings, warnings...)
 
 	ireq := a.installRequest(req.Root, req.Discover.Ref, rev, nil, req.Scope, req.Mode)
-	scan, err := a.installerForScope(p, string(ireq.Scope)).DiscoverAll(ctx, ireq, discovery.Options{})
+	scan, err := a.installerForScope(p, string(ireq.Scope)).DiscoverAll(ctx, ireq, discovery.Options{
+		MaxDepth: req.MaxDepth, Include: req.Include, Exclude: req.Exclude,
+	})
 	if err != nil {
 		return err
 	}
@@ -347,15 +361,16 @@ func (a *App) rePinPlan(ctx context.Context, req PlanRequest, p *project, plan *
 }
 
 // remapSelected re-matches an earlier selection against a re-discovered scan
-// (by ID, RepoPath as tie-break), failing closed when a selected skill does
-// not exist at the picked revision.
+// (by ID among valid skills, RepoPath as tie-break), failing closed when a
+// selected skill does not exist — or is not installable — at the picked
+// revision (an invalid duplicate must never silently replace the selection).
 func remapSelected(selected []discovery.DiscoveredSkill, scan discovery.Result, rev resolver.Revision) ([]discovery.DiscoveredSkill, error) {
 	out := make([]discovery.DiscoveredSkill, 0, len(selected))
 	for _, want := range selected {
 		var match *discovery.DiscoveredSkill
 		for i := range scan.Skills {
 			s := &scan.Skills[i]
-			if s.ID != want.ID {
+			if s.ID != want.ID || !s.Valid {
 				continue
 			}
 			if s.RepoPath == want.RepoPath {

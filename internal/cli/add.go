@@ -113,6 +113,7 @@ func (c addCmd) runDryRun(ctx context.Context, out *Output, a *app.App, root pro
 		Discover: disc, Selected: selected,
 		AgentIDs: c.Agent, Scope: scopeFlag(c.Global),
 		Mode: modeFromFlags(c.Copy, c.Symlink, c.Auto), Force: c.Force,
+		MaxDepth: c.MaxDepth, Include: c.Include, Exclude: c.Exclude,
 	})
 	if err != nil {
 		return err
@@ -195,7 +196,8 @@ func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root pro
 				Discover: disc, Selected: s.Selected,
 				AgentIDs: s.AgentIDs,
 				Scope:    scopeFlag(c.Global), Mode: modeFromFlags(c.Copy, c.Symlink, c.Auto),
-				Force: c.Force,
+				Force:    c.Force,
+				MaxDepth: c.MaxDepth, Include: c.Include, Exclude: c.Exclude,
 			})
 		},
 		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.ProgressEvent)) (app.AddResult, error) {

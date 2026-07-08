@@ -158,6 +158,7 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
 		Discover: disc, Selected: selected,
 		AgentIDs: req.Agents, Scope: req.Scope, Mode: req.Mode, Force: req.Force,
+		MaxDepth: req.MaxDepth, Include: req.Include, Exclude: req.Exclude,
 	}, agents)
 	if err != nil {
 		return AddResult{}, err

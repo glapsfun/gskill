@@ -905,3 +905,102 @@ func TestQualifiesLocalAgentAdd_RespectsScopeModeAndPath(t *testing.T) {
 		})
 	}
 }
+
+// ---- Review round 2, Phase 4: plan fidelity ----------------------------------------
+
+// gitSourceWithVendorDup builds a repo where v2 (latest) has skills/tools and
+// an excludable vendor/tools duplicate, while v1 has ONLY the vendor copy.
+func gitSourceWithVendorDup(t *testing.T) (repo string) {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo = t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(context.Background(), "git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(rel, desc string) {
+		t.Helper()
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("---\nname: tools\ndescription: "+desc+"\n---\n# tools\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run("init", "--quiet", "-b", "main")
+	write("vendor/tools/SKILL.md", "vendored v1")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "v1")
+	run("tag", "v1.0.0")
+	write("skills/tools/SKILL.md", "real v2")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "v2")
+	run("tag", "v2.0.0")
+	return repo
+}
+
+func TestPlanInstall_RePinKeepsDiscoveryFilters(t *testing.T) {
+	t.Parallel()
+
+	repo := gitSourceWithVendorDup(t)
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+
+	// Discover at latest with the vendor copy excluded, exactly as the flags did.
+	disc, err := a.DiscoverSource(ctx, app.DiscoverRequest{
+		Root: root, Source: repo, Exclude: []string{"vendor/**"},
+	})
+	if err != nil {
+		t.Fatalf("DiscoverSource: %v", err)
+	}
+
+	// Pinning v1.0.0 (where only the excluded vendor copy exists) must fail
+	// closed, not silently remap the selection onto the excluded skill.
+	_, err = a.PlanInstall(ctx, app.PlanRequest{
+		Root: root, Source: repo, Ref: "v1.0.0",
+		Discover: disc, Selected: selectByID(t, disc, "tools"),
+		AgentIDs: []string{"claude"},
+		Exclude:  []string{"vendor/**"},
+	})
+	if err == nil {
+		t.Fatal("re-pin remapped onto the excluded vendor copy instead of failing closed")
+	}
+	if !strings.Contains(err.Error(), "tools") {
+		t.Errorf("error does not name the missing skill: %v", err)
+	}
+}
+
+func TestPlanInstall_CorruptLockfileFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+
+	if err := os.WriteFile(filepath.Join(root, "gskill.lock"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	disc := discover(t, a, root, src)
+	_, err := a.PlanInstall(ctx, app.PlanRequest{
+		Root: root, Source: src, Discover: disc,
+		Selected: selectByID(t, disc, "alpha"), AgentIDs: []string{"claude"},
+	})
+	if err == nil {
+		t.Fatal("PlanInstall silently planned against a corrupt lockfile (drift must be an error)")
+	}
+}
