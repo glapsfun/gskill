@@ -98,3 +98,71 @@ func TestPlanInstall_ForeignDestinationIsOverwriteConflict(t *testing.T) {
 		t.Fatalf("Conflicts = %+v, want one %s (undeclared destination already occupied)", plan.Conflicts, app.ConflictFileOverwrite)
 	}
 }
+
+// ---- Review fixes, Phase C -------------------------------------------------------
+
+func TestPlanInstall_ForceOverridesForeignDestination(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	foreign := filepath.Join(root, ".claude", "skills", "alpha")
+	if err := os.MkdirAll(foreign, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreign, "SKILL.md"), []byte("# hand-written\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := planFor(t, onboardApp(), root, src, true, "alpha") // --force
+	if len(plan.Conflicts) != 0 {
+		t.Fatalf("--force did not override the overwrite conflict (FR-016 escape hatch): %+v", plan.Conflicts)
+	}
+	if len(plan.Actions) != 1 {
+		t.Fatalf("actions = %+v, want the forced install planned", plan.Actions)
+	}
+}
+
+func TestPlanInstall_ManagedStoreSymlinkIsNotForeign(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+
+	// Simulate a lost lockfile with gskill's own store symlink still active:
+	// .claude/skills/alpha -> <root>/.gskill/store/<hash>.
+	storeDir := filepath.Join(root, ".gskill", "store", "sha256", "ab", "abcdef")
+	if err := os.MkdirAll(storeDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	linkParent := filepath.Join(root, ".claude", "skills")
+	if err := os.MkdirAll(linkParent, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(storeDir, filepath.Join(linkParent, "alpha")); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := planFor(t, onboardApp(), root, src, false, "alpha")
+	if len(plan.Conflicts) != 0 {
+		t.Fatalf("gskill's own store symlink flagged as foreign content: %+v", plan.Conflicts)
+	}
+}
+
+func TestPlanInstall_GlobalScopeFailsWithoutHome(t *testing.T) {
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	a := onboardApp()
+	disc := discover(t, a, root, src)
+
+	t.Setenv("HOME", "")
+	_, err := a.PlanInstall(context.Background(), app.PlanRequest{
+		Root: root, Source: src, Discover: disc,
+		Selected: selectByID(t, disc, "alpha"),
+		AgentIDs: []string{"claude"},
+		Scope:    "global",
+	})
+	if err == nil {
+		t.Fatal("global-scope plan with no resolvable home succeeded; destinations would be garbage")
+	}
+}

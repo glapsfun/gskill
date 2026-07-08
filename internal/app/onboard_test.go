@@ -703,3 +703,108 @@ func TestPlanInstall_ReResolvesChangedVersionPin(t *testing.T) {
 		t.Errorf("lockfile still references the stale latest commit %s", commitV2)
 	}
 }
+
+// ---- Review fixes, Phase C: re-pin must re-discover ------------------------------
+
+// gitSourceWithMovedContent builds a git repo where v1.0.0 has an extra file
+// and a v2-only skill appears later, so plans pinned to v1 must reflect v1.
+func gitSourceWithMovedContent(t *testing.T) (repo string) {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo = t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(context.Background(), "git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run("init", "--quiet", "-b", "main")
+	write("skills/alpha/SKILL.md", "---\nname: alpha\ndescription: v1\n---\n# alpha v1\n")
+	write("skills/alpha/V1ONLY.md", "only in v1\n")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "v1")
+	run("tag", "v1.0.0")
+
+	if err := os.Remove(filepath.Join(repo, "skills", "alpha", "V1ONLY.md")); err != nil {
+		t.Fatal(err)
+	}
+	write("skills/alpha/SKILL.md", "---\nname: alpha\ndescription: v2\n---\n# alpha v2\n")
+	write("skills/newcomer/SKILL.md", "---\nname: newcomer\ndescription: v2 only\n---\n# newcomer\n")
+	run("add", ".")
+	run("commit", "--quiet", "-m", "v2")
+	run("tag", "v2.0.0")
+	return repo
+}
+
+func TestPlanInstall_RePinReDiscoversContent(t *testing.T) {
+	t.Parallel()
+
+	repo := gitSourceWithMovedContent(t)
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+
+	disc := discover(t, a, root, repo) // latest = v2.0.0
+	plan, err := a.PlanInstall(ctx, app.PlanRequest{
+		Root: root, Source: repo, Ref: "v1.0.0",
+		Discover: disc, Selected: selectByID(t, disc, "alpha"),
+		AgentIDs: []string{"claude"},
+	})
+	if err != nil {
+		t.Fatalf("PlanInstall: %v", err)
+	}
+
+	sawV1Only := false
+	for _, act := range plan.Actions {
+		for _, op := range act.FileOps {
+			if filepath.Base(op.Path) == "V1ONLY.md" {
+				sawV1Only = true
+			}
+		}
+	}
+	if !sawV1Only {
+		t.Errorf("plan pinned to v1.0.0 does not list v1's files; the preview describes the wrong version: %+v", plan.Actions)
+	}
+}
+
+func TestPlanInstall_RePinMissingSkillFailsBeforeApproval(t *testing.T) {
+	t.Parallel()
+
+	repo := gitSourceWithMovedContent(t)
+	root := projectWithAgent(t)
+	a := onboardApp()
+	ctx := context.Background()
+
+	disc := discover(t, a, root, repo) // latest: has "newcomer"
+	_, err := a.PlanInstall(ctx, app.PlanRequest{
+		Root: root, Source: repo, Ref: "v1.0.0",
+		Discover: disc, Selected: selectByID(t, disc, "newcomer"),
+		AgentIDs: []string{"claude"},
+	})
+	if err == nil {
+		t.Fatal("planning a v2-only skill at v1.0.0 succeeded; it must fail before approval")
+	}
+	if !strings.Contains(err.Error(), "newcomer") {
+		t.Errorf("error does not name the missing skill: %v", err)
+	}
+}

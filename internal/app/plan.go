@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
@@ -162,15 +164,11 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 	// satisfies are not re-resolved, so the Add composition costs no extra
 	// network round-trip.
 	if !revisionSatisfies(plan.Revision, req) {
-		rev, warnings, err := resolver.Resolve(ctx, a.git, req.Discover.Ref, resolver.Requested{
-			Version: req.Version, Ref: req.Ref, Commit: req.Commit,
-		})
-		if err != nil {
+		if err := a.rePinPlan(ctx, req, p, &plan); err != nil {
 			return InstallPlan{}, err
 		}
-		plan.Revision = rev
-		plan.Warnings = append(plan.Warnings, warnings...)
 	}
+	selected := plan.Selected
 
 	m := manifest.New()
 	lf := lockfile.New()
@@ -194,12 +192,21 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 	reqIDs := agentIDs(agents)
 	plan.AgentIDs = reqIDs
 
+	// Global destinations need a real home directory; planning against ""
+	// would preview garbage paths and stat the wrong overwrite targets
+	// (review finding: silent os.UserHomeDir discard).
+	home, homeErr := os.UserHomeDir()
+	global := scopeOr(req.Scope) == installer.ScopeGlobal
+	if global && homeErr != nil {
+		return InstallPlan{}, fmt.Errorf("resolve home directory for a global install: %w", homeErr)
+	}
+
 	addReq := AddRequest{
 		Root: req.Root, Source: req.Source,
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
 		Agents: req.AgentIDs, Force: req.Force, Scope: req.Scope, Mode: req.Mode,
 	}
-	for _, s := range req.Selected {
+	for _, s := range selected {
 		ap, planErr := a.planAdd(m, lf, s.ID, addReq, reqIDs)
 		if planErr != nil {
 			var ce *ConflictError
@@ -212,19 +219,89 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 			return InstallPlan{}, planErr
 		}
 		_, declared := m.Skills[s.ID]
-		appendSkillActions(&plan, req, s, ap, declared)
+		appendSkillActions(&plan, req, s, ap, declared, home, global)
 	}
 	return plan, nil
+}
+
+// rePinPlan resolves the requested pin and re-discovers at that revision — the
+// approved preview must describe the content that will actually install, and a
+// skill absent at the picked version fails here, before approval (review
+// finding).
+func (a *App) rePinPlan(ctx context.Context, req PlanRequest, p *project, plan *InstallPlan) error {
+	rev, warnings, err := resolver.Resolve(ctx, a.git, req.Discover.Ref, resolver.Requested{
+		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
+	})
+	if err != nil {
+		return err
+	}
+	plan.Revision = rev
+	plan.Warnings = append(plan.Warnings, warnings...)
+
+	ireq := a.installRequest(req.Root, req.Discover.Ref, rev, nil, req.Scope, req.Mode)
+	scan, err := a.installerForScope(p, string(ireq.Scope)).DiscoverAll(ctx, ireq, discovery.Options{})
+	if err != nil {
+		return err
+	}
+	remapped, err := remapSelected(req.Selected, scan, rev)
+	if err != nil {
+		return err
+	}
+	plan.Selected = remapped
+	return nil
+}
+
+// remapSelected re-matches an earlier selection against a re-discovered scan
+// (by ID, RepoPath as tie-break), failing closed when a selected skill does
+// not exist at the picked revision.
+func remapSelected(selected []discovery.DiscoveredSkill, scan discovery.Result, rev resolver.Revision) ([]discovery.DiscoveredSkill, error) {
+	out := make([]discovery.DiscoveredSkill, 0, len(selected))
+	for _, want := range selected {
+		var match *discovery.DiscoveredSkill
+		for i := range scan.Skills {
+			s := &scan.Skills[i]
+			if s.ID != want.ID {
+				continue
+			}
+			if s.RepoPath == want.RepoPath {
+				match = s
+				break
+			}
+			if match == nil {
+				match = s
+			}
+		}
+		if match == nil {
+			return nil, fmt.Errorf("%w: skill %q does not exist at the selected version %s",
+				errs.ErrInvalidManifest, want.ID, revisionLabel(rev))
+		}
+		out = append(out, *match)
+	}
+	return out, nil
+}
+
+// revisionLabel names a revision for error messages.
+func revisionLabel(rev resolver.Revision) string {
+	switch {
+	case rev.Tag != "":
+		return rev.Tag
+	case rev.Branch != "":
+		return rev.Branch
+	case rev.Commit != "":
+		return shortCommit(rev.Commit)
+	default:
+		return "latest"
+	}
 }
 
 // appendSkillActions adds one selected skill's per-agent actions to the plan,
 // flagging foreign-destination overwrites as conflicts: a destination that
 // already exists for a skill gskill does not track is surfaced before approval
-// rather than as an install failure afterward (FR-016, US4).
-func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.DiscoveredSkill, ap addPlan, declared bool) {
-	home, _ := os.UserHomeDir()
-	global := scopeOr(req.Scope) == installer.ScopeGlobal
-
+// rather than as an install failure afterward (FR-016, US4). --force is the
+// documented escape hatch and overrides the conflict; a symlink resolving into
+// a gskill-managed root (store, state dir, active layer) is gskill's own
+// content — e.g. a lost lockfile — not foreign (review finding).
+func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.DiscoveredSkill, ap addPlan, declared bool, home string, global bool) {
 	for _, ag := range ap.activate {
 		dir := ag.ProjectSkillDir(req.Root)
 		if global {
@@ -232,10 +309,10 @@ func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.Discover
 		}
 		dest := filepath.Join(dir, s.ID)
 
-		if !ap.mergeInto && !declared {
-			if _, statErr := os.Stat(dest); statErr == nil {
+		if !ap.mergeInto && !declared && !req.Force {
+			if _, statErr := os.Stat(dest); statErr == nil && !destIsManaged(req.Root, dest) {
 				err := &ConflictError{Skill: s.ID, Kind: ConflictFileOverwrite, err: fmt.Errorf(
-					"%w: destination %s already exists and is not managed by gskill; remove it or choose a different skill",
+					"%w: destination %s already exists and is not managed by gskill; remove it, or re-run with --force to overwrite",
 					errs.ErrInvalidManifest, dest)}
 				plan.Conflicts = append(plan.Conflicts, PlanConflict{
 					Skill: s.ID, Kind: ConflictFileOverwrite, Detail: err.Error(), Err: err,
@@ -252,6 +329,47 @@ func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.Discover
 			FileOps:     planFileOps(s.Dir, dest),
 		})
 	}
+}
+
+// destIsManaged reports whether dest is a symlink pointing into a
+// gskill-managed root: the project state dir (.gskill), the active layer
+// (.agents), or the global config/store directory.
+func destIsManaged(root, dest string) bool {
+	fi, err := os.Lstat(dest)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := os.Readlink(dest)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(dest), target)
+	}
+	target = filepath.Clean(target)
+
+	managed := []string{
+		filepath.Join(root, stateDirName),
+		filepath.Join(root, ".agents"),
+	}
+	if cfgDir, err := config.Dir(); err == nil {
+		managed = append(managed, cfgDir)
+	}
+	for _, r := range managed {
+		if pathWithin(target, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathWithin reports whether path is inside root (or is root itself).
+func pathWithin(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // planFileOps enumerates the files an action will place under dest,
