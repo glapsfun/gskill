@@ -741,6 +741,9 @@ func (m wizardModel) viewSummary() string {
 			fmt.Fprintf(&b, "      %s → %s\n", id, Sanitize(s.Targets[id]))
 		}
 	}
+	for _, w := range m.result.Warnings {
+		b.WriteString("  " + m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")
+	}
 	b.WriteString("\n" + m.st.Subtitle.Render("Next steps:") + "\n")
 	b.WriteString("  gskill list      view installed skills\n")
 	b.WriteString("  gskill status    check per-agent health\n")

@@ -243,3 +243,87 @@ func TestAddDryRun_JSONPlan(t *testing.T) {
 		t.Errorf("JSON plan missing actions: %s", stdout)
 	}
 }
+
+// ---- Review fixes, Phase A -----------------------------------------------------
+
+//nolint:paralleltest // swaps package-level wizard seams
+func TestAddRun_JSONOnTTYKeepsDirectPath(t *testing.T) {
+	src := addSourceTree(t, "alpha")
+	dir := agentProject(t)
+
+	wizardCalled := false
+	withWizardSeams(t, true, func(context.Context, tui.WizardConfig, bool) (tui.WizardOutcome, error) {
+		wizardCalled = true
+		return tui.WizardOutcome{}, nil
+	})
+
+	var out, errb bytes.Buffer
+	o := &Output{stdout: &out, stderr: &errb, interactive: true, json: true}
+	c := addCmd{Source: src}
+	if err := c.Run(context.Background(), o, newTestApp(), projectRoot(dir), Globals{}); err != nil {
+		t.Fatalf("Run: %v (stderr: %s)", err, errb.String())
+	}
+	if wizardCalled {
+		t.Error("--json on a TTY launched the wizard; machine output must stay direct (contract)")
+	}
+	var v any
+	if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+		t.Errorf("stdout is not clean JSON: %v\n%q", err, out.String())
+	}
+}
+
+//nolint:paralleltest // swaps package-level wizard seams
+func TestAddRun_LocalAgentAddSkipsWizard(t *testing.T) {
+	src := addSourceTree(t, "alpha")
+	dir := agentProject(t)
+	a := newTestApp()
+
+	// Seed the install non-interactively, then add a second agent on a TTY:
+	// this must take the zero-network local-relink fast path, not the wizard.
+	if _, _, code := runCLI(t, a, "-C", dir, "add", src); code != 0 {
+		t.Fatal("seed add failed")
+	}
+
+	wizardCalled := false
+	withWizardSeams(t, true, func(context.Context, tui.WizardConfig, bool) (tui.WizardOutcome, error) {
+		wizardCalled = true
+		return tui.WizardOutcome{Cancelled: true}, nil
+	})
+
+	var out, errb bytes.Buffer
+	c := addCmd{Source: src, Agent: []string{"codex"}}
+	if err := c.Run(context.Background(), interactiveOutput(&out, &errb), a, projectRoot(dir), Globals{}); err != nil {
+		t.Fatalf("Run: %v (stderr: %s)", err, errb.String())
+	}
+	if wizardCalled {
+		t.Error("pure agent-add launched the wizard instead of the local relink fast path")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".codex", "skills", "alpha")); err != nil {
+		t.Errorf("codex target missing after local agent-add: %v", err)
+	}
+}
+
+//nolint:paralleltest // swaps package-level wizard seams
+func TestAddRun_WizardWarningsReachStderr(t *testing.T) {
+	src := addSourceTree(t, "alpha")
+	dir := agentProject(t)
+
+	withWizardSeams(t, true, func(context.Context, tui.WizardConfig, bool) (tui.WizardOutcome, error) {
+		return tui.WizardOutcome{
+			Executed: true,
+			Result: app.AddResult{
+				Installed: []app.InstalledSkill{{Name: "alpha"}},
+				Warnings:  []string{"symlink fell back to copy"},
+			},
+		}, nil
+	})
+
+	var out, errb bytes.Buffer
+	c := addCmd{Source: src}
+	if err := c.Run(context.Background(), interactiveOutput(&out, &errb), newTestApp(), projectRoot(dir), Globals{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(errb.String(), "warning: symlink fell back to copy") {
+		t.Errorf("wizard warnings lost: stderr = %q", errb.String())
+	}
+}

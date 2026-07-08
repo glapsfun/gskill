@@ -229,6 +229,32 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 	return choices, nil
 }
 
+// QualifiesLocalAgentAdd reports whether an add request is a pure agent-add —
+// adding agents to already-locked skills from the same source — which App.Add
+// serves entirely from the lockfile and store with no resolver or network
+// call. The guided wizard has no equivalent shortcut, so such requests should
+// take the direct path (review finding: offline interactive agent-adds).
+// The check is read-only.
+func (a *App) QualifiesLocalAgentAdd(_ context.Context, root string, req AddRequest) bool {
+	if len(req.Agents) == 0 || disqualifiesLocalAdd(req) {
+		return false
+	}
+	p := openProject(root)
+	if !p.manifestExists() {
+		return false
+	}
+	m, err := manifest.Load(p.manifestPath)
+	if err != nil {
+		return false
+	}
+	lf, err := loadOrNewLock(p.lockPath)
+	if err != nil {
+		return false
+	}
+	_, ok := localAgentAddTargets(m, lf, req)
+	return ok
+}
+
 // SelectByFlags resolves explicit --skill/--all selectors against a discovered
 // source, exactly as the non-guided add does, so a flag-preselected wizard
 // session and a scripted add choose identically (FR-004).

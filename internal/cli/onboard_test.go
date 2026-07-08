@@ -48,3 +48,24 @@ func TestOnboard_TTYLaunchesSourcelessWizard(t *testing.T) {
 		t.Error("onboard wizard missing the source validator")
 	}
 }
+
+//nolint:paralleltest // swaps package-level wizard seams
+func TestOnboard_JSONModeIsUsageError(t *testing.T) {
+	dir := initedProject(t)
+
+	wizardCalled := false
+	withWizardSeams(t, true, func(context.Context, tui.WizardConfig, bool) (tui.WizardOutcome, error) {
+		wizardCalled = true
+		return tui.WizardOutcome{}, nil
+	})
+
+	var out, errb bytes.Buffer
+	o := &Output{stdout: &out, stderr: &errb, interactive: true, json: true}
+	err := onboardCmd{}.Run(context.Background(), o, newTestApp(), projectRoot(dir), Globals{})
+	if err == nil {
+		t.Fatal("onboard in --json mode succeeded, want usage error")
+	}
+	if wizardCalled {
+		t.Error("onboard launched the wizard in --json mode")
+	}
+}

@@ -66,10 +66,27 @@ func (c addCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRo
 	if g.DryRun && !c.List {
 		return c.runDryRun(ctx, out, a, root)
 	}
-	if out.Interactive() && stdinIsTTY() && !c.List && !c.answersComplete(g.Yes) {
+	if c.wizardWanted(ctx, out, a, root, g) {
 		return c.runWizard(ctx, out, a, root, g)
 	}
 	return c.runDirect(ctx, out, a, root)
+}
+
+// wizardWanted decides whether this invocation opens the guided flow: an
+// interactive session (real TTYs, no --json, no --no-interactive), a question
+// left unanswered by flags, and not a pure agent-add — that one keeps the
+// zero-network local-relink fast path only App.Add provides (FR-001 of the
+// original add spec; review finding).
+func (c addCmd) wizardWanted(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) bool {
+	if !out.Interactive() || out.JSON() || !stdinIsTTY() || c.List || c.answersComplete(g.Yes) {
+		return false
+	}
+	return !a.QualifiesLocalAgentAdd(ctx, string(root), app.AddRequest{
+		Root: string(root), Source: c.Source,
+		Version: c.Version, Ref: c.Ref, Commit: c.Commit,
+		Agents: c.Agent, Force: c.Force,
+		Selectors: c.Skill, All: c.All, Path: c.Path, ListOnly: c.List,
+	})
 }
 
 // runDryRun computes and renders the installation plan without executing it
@@ -209,8 +226,11 @@ func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root pro
 		return outcome.Err
 	}
 	if outcome.Executed {
-		// Repeat the summary on plain stdout so it survives the wizard's
-		// alternate screen (contracts/cli-onboarding.md, FR-021).
+		// Warnings and the summary must survive the wizard's alternate
+		// screen: repeat both on the plain streams (FR-021; review finding).
+		for _, w := range outcome.Result.Warnings {
+			out.Diag("warning: %s", w)
+		}
 		return c.renderInstalled(out, outcome.Result)
 	}
 	return nil

@@ -26,7 +26,7 @@ func (onboardCmd) Help() string {
 // Run executes `gskill onboard`. It is interactive-only: in a non-interactive
 // session it exits with a usage error and points at the scriptable `add`.
 func (c onboardCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
-	if !out.Interactive() || !stdinIsTTY() {
+	if !out.Interactive() || out.JSON() || !stdinIsTTY() {
 		return errs.WithHint(
 			fmt.Errorf("%w: onboarding is interactive-only", errs.ErrUsage),
 			"use 'gskill add <source>' with --skill/--agent/--yes for scripted installs")
