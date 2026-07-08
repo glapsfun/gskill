@@ -202,12 +202,17 @@ type wizardModel struct {
 	selSource string // source the selector's items were built from
 	selErr    string
 
-	// Version step (US3).
+	// Version step (US3) — two single-group huh forms, swapped by the wizard
+	// so esc can cancel the typed-ref input without leaving the step. The
+	// value targets are heap-allocated (the forms write through pointers
+	// while the model is copied by value).
 	versions        app.VersionList
 	versionsLoading bool
-	versionCursor   int
-	versionTyping   bool      // the "type an exact ref" row is active
-	versionInput    lineInput // typed ref/commit buffer
+	versionForm     *huh.Form        // candidate list
+	versionSel      *huh.Select[int] // the list field, for hover position
+	refForm         *huh.Form        // typed exact ref/commit input
+	versionPick     *int
+	refValue        *string
 
 	// Agents step (US2) — a huh multi-select form (design 2026-07-08).
 	// agentPick is heap-allocated because the form holds a pointer into it
@@ -426,16 +431,34 @@ func (m wizardModel) enterStep(s stepID) (wizardModel, tea.Cmd) {
 // A step re-entered with its form already completed rebuilds the form (with
 // the previous picks preserved) so back-navigation always lands on a live one.
 func (m *wizardModel) loadChoices(s stepID) tea.Cmd {
-	if s == stepVersion && len(m.versions.Candidates) == 0 && !m.versionsLoading && m.phases.Versions != nil {
+	switch s { //nolint:exhaustive // only the choice steps have entry work
+	case stepVersion:
+		return m.enterVersionStep()
+	case stepAgents:
+		return m.enterAgentsStep()
+	default:
+		return nil
+	}
+}
+
+// enterVersionStep is the version step's entry work (see loadChoices).
+func (m *wizardModel) enterVersionStep() tea.Cmd {
+	if len(m.versions.Candidates) == 0 && !m.versionsLoading && m.phases.Versions != nil {
 		return m.startVersions()
 	}
-	if s == stepAgents {
-		if len(m.agentChoices) == 0 && !m.agentsLoading && m.phases.Agents != nil {
-			return m.startAgents()
-		}
-		if m.agentForm != nil && m.agentForm.State == huh.StateCompleted {
-			m.buildAgentForm()
-		}
+	if m.versionForm != nil && (m.versionForm.State == huh.StateCompleted || m.refForm != nil) {
+		m.buildVersionForm() // re-entry: always land on a live candidate list
+	}
+	return nil
+}
+
+// enterAgentsStep is the agents step's entry work (see loadChoices).
+func (m *wizardModel) enterAgentsStep() tea.Cmd {
+	if len(m.agentChoices) == 0 && !m.agentsLoading && m.phases.Agents != nil {
+		return m.startAgents()
+	}
+	if m.agentForm != nil && m.agentForm.State == huh.StateCompleted {
+		m.buildAgentForm()
 	}
 	return nil
 }
@@ -486,6 +509,11 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.sel.height, m.sel.width = msg.Height, msg.Width
 		m.sel.clamp()
+		if m.versionForm != nil && m.refForm == nil {
+			// The candidate list's height is baked in at build time; rebuild
+			// so long listings stay bounded after a resize (FR-022).
+			m.buildVersionForm()
+		}
 		return m, nil
 
 	case discoverDoneMsg:

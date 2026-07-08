@@ -19,22 +19,6 @@ func pageFor(height, reserved int) int {
 	return 1
 }
 
-// cursorOffset returns the window offset into n rows that keeps cursor
-// visible on a page-sized viewport.
-func cursorOffset(cursor, page, n int) int {
-	offset := 0
-	if cursor >= page {
-		offset = cursor - page + 1
-	}
-	if maxOffset := n - page; offset > maxOffset {
-		offset = maxOffset
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	return offset
-}
-
 // windowBounds clamps a scroll offset for n rows on a page-sized viewport and
 // reports whether more-markers are needed above and below.
 func windowBounds(n, page, offset int) (start, end int, above, below bool) {

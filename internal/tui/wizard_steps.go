@@ -257,6 +257,51 @@ func (m wizardModel) versionsCmd() tea.Cmd {
 	}
 }
 
+// buildVersionForm constructs the candidate select; the synthetic last option
+// (index len(candidates)) opens the typed-ref input (FR-012). The pick target
+// is heap-allocated (see buildAgentForm).
+func (m *wizardModel) buildVersionForm() {
+	pick := new(int)
+	opts := make([]huh.Option[int], 0, len(m.versions.Candidates)+1)
+	for i, c := range m.versions.Candidates {
+		label := Sanitize(c.Label)
+		if c.Metadata != "" {
+			label += "  " + Sanitize(c.Metadata)
+		}
+		opts = append(opts, huh.NewOption(label, i))
+	}
+	opts = append(opts, huh.NewOption("type an exact ref or commit…", len(m.versions.Candidates)))
+	sel := huh.NewSelect[int]().
+		Title("").
+		Options(opts...).
+		// One frame row is reserved for the overflow marker under the list.
+		Height(pageFor(m.height, wizardReservedRows+1)).
+		Value(pick)
+	m.versionPick = pick
+	m.versionSel = sel
+	m.versionForm = huh.NewForm(huh.NewGroup(sel)).
+		WithTheme(m.st.Huh()).
+		WithShowHelp(false).
+		WithWidth(m.width)
+	m.versionForm.Init()
+	m.refForm = nil
+}
+
+// buildRefForm constructs the typed-ref input (esc returns to the list).
+func (m *wizardModel) buildRefForm() {
+	value := new(string)
+	in := huh.NewInput().
+		Title("Exact ref or commit").
+		Placeholder("v1.2.3, branch-name, or a 40-hex commit").
+		Value(value)
+	m.refValue = value
+	m.refForm = huh.NewForm(huh.NewGroup(in)).
+		WithTheme(m.st.Huh()).
+		WithShowHelp(false).
+		WithWidth(m.width)
+	m.refForm.Init()
+}
+
 func (m wizardModel) onVersionsDone(msg versionsDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.gen != m.sourceGen {
 		return m, nil // listing from an abandoned source: drop
@@ -268,81 +313,93 @@ func (m wizardModel) onVersionsDone(msg versionsDoneMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.versions = msg.res
 	}
-	// A shrunken listing must never leave the cursor past the typed-ref row.
-	if m.versionCursor > len(m.versions.Candidates) {
-		m.versionCursor = len(m.versions.Candidates)
-	}
+	m.buildVersionForm()
 	return m, nil
 }
 
 func (m wizardModel) versionKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
-	if m.versionTyping {
-		return m.versionTypedKey(key)
+	if m.refForm != nil {
+		return m.refFormKey(key)
+	}
+	if m.versionForm == nil {
+		return m, nil, false
 	}
 	switch key.String() {
-	case keyUp, "k":
-		if m.versionCursor > 0 {
-			m.versionCursor--
-		}
-		return m, nil, true
-	case keyDown, "j":
-		// The row after the last candidate is the typed-exact-ref entry.
-		if m.versionCursor < len(m.versions.Candidates) {
-			m.versionCursor++
-		}
-		return m, nil, true
-	case keyEnter:
-		if m.versionCursor == len(m.versions.Candidates) {
-			m.versionTyping = true
-			return m, nil, true
-		}
-		m.applyVersionChoice()
-		next, cmd := m.goForward()
-		return next, cmd, true
+	case "q", keyCtrlC, keyEsc, "b":
+		return m, nil, false // contract keys: the shell handles cancel/back
 	}
-	return m, nil, false
+	next, cmd := m.versionFormMsg(key)
+	return next, cmd, true
 }
 
-// versionTypedKey edits and applies a typed exact ref or commit (FR-012): a
-// full 40-hex value pins a commit, anything else is requested as a ref.
-func (m wizardModel) versionTypedKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
-	switch key.Type { //nolint:exhaustive // enter/esc here; editing is the shared lineInput
-	case tea.KeyEnter:
-		value := strings.TrimSpace(m.versionInput.value)
-		if value == "" {
-			m.versionTyping = false
-			return m, nil, true
-		}
-		m.session.Version, m.session.RefSpec, m.session.Commit = "", "", ""
-		if git.IsFullSHA(value) {
-			m.session.Commit = value
-		} else {
-			m.session.RefSpec = value
-		}
-		m.session.VersionLabel = value
-		// Leave input mode so re-entering the step navigates the list again
-		// instead of resuming a stale buffer (review finding).
-		m.versionTyping = false
-		m.versionInput = newLineInput()
-		next, cmd := m.goForward()
-		return next, cmd, true
-	case tea.KeyEsc:
-		m.versionTyping = false
-		return m, nil, true
-	default:
-		m.versionInput.handleKey(key)
-		return m, nil, true
+// versionFormMsg drives the candidate list with any message and lands
+// completion: a candidate advances the wizard, the synthetic last option
+// swaps in the typed-ref input.
+func (m wizardModel) versionFormMsg(msg tea.Msg) (wizardModel, tea.Cmd) {
+	next, cmd := m.versionForm.Update(msg)
+	if f, ok := next.(*huh.Form); ok {
+		m.versionForm = f
 	}
+	if m.versionForm.State != huh.StateCompleted {
+		return m, cmd
+	}
+	if *m.versionPick == len(m.versions.Candidates) {
+		m.buildRefForm()
+		return m, nil
+	}
+	m.applyVersionChoice()
+	return m.goForward()
 }
 
-// applyVersionChoice writes the highlighted candidate into the session's
+// refFormKey drives the typed-ref input: esc cancels the input and rebuilds
+// the list (never leaves the step); everything else goes to the form.
+func (m wizardModel) refFormKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
+	switch key.String() {
+	case keyEsc:
+		m.buildVersionForm()
+		return m, nil, true
+	case keyCtrlC:
+		return m, nil, false // shell: cancel
+	}
+	next, cmd := m.refFormMsg(key)
+	return next, cmd, true
+}
+
+// refFormMsg drives the typed-ref form with any message. On completion a
+// full 40-hex value pins a commit, anything else is requested as a ref, and
+// an empty input returns to the candidate list (FR-012). The list form is
+// rebuilt either way so re-entering the step never resumes a stale buffer.
+func (m wizardModel) refFormMsg(msg tea.Msg) (wizardModel, tea.Cmd) {
+	next, cmd := m.refForm.Update(msg)
+	if f, ok := next.(*huh.Form); ok {
+		m.refForm = f
+	}
+	if m.refForm.State != huh.StateCompleted {
+		return m, cmd
+	}
+	value := strings.TrimSpace(*m.refValue)
+	m.buildVersionForm()
+	if value == "" {
+		return m, nil
+	}
+	m.session.Version, m.session.RefSpec, m.session.Commit = "", "", ""
+	if git.IsFullSHA(value) {
+		m.session.Commit = value
+	} else {
+		m.session.RefSpec = value
+	}
+	m.session.VersionLabel = value
+	return m.goForward()
+}
+
+// applyVersionChoice writes the picked candidate into the session's
 // requested pin (FR-012/FR-013); "latest" keeps default resolution.
 func (m *wizardModel) applyVersionChoice() {
 	if len(m.versions.Candidates) == 0 {
 		m.session.VersionLabel = "latest"
 		return
 	}
-	c := m.versions.Candidates[m.versionCursor]
+	c := m.versions.Candidates[*m.versionPick]
 	m.session.Version, m.session.RefSpec, m.session.Commit = "", "", ""
 	m.session.VersionLabel = c.Label
 	switch c.Kind {
@@ -358,7 +415,7 @@ func (m *wizardModel) applyVersionChoice() {
 func (m wizardModel) viewVersion() string {
 	var b strings.Builder
 	b.WriteString(m.header("Choose a version"))
-	if m.versionsLoading {
+	if m.versionsLoading || (m.versionForm == nil && m.refForm == nil) {
 		b.WriteString("⏳ Listing releases and branches…\n")
 		b.WriteString(m.hintLine("q cancel"))
 		return b.String()
@@ -367,47 +424,21 @@ func (m wizardModel) viewVersion() string {
 		b.WriteString(m.st.Warning.Render("⚠ version browsing unavailable: "+Sanitize(m.versions.DegradedReason)) + "\n")
 		b.WriteString(m.st.Subtitle.Render("\"latest\" will be used; a branch, tag, or commit can still be set with --ref/--commit.") + "\n\n")
 	}
-	rows := make([]string, 0, len(m.versions.Candidates)+1)
-	for i, c := range m.versions.Candidates {
-		cursor := "  "
-		label := Sanitize(c.Label)
-		if i == m.versionCursor {
-			cursor = m.st.Cursor.Render("❯") + " "
-			label = m.st.Selected.Render(label)
-		}
-		row := cursor + label
-		if c.Metadata != "" {
-			row += "  " + m.st.Subtitle.Render(Sanitize(c.Metadata))
-		}
-		rows = append(rows, row)
-	}
-
-	// Synthetic last row: type an exact ref or commit (FR-012).
-	typedCursor := "  "
-	typedLabel := "type an exact ref or commit…"
-	if m.versionCursor == len(m.versions.Candidates) {
-		typedCursor = m.st.Cursor.Render("❯") + " "
-		typedLabel = m.st.Selected.Render(typedLabel)
-	}
-	if m.versionTyping {
-		fmt.Fprintf(&b, "%s%s %s█\n", typedCursor, m.st.Selected.Render("ref:"), Sanitize(m.versionInput.value))
+	if m.refForm != nil {
+		b.WriteString(m.refForm.View())
 		b.WriteString(m.hintLine("enter apply · esc cancel input"))
 		return b.String()
 	}
-	rows = append(rows, typedCursor+typedLabel)
-
-	for _, line := range m.cursorWindow(rows, m.versionCursor) {
-		b.WriteString(line + "\n")
+	b.WriteString(m.versionForm.View())
+	if total := len(m.versions.Candidates) + 1; total > pageFor(m.height, wizardReservedRows+1) {
+		pos := ""
+		if v, ok := m.versionSel.Hovered(); ok {
+			pos = fmt.Sprintf("%d/%d · ", v+1, total)
+		}
+		b.WriteString(m.st.Hint.Render("  "+pos+"more with ↑/↓") + "\n")
 	}
 	b.WriteString(m.hintLine("↑/↓ move · enter choose · esc back · q cancel"))
 	return b.String()
-}
-
-// cursorWindow bounds rows to the terminal height, keeping the cursor row
-// visible, so long version lists never overflow a small terminal (FR-022).
-func (m wizardModel) cursorWindow(rows []string, cursor int) []string {
-	page := pageFor(m.height, wizardReservedRows)
-	return windowRows(rows, page, cursorOffset(cursor, page, len(rows)), m.st.Hint)
 }
 
 // ---- agents (US2) ------------------------------------------------------------
@@ -518,6 +549,14 @@ func (m wizardModel) agentsFormMsg(msg tea.Msg) (wizardModel, tea.Cmd) {
 func (m wizardModel) stepMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.step == stepAgents && m.agentForm != nil {
 		return m.agentsFormMsg(msg)
+	}
+	if m.step == stepVersion {
+		if m.refForm != nil {
+			return m.refFormMsg(msg)
+		}
+		if m.versionForm != nil {
+			return m.versionFormMsg(msg)
+		}
 	}
 	return m, nil
 }

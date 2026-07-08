@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/glapsfun/gskill/internal/agent"
@@ -100,6 +101,11 @@ func runCmd(cmd tea.Cmd) []tea.Msg {
 		return out
 	}
 	if _, isQuit := msg.(tea.QuitMsg); isQuit {
+		return nil
+	}
+	if _, isBlink := msg.(cursor.BlinkMsg); isBlink {
+		// huh's text inputs re-arm a blink tick on every update: following it
+		// synchronously would loop forever, and it never changes behavior.
 		return nil
 	}
 	return []tea.Msg{msg}
@@ -1472,12 +1478,12 @@ func TestWizardVersion_TypedModeResetsAfterCommit(t *testing.T) {
 	if m.step != stepVersion {
 		t.Fatalf("step = %v, want version", m.step)
 	}
-	if m.versionTyping {
+	if m.refForm != nil {
 		t.Fatal("typed-input mode still active on re-entry")
 	}
-	m = drive(t, m, key("up")) // must navigate, not append to a stale buffer
-	if m.versionInput.value != "" {
-		t.Fatalf("stale typed buffer: %q", m.versionInput.value)
+	// Re-entry must land on a navigable candidate list, not a stale buffer.
+	if v := m.View(); !strings.Contains(v, "type an exact ref or commit") {
+		t.Fatalf("version list not shown on re-entry:\n%s", v)
 	}
 }
 
