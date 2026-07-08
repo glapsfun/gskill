@@ -77,3 +77,7 @@ func classify(err error, stderr string) error {
 		return errs.Wrap(errs.CodeSourceUnavailable, "git: "+msg, err)
 	}
 }
+
+// IsFullSHA reports whether s is a full 40-hex commit SHA — the single
+// definition shared by ref resolution and the wizard's typed-ref input.
+func IsFullSHA(s string) bool { return shaRE.MatchString(s) }

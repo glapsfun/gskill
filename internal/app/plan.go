@@ -170,7 +170,7 @@ type PlanLine struct {
 // from the resolved revision.
 func (p InstallPlan) Lines(versionLabel string) []PlanLine {
 	if versionLabel == "" {
-		versionLabel = revisionLabel(p.Revision)
+		versionLabel = RevisionLabel(p.Revision)
 	}
 	lines := []PlanLine{
 		{Kind: PlanLineMeta, Text: "Source:  " + p.Source},
@@ -383,16 +383,20 @@ func remapSelected(selected []discovery.DiscoveredSkill, scan discovery.Result, 
 		}
 		if match == nil {
 			return nil, fmt.Errorf("%w: skill %q does not exist at the selected version %s",
-				errs.ErrInvalidManifest, want.ID, revisionLabel(rev))
+				errs.ErrInvalidManifest, want.ID, RevisionLabel(rev))
 		}
 		out = append(out, *match)
 	}
 	return out, nil
 }
 
-// revisionLabel names a revision for error messages.
-func revisionLabel(rev resolver.Revision) string {
+// RevisionLabel names a resolved revision for display and error messages —
+// the single label shared by the wizard preview, dry-run output, and plan
+// errors, so the surfaces cannot disagree on the same revision.
+func RevisionLabel(rev resolver.Revision) string {
 	switch {
+	case rev.Version != "":
+		return rev.Version
 	case rev.Tag != "":
 		return rev.Tag
 	case rev.Branch != "":
@@ -414,6 +418,7 @@ func revisionLabel(rev resolver.Revision) string {
 // the incoming or previously locked content) is gskill's own, not foreign.
 func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.DiscoveredSkill, ap addPlan, declared bool, home string, global bool, roots []string, priorHash string) {
 	guarded := !ap.mergeInto && !declared && !req.Force
+	rels := skillFiles(s.Dir)
 	acceptHashes := func() []string {
 		hashes := []string{priorHash}
 		if h, err := integrity.HashDir(s.Dir); err == nil {
@@ -451,7 +456,7 @@ func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.Discover
 			AgentID:     ag.ID(),
 			Destination: dest,
 			MergeInto:   ap.mergeInto,
-			FileOps:     planFileOps(s.Dir, dest),
+			FileOps:     classifyFileOps(rels, dest),
 		})
 	}
 }
@@ -468,11 +473,15 @@ func overwriteConflict(skill, dest string) PlanConflict {
 // classifying each as create or update by whether the target already exists.
 // Enumeration is read-only over the already-materialized skill dir; errors
 // degrade to an empty list (the preview then shows only the destination).
-func planFileOps(skillDir, dest string) []PlannedFileOp {
+// skillFiles walks the materialized skill dir once, returning relative file
+// paths; errors degrade to an empty list (the preview then shows only the
+// destination). The walk is hoisted out of the per-agent loop so a multi-agent
+// plan enumerates the source tree once (review finding).
+func skillFiles(skillDir string) []string {
 	if skillDir == "" {
 		return nil
 	}
-	var ops []PlannedFileOp
+	var rels []string
 	_ = filepath.WalkDir(skillDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil //nolint:nilerr // best-effort preview enumeration
@@ -481,13 +490,23 @@ func planFileOps(skillDir, dest string) []PlannedFileOp {
 		if relErr != nil {
 			return nil //nolint:nilerr // best-effort preview enumeration
 		}
+		rels = append(rels, rel)
+		return nil
+	})
+	return rels
+}
+
+// classifyFileOps maps the skill's relative file list onto one destination,
+// classifying each file as create or update by whether the target exists.
+func classifyFileOps(rels []string, dest string) []PlannedFileOp {
+	ops := make([]PlannedFileOp, 0, len(rels))
+	for _, rel := range rels {
 		target := filepath.Join(dest, rel)
 		op := "create"
 		if _, statErr := os.Stat(target); statErr == nil {
 			op = "update"
 		}
 		ops = append(ops, PlannedFileOp{Path: target, Op: op})
-		return nil
-	})
+	}
 	return ops
 }

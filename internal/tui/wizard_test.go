@@ -1575,3 +1575,29 @@ func TestWizard_SameSourceReacceptSkipsRediscovery(t *testing.T) {
 		t.Fatalf("step = %v, want select", m.step)
 	}
 }
+
+// ---- Review round 2, Phase 5 -------------------------------------------------------
+
+func TestWizardSelect_BoundedAt80x24(t *testing.T) {
+	t.Parallel()
+
+	ids := make([]string, 30)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("skill-%02d", i)
+	}
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills(ids...), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, win(80, 24))
+	m = drive(t, m, key("enter")) // → select
+
+	if got := strings.Count(m.View(), "\n"); got > 24 {
+		t.Errorf("select step renders %d lines at a 24-row terminal (FR-022)", got)
+	}
+	if !strings.Contains(m.View(), "more") {
+		t.Errorf("bounded select step missing a more-content marker:\n%s", m.View())
+	}
+}

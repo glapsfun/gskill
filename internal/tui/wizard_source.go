@@ -124,7 +124,6 @@ func (m *wizardModel) resetSourceDerivedState() {
 	m.session.Version, m.session.RefSpec, m.session.Commit, m.session.VersionLabel = "", "", "", ""
 	m.plan = app.InstallPlan{}
 	m.planReady = false
-	m.planning = false
 }
 
 func (m wizardModel) viewSource() string {

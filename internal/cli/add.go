@@ -220,6 +220,15 @@ func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root pro
 	if err != nil {
 		return err
 	}
+	return finishWizardOutcome(out, outcome)
+}
+
+// finishWizardOutcome maps a wizard outcome onto the CLI contract — cancel →
+// exit 130 with zero writes, failure passthrough, success → warnings and the
+// summary repeated on the plain streams so they survive the alternate screen
+// (FR-021). Shared by `add` and `onboard` so the two entry points cannot
+// diverge (review finding: the warnings fix had landed in only one).
+func finishWizardOutcome(out *Output, outcome tui.WizardOutcome) error {
 	if outcome.Cancelled {
 		return fmt.Errorf("%w — nothing was changed", errs.ErrCancelled)
 	}
@@ -227,12 +236,10 @@ func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root pro
 		return outcome.Err
 	}
 	if outcome.Executed {
-		// Warnings and the summary must survive the wizard's alternate
-		// screen: repeat both on the plain streams (FR-021; review finding).
 		for _, w := range outcome.Result.Warnings {
 			out.Diag("warning: %s", w)
 		}
-		return c.renderInstalled(out, outcome.Result)
+		return addCmd{}.renderInstalled(out, outcome.Result)
 	}
 	return nil
 }

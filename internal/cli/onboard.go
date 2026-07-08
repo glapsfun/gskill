@@ -78,15 +78,5 @@ func (c onboardCmd) Run(ctx context.Context, out *Output, a *app.App, root proje
 	if err != nil {
 		return err
 	}
-	if outcome.Cancelled {
-		return fmt.Errorf("%w — nothing was changed", errs.ErrCancelled)
-	}
-	if outcome.Err != nil {
-		return outcome.Err
-	}
-	if outcome.Executed {
-		// Repeat the summary on plain stdout, same shape as `add` (FR-021).
-		return addCmd{}.renderInstalled(out, outcome.Result)
-	}
-	return nil
+	return finishWizardOutcome(out, outcome)
 }

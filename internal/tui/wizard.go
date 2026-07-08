@@ -216,7 +216,6 @@ type wizardModel struct {
 	agentErr      string
 
 	// Preview / plan.
-	planning      bool
 	planReady     bool
 	plan          app.InstallPlan
 	planGen       int // generation of the most recent startPlan request
@@ -321,7 +320,6 @@ func (m wizardModel) discoverCmd() tea.Cmd {
 // The session snapshot deep-copies Selected so a later re-confirmation cannot
 // mutate the slice the in-flight plan is reading (review finding: data race).
 func (m *wizardModel) startPlan() tea.Cmd {
-	m.planning = true
 	m.planReady = false
 	m.planGen++
 	gen := m.planGen
@@ -449,6 +447,10 @@ func (m *wizardModel) syncSelector() {
 		chosen[s.ID] = true
 	}
 	m.sel = newSelectorModel(items)
+	// The wizard frame around the embedded selector (header, position badge,
+	// hint footer) is taller than the standalone picker's, so the row window
+	// must reserve more lines to stay within the terminal (FR-022).
+	m.sel.reserved = wizardSelectReservedRows
 	for i, s := range m.disc.Skills {
 		// Every remote-origin string is sanitized before it can reach the
 		// terminal (constitution VI: escape-sequence injection from SKILL.md).
@@ -559,7 +561,6 @@ func (m wizardModel) onPlanDone(msg planDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.gen != m.planGen {
 		return m, nil // superseded by a newer plan request
 	}
-	m.planning = false
 	if m.step != stepPreview {
 		return m, nil // user backed out; enterStep(stepPreview) will re-plan
 	}

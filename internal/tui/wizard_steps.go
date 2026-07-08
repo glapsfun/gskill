@@ -11,6 +11,7 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/git"
 )
 
 // Per-step key handling and views for the onboarding wizard (spec 011 US1–US5).
@@ -308,7 +309,7 @@ func (m wizardModel) versionTypedKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool
 			return m, nil, true
 		}
 		m.session.Version, m.session.RefSpec, m.session.Commit = "", "", ""
-		if isFullSHA(value) {
+		if git.IsFullSHA(value) {
 			m.session.Commit = value
 		} else {
 			m.session.RefSpec = value
@@ -327,19 +328,6 @@ func (m wizardModel) versionTypedKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool
 		m.versionInput.handleKey(key)
 		return m, nil, true
 	}
-}
-
-// isFullSHA reports whether s looks like a full 40-hex commit SHA.
-func isFullSHA(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	for _, r := range s {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 // applyVersionChoice writes the highlighted candidate into the session's
@@ -546,7 +534,7 @@ func (m wizardModel) previewKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
 func (m wizardModel) viewPreview() string {
 	var b strings.Builder
 	b.WriteString(m.header("Review the installation plan"))
-	if m.planning || !m.planReady {
+	if !m.planReady {
 		b.WriteString("⏳ Computing installation plan…\n")
 		b.WriteString(m.hintLine("esc back · q cancel"))
 		return b.String()
@@ -602,37 +590,25 @@ func (m wizardModel) previewBody() []string {
 // preview and the version list alike.
 const wizardReservedRows = 6
 
+// wizardSelectReservedRows is the taller frame around the embedded selector:
+// header (2), the filter line, the two more-markers, the position badge with
+// its spacer (2), and the hint footer (2).
+const wizardSelectReservedRows = 9
+
 // windowLines bounds body to the terminal height at the free-scroll preview
 // offset, so small terminals stay readable (FR-022, SC at 80×24).
 func (m wizardModel) windowLines(body []string) []string {
 	return windowRows(body, pageFor(m.height, wizardReservedRows), m.previewOffset, m.st.Hint)
 }
 
-// versionDisplay renders the chosen version for the preview and summary.
+// versionDisplay renders the chosen version for the preview and summary: the
+// user's picked label when one exists, else the shared app.RevisionLabel —
+// the same label `add --dry-run` prints for the identical plan.
 func (m wizardModel) versionDisplay() string {
 	if m.session.VersionLabel != "" {
 		return m.session.VersionLabel
 	}
-	rev := m.plan.Revision
-	switch {
-	case rev.Version != "":
-		return rev.Version
-	case rev.Tag != "":
-		return rev.Tag
-	case rev.Branch != "":
-		return rev.Branch
-	case rev.Commit != "":
-		return shortCommit(rev.Commit)
-	default:
-		return "latest"
-	}
-}
-
-func shortCommit(c string) string {
-	if len(c) > 12 {
-		return c[:12]
-	}
-	return c
+	return app.RevisionLabel(m.plan.Revision)
 }
 
 // ---- progress ------------------------------------------------------------------

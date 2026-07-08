@@ -1,7 +1,8 @@
 // Package errs defines gskill's typed errors and their mapping to process exit
 // codes. Errors wrap their cause with %w so errors.Is and errors.As traverse
-// the chain, and ExitCode resolves any error to a stable code in the range
-// 0-12 documented in contracts/cli-commands.md.
+// the chain, and ExitCode resolves any error to a stable documented code:
+// 0-12 (contracts/cli-commands.md) plus 130 for a user-cancelled guided flow
+// (specs/011-tui-skill-onboarding/contracts/cli-onboarding.md).
 package errs
 
 import "errors"

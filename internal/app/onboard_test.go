@@ -21,6 +21,7 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/store"
 )
 
@@ -1002,5 +1003,45 @@ func TestPlanInstall_CorruptLockfileFailsClosed(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("PlanInstall silently planned against a corrupt lockfile (drift must be an error)")
+	}
+}
+
+// ---- Review round 2, Phase 5: AgentChoices error fidelity ---------------------------
+
+func TestAgentChoices_UnknownDefaultSaysUnknownAgent(t *testing.T) {
+	t.Parallel()
+
+	root := projectWithAgent(t)
+	m := manifest.New()
+	m.Defaults.Agents = []string{"cursur"} // typo in gskill.toml defaults
+	if err := manifest.Save(filepath.Join(root, "gskill.toml"), m); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := onboardApp().AgentChoices(context.Background(), root)
+	if err == nil {
+		t.Fatal("unknown default agent accepted")
+	}
+	if !strings.Contains(err.Error(), `unknown agent "cursur"`) {
+		t.Errorf("error = %v, want the manifest-defaults wording, not lockfile wording", err)
+	}
+}
+
+func TestAgentChoices_EmptyResolutionFailsActionably(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir() // no markers, no manifest
+	reg := agent.NewRegistry()
+	if err := reg.Register(agent.NewCodex()); err != nil { // registry without the default agent
+		t.Fatal(err)
+	}
+	a := app.New(app.Options{Agents: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+
+	_, err := a.AgentChoices(context.Background(), root)
+	if err == nil {
+		t.Fatal("no-preselection registry returned silently; the agents step would softlock")
+	}
+	if !strings.Contains(err.Error(), "none detected") {
+		t.Errorf("error = %v, want the actionable none-detected wording", err)
 	}
 }

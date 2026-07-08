@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/glapsfun/gskill/internal/errs"
 )
@@ -69,12 +68,13 @@ type selectorModel struct {
 	filtering bool // whether the filter input is focused
 	filter    lineInput
 	visible   []int // original indices matching query, in order
+	reserved  int   // frame rows around the row window (embedders override)
 	done      bool
 	cancelled bool
 }
 
 func newSelectorModel(items []SkillItem) selectorModel {
-	m := selectorModel{items: items, chosen: make(map[int]bool)}
+	m := selectorModel{items: items, chosen: make(map[int]bool), reserved: reservedRows}
 	m.recomputeVisible()
 	return m
 }
@@ -84,13 +84,7 @@ func (m selectorModel) Init() tea.Cmd { return nil }
 
 // pageSize returns the number of skill rows that fit on screen, never below 1.
 func (m selectorModel) pageSize() int {
-	if m.height <= 0 {
-		return defaultPageSize
-	}
-	if p := m.height - reservedRows; p > 0 {
-		return p
-	}
-	return 1
+	return pageFor(m.height, m.reserved)
 }
 
 // recomputeVisible rebuilds the filtered index list from the current query
@@ -272,13 +266,18 @@ func (m selectorModel) viewBody() string {
 		b.WriteString(m.emptyMessage())
 		return b.String()
 	}
-	rows := make([]string, 0, len(m.visible))
-	for vi := range m.visible {
-		rows = append(rows, m.rowString(vi))
+	// Render only the visible window: building all row strings per frame is
+	// O(catalog) waste at 200+ skills (review finding).
+	start, end, above, below := windowBounds(len(m.visible), m.pageSize(), m.offset)
+	if above {
+		b.WriteString("  ↑ more\n")
 	}
-	for _, line := range windowRows(rows, m.pageSize(), m.offset, lipgloss.NewStyle()) {
-		b.WriteString(line)
+	for vi := start; vi < end; vi++ {
+		b.WriteString(m.rowString(vi))
 		b.WriteByte('\n')
+	}
+	if below {
+		b.WriteString("  ↓ more\n")
 	}
 	return b.String()
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
@@ -67,5 +68,28 @@ func TestOnboard_JSONModeIsUsageError(t *testing.T) {
 	}
 	if wizardCalled {
 		t.Error("onboard launched the wizard in --json mode")
+	}
+}
+
+//nolint:paralleltest // swaps package-level wizard seams
+func TestOnboard_WizardWarningsReachStderr(t *testing.T) {
+	dir := initedProject(t)
+
+	withWizardSeams(t, true, func(context.Context, tui.WizardConfig, bool) (tui.WizardOutcome, error) {
+		return tui.WizardOutcome{
+			Executed: true,
+			Result: app.AddResult{
+				Installed: []app.InstalledSkill{{Name: "alpha"}},
+				Warnings:  []string{"symlink fell back to copy"},
+			},
+		}, nil
+	})
+
+	var out, errb bytes.Buffer
+	if err := (onboardCmd{}).Run(context.Background(), interactiveOutput(&out, &errb), newTestApp(), projectRoot(dir), Globals{}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(errb.String(), "warning: symlink fell back to copy") {
+		t.Errorf("onboard wizard warnings lost: stderr = %q", errb.String())
 	}
 }
