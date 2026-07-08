@@ -537,7 +537,7 @@ func TestWizardAgents_ListsMarksAndPreselects(t *testing.T) {
 			t.Errorf("agents view missing %q:\n%s", want, view)
 		}
 	}
-	if !strings.Contains(view, "[x] Claude") {
+	if !strings.Contains(view, "[✓] Claude") {
 		t.Errorf("detected default agent not preselected (FR-014):\n%s", view)
 	}
 
@@ -1631,5 +1631,30 @@ func TestWizardSelect_SpaceTogglesWhileFilterFocused(t *testing.T) {
 	m = drive(t, m, key("enter"))
 	if len(m.session.Selected) != 1 || m.session.Selected[0].ID != "beta" {
 		t.Errorf("selection = %+v, want beta", m.session.Selected)
+	}
+}
+
+func TestWizardAgents_EscGoesBackNotCancel(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	choices := []app.AgentChoice{
+		{ID: "claude", DisplayName: "Claude", Detected: true, Preselected: true},
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  agentPhases(&calls, choices),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter")) // → agents
+	if m.step != stepAgents {
+		t.Fatalf("step = %v, want agents", m.step)
+	}
+	m = drive(t, m, key("esc"))
+	if m.cancelled {
+		t.Fatal("esc on the agents step must go back, not cancel")
+	}
+	if m.step == stepAgents {
+		t.Fatalf("esc did not leave the agents step")
 	}
 }

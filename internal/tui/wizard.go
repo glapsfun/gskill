@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
@@ -208,12 +209,13 @@ type wizardModel struct {
 	versionTyping   bool      // the "type an exact ref" row is active
 	versionInput    lineInput // typed ref/commit buffer
 
-	// Agents step (US2).
+	// Agents step (US2) — a huh multi-select form (design 2026-07-08).
+	// agentPick is heap-allocated because the form holds a pointer into it
+	// across value copies of the model.
 	agentChoices  []app.AgentChoice
 	agentsLoading bool
-	agentCursor   int
-	agentChosen   map[int]bool
-	agentErr      string
+	agentForm     *huh.Form
+	agentPick     *[]int
 
 	// Preview / plan.
 	planReady     bool
@@ -239,11 +241,10 @@ type wizardModel struct {
 
 func newWizardModel(ctx context.Context, cfg WizardConfig) wizardModel {
 	m := wizardModel{
-		ctx:         ctx,
-		phases:      cfg.Phases,
-		st:          DefaultTheme(),
-		session:     cfg.Session,
-		agentChosen: make(map[int]bool),
+		ctx:     ctx,
+		phases:  cfg.Phases,
+		st:      DefaultTheme(),
+		session: cfg.Session,
 	}
 	m.srcInput = newLineInput()
 	for _, s := range cfg.SourceSuggestions {
@@ -422,12 +423,19 @@ func (m wizardModel) enterStep(s stepID) (wizardModel, tea.Cmd) {
 }
 
 // loadChoices lazily fetches the version or agent candidates on step entry.
+// A step re-entered with its form already completed rebuilds the form (with
+// the previous picks preserved) so back-navigation always lands on a live one.
 func (m *wizardModel) loadChoices(s stepID) tea.Cmd {
 	if s == stepVersion && len(m.versions.Candidates) == 0 && !m.versionsLoading && m.phases.Versions != nil {
 		return m.startVersions()
 	}
-	if s == stepAgents && len(m.agentChoices) == 0 && !m.agentsLoading && m.phases.Agents != nil {
-		return m.startAgents()
+	if s == stepAgents {
+		if len(m.agentChoices) == 0 && !m.agentsLoading && m.phases.Agents != nil {
+			return m.startAgents()
+		}
+		if m.agentForm != nil && m.agentForm.State == huh.StateCompleted {
+			m.buildAgentForm()
+		}
 	}
 	return nil
 }
@@ -502,7 +510,9 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
-	return m, nil
+	// Anything else may be a huh-internal message (field submit, group
+	// advance): the active step's form must see it or it never completes.
+	return m.stepMsg(msg)
 }
 
 // onDiscoverDone lands phase 1's result on the welcome step. In a source-

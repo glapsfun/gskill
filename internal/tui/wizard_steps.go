@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
@@ -425,6 +427,50 @@ func (m wizardModel) agentsCmd() tea.Cmd {
 	}
 }
 
+// buildAgentForm constructs the agents multi-select with the detected agents
+// pre-selected (or the user's previous picks on re-entry), themed and
+// validated (≥1, same wording as before the huh port). The pick target is
+// heap-allocated: the form writes through this pointer while the wizard model
+// is copied by value between updates.
+func (m *wizardModel) buildAgentForm() {
+	prev := make(map[int]bool)
+	if m.agentPick != nil {
+		for _, i := range *m.agentPick {
+			prev[i] = true
+		}
+	}
+	pick := new([]int)
+	opts := make([]huh.Option[int], 0, len(m.agentChoices))
+	for i, c := range m.agentChoices {
+		label := Sanitize(c.DisplayName)
+		if c.Detected {
+			label += "  (detected)"
+		}
+		selected := c.Preselected
+		if len(prev) > 0 {
+			selected = prev[i]
+		}
+		opts = append(opts, huh.NewOption(label, i).Selected(selected))
+	}
+	ms := huh.NewMultiSelect[int]().
+		Title("").
+		Options(opts...).
+		Filterable(false).
+		Validate(func(v []int) error {
+			if len(v) == 0 {
+				return errors.New("select at least one agent (space toggles)")
+			}
+			return nil
+		}).
+		Value(pick)
+	m.agentPick = pick
+	m.agentForm = huh.NewForm(huh.NewGroup(ms)).
+		WithTheme(m.st.Huh()).
+		WithShowHelp(false).
+		WithWidth(m.width)
+	m.agentForm.Init()
+}
+
 func (m wizardModel) onAgentsDone(msg agentsDoneMsg) (tea.Model, tea.Cmd) {
 	m.agentsLoading = false
 	if msg.err != nil {
@@ -432,79 +478,59 @@ func (m wizardModel) onAgentsDone(msg agentsDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.agentChoices = msg.choices
-	for i, c := range m.agentChoices {
-		if c.Preselected {
-			m.agentChosen[i] = true
-		}
-	}
+	m.agentPick = nil // fresh listing: preselect from the choices, not stale picks
+	m.buildAgentForm()
 	return m, nil
 }
 
 func (m wizardModel) agentsKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
-	switch key.String() {
-	case keyUp, "k":
-		if m.agentCursor > 0 {
-			m.agentCursor--
-		}
-		return m, nil, true
-	case keyDown, "j":
-		if m.agentCursor < len(m.agentChoices)-1 {
-			m.agentCursor++
-		}
-		return m, nil, true
-	case " ", "x":
-		m.agentChosen[m.agentCursor] = !m.agentChosen[m.agentCursor]
-		m.agentErr = ""
-		return m, nil, true
-	case keyEnter:
-		var ids []string
-		for i, c := range m.agentChoices {
-			if m.agentChosen[i] {
-				ids = append(ids, c.ID)
-			}
-		}
-		if len(ids) == 0 {
-			m.agentErr = "select at least one agent (space toggles)"
-			return m, nil, true
-		}
-		m.agentErr = ""
-		m.session.AgentIDs = ids
-		next, cmd := m.goForward()
-		return next, cmd, true
+	if m.agentForm == nil {
+		return m, nil, false
 	}
-	return m, nil, false
+	switch key.String() {
+	case "q", keyCtrlC, keyEsc, "b":
+		return m, nil, false // contract keys: the shell handles cancel/back
+	}
+	next, cmd := m.agentsFormMsg(key)
+	return next, cmd, true
+}
+
+// agentsFormMsg drives the agents form with any message (keys and huh's
+// internal submit/advance messages alike) and lands completion in the session.
+func (m wizardModel) agentsFormMsg(msg tea.Msg) (wizardModel, tea.Cmd) {
+	next, cmd := m.agentForm.Update(msg)
+	if f, ok := next.(*huh.Form); ok {
+		m.agentForm = f
+	}
+	if m.agentForm.State == huh.StateCompleted {
+		ids := make([]string, 0, len(*m.agentPick))
+		for _, i := range *m.agentPick {
+			ids = append(ids, m.agentChoices[i].ID)
+		}
+		m.session.AgentIDs = ids
+		return m.goForward()
+	}
+	return m, cmd
+}
+
+// stepMsg forwards non-key messages to the active step's form, so huh's
+// command-driven field submission and group advancement reach it.
+func (m wizardModel) stepMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.step == stepAgents && m.agentForm != nil {
+		return m.agentsFormMsg(msg)
+	}
+	return m, nil
 }
 
 func (m wizardModel) viewAgents() string {
 	var b strings.Builder
 	b.WriteString(m.header("Choose target agents"))
-	if m.agentsLoading {
+	if m.agentsLoading || m.agentForm == nil {
 		b.WriteString("⏳ Detecting agents…\n")
 		b.WriteString(m.hintLine("q cancel"))
 		return b.String()
 	}
-	for i, c := range m.agentChoices {
-		cursor := "  "
-		if i == m.agentCursor {
-			cursor = m.st.Cursor.Render("❯") + " "
-		}
-		check := "[ ]"
-		if m.agentChosen[i] {
-			check = m.st.Selected.Render("[x]")
-		}
-		name := c.DisplayName
-		if i == m.agentCursor {
-			name = m.st.Selected.Render(name)
-		}
-		b.WriteString(cursor + check + " " + name)
-		if c.Detected {
-			b.WriteString("  " + m.st.Success.Render("(detected)"))
-		}
-		b.WriteString("\n")
-	}
-	if m.agentErr != "" {
-		b.WriteString(m.st.Error.Render(m.agentErr) + "\n")
-	}
+	b.WriteString(m.agentForm.View())
 	b.WriteString(m.hintLine("↑/↓ move · space toggle · enter continue · esc back · q cancel"))
 	return b.String()
 }
