@@ -180,7 +180,7 @@ type wizardModel struct {
 	width, height int
 
 	// Source-input step (US5).
-	srcInput       sourceInputModel
+	srcInput       lineInput
 	srcErr         string
 	srcSuggestions []string
 	srcCursor      int // index into srcSuggestions; == len means the input row
@@ -199,8 +199,8 @@ type wizardModel struct {
 	versions        app.VersionList
 	versionsLoading bool
 	versionCursor   int
-	versionTyping   bool   // the "type an exact ref" row is active
-	versionTyped    string // typed ref/commit buffer
+	versionTyping   bool      // the "type an exact ref" row is active
+	versionInput    lineInput // typed ref/commit buffer
 
 	// Agents step (US2).
 	agentChoices  []app.AgentChoice
@@ -240,7 +240,7 @@ func newWizardModel(ctx context.Context, cfg WizardConfig) wizardModel {
 		session:     cfg.Session,
 		agentChosen: make(map[int]bool),
 	}
-	m.srcInput = newSourceInputModel()
+	m.srcInput = newLineInput()
 	for _, s := range cfg.SourceSuggestions {
 		m.srcSuggestions = append(m.srcSuggestions, Sanitize(s))
 	}
@@ -262,17 +262,6 @@ func (m *wizardModel) markWelcomeLoading() {
 	m.discovering = true
 	m.versionsLoading = m.phases.Versions != nil && !m.skipped(stepVersion) && len(m.versions.Candidates) == 0
 	m.agentsLoading = m.phases.Agents != nil && !m.skipped(stepAgents) && len(m.agentChoices) == 0
-}
-
-// firstErrorProblem returns the first error-severity diagnostic message of a
-// discovered skill, for the invalid-row reason display (FR-011).
-func firstErrorProblem(s discovery.DiscoveredSkill) string {
-	for _, p := range s.Problems {
-		if p.Severity == discovery.SeverityError {
-			return p.Message
-		}
-	}
-	return ""
 }
 
 // Init implements tea.Model: with the source known it kicks off discovery plus
@@ -461,7 +450,7 @@ func (m *wizardModel) syncSelector() {
 			Description:   Sanitize(s.Description),
 			RepoPath:      Sanitize(s.RepoPath),
 			Valid:         s.Valid,
-			InvalidReason: Sanitize(firstErrorProblem(s)),
+			InvalidReason: Sanitize(s.FirstError()),
 		}
 		if chosen[s.ID] {
 			m.sel.chosen[i] = true

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/app"
@@ -164,5 +165,57 @@ func TestPlanInstall_GlobalScopeFailsWithoutHome(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("global-scope plan with no resolvable home succeeded; destinations would be garbage")
+	}
+}
+
+// TestInstallPlan_LinesCoverEveryPlanElement guards the shared renderer both
+// the wizard preview and `add --dry-run` consume (FR-015/FR-024).
+func TestInstallPlan_LinesCoverEveryPlanElement(t *testing.T) {
+	t.Parallel()
+
+	plan := app.InstallPlan{
+		Source:      "example/repo",
+		AgentIDs:    []string{"claude", "codex"},
+		InitProject: true,
+		Actions: []app.PlannedAction{
+			{
+				Skill: "alpha", AgentID: "codex", Destination: "/d/codex/alpha",
+				FileOps: []app.PlannedFileOp{{Path: "/d/codex/alpha/SKILL.md", Op: "create"}},
+			},
+			{Skill: "alpha", AgentID: "claude", Destination: "/d/claude/alpha"},
+		},
+		Warnings:  []string{"floating branch"},
+		Conflicts: []app.PlanConflict{{Skill: "beta", Kind: app.ConflictCrossSource, Detail: "beta collides"}},
+	}
+
+	var kinds []string
+	var texts []string
+	for _, pl := range plan.Lines("v1.2.3") {
+		kinds = append(kinds, pl.Kind)
+		texts = append(texts, pl.Text)
+	}
+	joined := strings.Join(texts, "\n")
+	for _, want := range []string{
+		"Source:  example/repo", "Version: v1.2.3", "Agents:  claude, codex",
+		"will be created", "claude:", "codex:",
+		"alpha → /d/codex/alpha", "create /d/codex/alpha/SKILL.md",
+		"floating branch", "beta collides",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("Lines missing %q:\n%s", want, joined)
+		}
+	}
+	// Agent groups render sorted for deterministic output.
+	if idx := strings.Index(joined, "claude:"); idx > strings.Index(joined, "codex:") {
+		t.Errorf("agent groups not sorted:\n%s", joined)
+	}
+	wantKinds := map[string]bool{}
+	for _, k := range kinds {
+		wantKinds[k] = true
+	}
+	for _, k := range []string{app.PlanLineMeta, app.PlanLineInit, app.PlanLineAgent, app.PlanLineAction, app.PlanLineFileOp, app.PlanLineWarning, app.PlanLineConflict} {
+		if !wantKinds[k] {
+			t.Errorf("kind %q never emitted", k)
+		}
 	}
 }

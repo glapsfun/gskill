@@ -1476,7 +1476,7 @@ func TestWizardVersion_TypedModeResetsAfterCommit(t *testing.T) {
 		t.Fatal("typed-input mode still active on re-entry")
 	}
 	m = drive(t, m, key("up")) // must navigate, not append to a stale buffer
-	if m.versionTyped != "" {
-		t.Fatalf("stale typed buffer: %q", m.versionTyped)
+	if m.versionInput.value != "" {
+		t.Fatalf("stale typed buffer: %q", m.versionInput.value)
 	}
 }

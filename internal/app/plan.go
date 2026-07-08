@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/agent"
@@ -133,6 +134,69 @@ func revisionSatisfies(rev resolver.Revision, req PlanRequest) bool {
 		// honored (Add passes the same constraint to DiscoverSource).
 		return true
 	}
+}
+
+// PlanLine kinds, in emission order.
+const (
+	PlanLineMeta     = "meta"     // source / version / agents header
+	PlanLineInit     = "init"     // project scaffolding notice (FR-023)
+	PlanLineAgent    = "agent"    // per-agent group header ("claude:")
+	PlanLineAction   = "action"   // "skill → destination"
+	PlanLineFileOp   = "fileop"   // "create|update path"
+	PlanLineWarning  = "warning"  // resolution/install warnings
+	PlanLineConflict = "conflict" // blocking conflict detail
+)
+
+// PlanLine is one renderable line of an InstallPlan. The wizard preview and
+// `add --dry-run` both render from this single sequence, so the two surfaces
+// describe the same plan by construction (FR-015/FR-024); renderers add their
+// own styling and prefixes per kind.
+type PlanLine struct {
+	Kind string
+	Text string
+}
+
+// Lines flattens the plan into renderable lines. versionLabel overrides the
+// version text (the wizard prefers the user's chosen label); "" derives it
+// from the resolved revision.
+func (p InstallPlan) Lines(versionLabel string) []PlanLine {
+	if versionLabel == "" {
+		versionLabel = revisionLabel(p.Revision)
+	}
+	lines := []PlanLine{
+		{Kind: PlanLineMeta, Text: "Source:  " + p.Source},
+		{Kind: PlanLineMeta, Text: "Version: " + versionLabel},
+		{Kind: PlanLineMeta, Text: "Agents:  " + strings.Join(p.AgentIDs, ", ")},
+	}
+	if p.InitProject {
+		lines = append(lines, PlanLine{Kind: PlanLineInit, Text: ManifestName + " will be created (new project)"})
+	}
+
+	byAgent := map[string][]PlannedAction{}
+	for _, act := range p.Actions {
+		byAgent[act.AgentID] = append(byAgent[act.AgentID], act)
+	}
+	agents := make([]string, 0, len(byAgent))
+	for id := range byAgent {
+		agents = append(agents, id)
+	}
+	sort.Strings(agents)
+	for _, id := range agents {
+		lines = append(lines, PlanLine{Kind: PlanLineAgent, Text: id + ":"})
+		for _, act := range byAgent[id] {
+			lines = append(lines, PlanLine{Kind: PlanLineAction, Text: act.Skill + " → " + act.Destination})
+			for _, op := range act.FileOps {
+				lines = append(lines, PlanLine{Kind: PlanLineFileOp, Text: op.Op + " " + op.Path})
+			}
+		}
+	}
+	for _, w := range p.Warnings {
+		lines = append(lines, PlanLine{Kind: PlanLineWarning, Text: w})
+	}
+	for _, c := range p.Conflicts {
+		lines = append(lines, PlanLine{Kind: PlanLineConflict, Text: c.Detail})
+	}
+	return lines
 }
 
 // PlanInstall derives the installation plan for the selected skills: per

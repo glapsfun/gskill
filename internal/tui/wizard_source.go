@@ -15,15 +15,16 @@ import (
 // validator (source.Parse behind the scenes) rejects bad input inline without
 // exiting the flow (FR-002).
 
-// sourceInputModel is a minimal single-line text input.
-type sourceInputModel struct {
+// lineInput is the package's shared minimal single-line text editor, used by
+// the source step, the version typed-ref buffer, and the selector filter.
+type lineInput struct {
 	value string
 }
 
-func newSourceInputModel() sourceInputModel { return sourceInputModel{} }
+func newLineInput() lineInput { return lineInput{} }
 
 // handleKey edits the input; printable runes append, backspace trims.
-func (s *sourceInputModel) handleKey(key tea.KeyMsg) bool {
+func (s *lineInput) handleKey(key tea.KeyMsg) bool {
 	switch key.Type { //nolint:exhaustive // text entry handles only these keys
 	case tea.KeyBackspace:
 		if r := []rune(s.value); len(r) > 0 {
@@ -111,7 +112,7 @@ func (m *wizardModel) resetSourceDerivedState() {
 	m.versionsLoading = false
 	m.versionCursor = 0
 	m.versionTyping = false
-	m.versionTyped = ""
+	m.versionInput = newLineInput()
 	m.session.Version, m.session.RefSpec, m.session.Commit, m.session.VersionLabel = "", "", "", ""
 	m.plan = app.InstallPlan{}
 	m.planReady = false

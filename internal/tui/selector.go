@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/glapsfun/gskill/internal/errs"
 )
@@ -66,7 +67,7 @@ type selectorModel struct {
 	height    int  // last known terminal height (from WindowSizeMsg)
 	width     int  // last known terminal width
 	filtering bool // whether the filter input is focused
-	query     string
+	filter    lineInput
 	visible   []int // original indices matching query, in order
 	done      bool
 	cancelled bool
@@ -97,7 +98,7 @@ func (m selectorModel) pageSize() int {
 // FR-010) and re-clamps the cursor and scroll offset. It never touches the
 // selection set.
 func (m *selectorModel) recomputeVisible() {
-	q := strings.ToLower(strings.TrimSpace(m.query))
+	q := strings.ToLower(strings.TrimSpace(m.filter.value))
 	m.visible = m.visible[:0]
 	for i, it := range m.items {
 		if q == "" ||
@@ -203,9 +204,9 @@ func (m selectorModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filtering = false
 			return m, nil
 		}
-		if m.query != "" {
+		if m.filter.value != "" {
 			// Clear an applied filter back to the full list.
-			m.query = ""
+			m.filter.value = ""
 			m.recomputeVisible()
 			return m, nil
 		}
@@ -219,20 +220,10 @@ func (m selectorModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleNavKey(key)
 }
 
-// handleFilterKey edits the filter query. Printable runes (and space) are
-// appended; backspace trims. The visible set is recomputed after each edit.
+// handleFilterKey edits the filter query through the shared line editor and
+// recomputes the visible set after each edit.
 func (m selectorModel) handleFilterKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key.Type { //nolint:exhaustive // text entry intentionally handles only these keys; all others are ignored
-	case tea.KeyBackspace:
-		if r := []rune(m.query); len(r) > 0 {
-			m.query = string(r[:len(r)-1])
-			m.recomputeVisible()
-		}
-	case tea.KeySpace:
-		m.query += " "
-		m.recomputeVisible()
-	case tea.KeyRunes:
-		m.query += string(key.Runes)
+	if m.filter.handleKey(key) {
 		m.recomputeVisible()
 	}
 	return m, nil
@@ -256,44 +247,49 @@ func (m selectorModel) handleNavKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View implements tea.Model: it renders the header, an optional filter line,
-// the bounded scrolling window with more-above/below markers, and a position +
-// help footer.
+// View implements tea.Model: it renders the header, the body (filter line and
+// bounded scrolling window), and a position + help footer.
 func (m selectorModel) View() string {
 	var b strings.Builder
 	b.WriteString("Select skills to install:\n")
+	b.WriteString(m.viewBody())
+	fmt.Fprintf(&b, "\n%s  •  ↑/↓ move · space toggle · / filter · enter confirm · q cancel\n", m.position())
+	return b.String()
+}
 
-	if m.filtering || m.query != "" {
-		fmt.Fprintf(&b, "Filter: %s\n", m.query)
+// viewBody renders the filter line and the bounded, scrolling row window —
+// everything between the title and the footer — so embedders (the wizard's
+// selection step) can frame it without string surgery.
+func (m selectorModel) viewBody() string {
+	var b strings.Builder
+	if m.filtering || m.filter.value != "" {
+		fmt.Fprintf(&b, "Filter: %s\n", m.filter.value)
 	} else {
 		b.WriteString("\n")
 	}
 
 	if len(m.visible) == 0 {
 		b.WriteString(m.emptyMessage())
-	} else {
-		ps := m.pageSize()
-		end := m.offset + ps
-		if end > len(m.visible) {
-			end = len(m.visible)
-		}
-		if m.offset > 0 {
-			b.WriteString("  ↑ more\n")
-		}
-		for vi := m.offset; vi < end; vi++ {
-			m.writeRow(&b, vi)
-		}
-		if end < len(m.visible) {
-			b.WriteString("  ↓ more\n")
-		}
+		return b.String()
 	}
-
-	fmt.Fprintf(&b, "\n%d/%d", min(m.cursor+1, len(m.visible)), len(m.visible))
-	if len(m.visible) != len(m.items) {
-		fmt.Fprintf(&b, " (of %d)", len(m.items))
+	rows := make([]string, 0, len(m.visible))
+	for vi := range m.visible {
+		rows = append(rows, m.rowString(vi))
 	}
-	b.WriteString("  •  ↑/↓ move · space toggle · / filter · enter confirm · q cancel\n")
+	for _, line := range windowRows(rows, m.pageSize(), m.offset, lipgloss.NewStyle()) {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
 	return b.String()
+}
+
+// position renders the cursor position and filtered/total counts.
+func (m selectorModel) position() string {
+	pos := fmt.Sprintf("%d/%d", min(m.cursor+1, len(m.visible)), len(m.visible))
+	if len(m.visible) != len(m.items) {
+		pos += fmt.Sprintf(" (of %d)", len(m.items))
+	}
+	return pos
 }
 
 // emptyMessage returns the line shown when no rows are visible, distinguishing a
@@ -305,10 +301,10 @@ func (m selectorModel) emptyMessage() string {
 	return "  (no matches)\n"
 }
 
-// writeRow renders a single skill row at the given index into visible: the
+// rowString renders a single skill row at the given index into visible: the
 // checkbox, id, in-repo path, and the short description (FR-009). An invalid
 // row under the cursor also shows its reason (FR-011).
-func (m selectorModel) writeRow(b *strings.Builder, vi int) {
+func (m selectorModel) rowString(vi int) string {
 	orig := m.visible[vi]
 	it := m.items[orig]
 	cursor := " "
@@ -335,8 +331,7 @@ func (m selectorModel) writeRow(b *strings.Builder, vi int) {
 	if it.Description != "" {
 		row += "  — " + it.Description
 	}
-	b.WriteString(m.truncateToWidth(row))
-	b.WriteByte('\n')
+	return m.truncateToWidth(row)
 }
 
 // truncateToWidth shortens a row to the terminal width (when known) so a long

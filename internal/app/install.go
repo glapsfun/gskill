@@ -595,12 +595,11 @@ func skillsInScope(scan discovery.Result, explicitPath string) []discovery.Disco
 	return out
 }
 
-// firstProblem returns the first error-severity diagnostic message for a skill.
+// firstProblem returns the first error-severity diagnostic message for a
+// skill, with a fallback for error paths that need a non-empty reason.
 func firstProblem(s discovery.DiscoveredSkill) string {
-	for _, p := range s.Problems {
-		if p.Severity == discovery.SeverityError {
-			return p.Message
-		}
+	if msg := s.FirstError(); msg != "" {
+		return msg
 	}
 	return "unknown validation error"
 }

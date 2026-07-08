@@ -193,8 +193,8 @@ func (m wizardModel) selectEsc() (wizardModel, tea.Cmd, bool) {
 		m.sel.filtering = false
 		return m, nil, true
 	}
-	if m.sel.query != "" {
-		m.sel.query = ""
+	if m.sel.filter.value != "" {
+		m.sel.filter.value = ""
 		m.sel.recomputeVisible()
 		return m, nil, true
 	}
@@ -222,18 +222,10 @@ func (m wizardModel) selectNavKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
 func (m wizardModel) viewSelect() string {
 	var b strings.Builder
 	b.WriteString(m.header("Select skills to install"))
-	// The selector renders its own filter line, bounded window, and counters.
-	body := m.sel.View()
-	// Drop the selector's own header + help footer; the wizard frames the step.
-	if i := strings.IndexByte(body, '\n'); i >= 0 {
-		body = body[i+1:]
-	}
-	if i := strings.LastIndex(body, "\n"); i >= 0 {
-		if j := strings.LastIndex(body[:i], "\n"); j >= 0 {
-			body = body[:j+1]
-		}
-	}
-	b.WriteString(body)
+	// The selector renders its own filter line and bounded window; the wizard
+	// frames it with its own header, position badge, and hint footer.
+	b.WriteString(m.sel.viewBody())
+	b.WriteString("\n" + m.st.Badge.Render(m.sel.position()) + "\n")
 	if m.selErr != "" {
 		b.WriteString(m.st.Error.Render(m.selErr) + "\n")
 	}
@@ -300,9 +292,9 @@ func (m wizardModel) versionKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
 // versionTypedKey edits and applies a typed exact ref or commit (FR-012): a
 // full 40-hex value pins a commit, anything else is requested as a ref.
 func (m wizardModel) versionTypedKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
-	switch key.Type { //nolint:exhaustive // text entry handles only these keys
+	switch key.Type { //nolint:exhaustive // enter/esc here; editing is the shared lineInput
 	case tea.KeyEnter:
-		value := strings.TrimSpace(m.versionTyped)
+		value := strings.TrimSpace(m.versionInput.value)
 		if value == "" {
 			m.versionTyping = false
 			return m, nil, true
@@ -317,21 +309,14 @@ func (m wizardModel) versionTypedKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool
 		// Leave input mode so re-entering the step navigates the list again
 		// instead of resuming a stale buffer (review finding).
 		m.versionTyping = false
-		m.versionTyped = ""
+		m.versionInput = newLineInput()
 		next, cmd := m.goForward()
 		return next, cmd, true
 	case tea.KeyEsc:
 		m.versionTyping = false
 		return m, nil, true
-	case tea.KeyBackspace:
-		if r := []rune(m.versionTyped); len(r) > 0 {
-			m.versionTyped = string(r[:len(r)-1])
-		}
-		return m, nil, true
-	case tea.KeyRunes:
-		m.versionTyped += string(key.Runes)
-		return m, nil, true
 	default:
+		m.versionInput.handleKey(key)
 		return m, nil, true
 	}
 }
@@ -404,7 +389,7 @@ func (m wizardModel) viewVersion() string {
 		typedLabel = m.st.Selected.Render(typedLabel)
 	}
 	if m.versionTyping {
-		fmt.Fprintf(&b, "%s%s %s█\n", typedCursor, m.st.Selected.Render("ref:"), Sanitize(m.versionTyped))
+		fmt.Fprintf(&b, "%s%s %s█\n", typedCursor, m.st.Selected.Render("ref:"), Sanitize(m.versionInput.value))
 		b.WriteString(m.hintLine("enter apply · esc cancel input"))
 		return b.String()
 	}
@@ -418,38 +403,10 @@ func (m wizardModel) viewVersion() string {
 }
 
 // cursorWindow bounds rows to the terminal height, keeping the cursor row
-// visible and adding more-markers, so long version lists never overflow a
-// small terminal (FR-022).
+// visible, so long version lists never overflow a small terminal (FR-022).
 func (m wizardModel) cursorWindow(rows []string, cursor int) []string {
-	page := defaultPageSize
-	if m.height > 0 {
-		if p := m.height - previewReservedRows; p > 0 {
-			page = p
-		} else {
-			page = 1
-		}
-	}
-	if len(rows) <= page {
-		return rows
-	}
-
-	offset := 0
-	if cursor >= page {
-		offset = cursor - page + 1
-	}
-	if maxOffset := len(rows) - page; offset > maxOffset {
-		offset = maxOffset
-	}
-
-	out := make([]string, 0, page+2)
-	if offset > 0 {
-		out = append(out, m.st.Hint.Render("  ↑ more"))
-	}
-	out = append(out, rows[offset:offset+page]...)
-	if offset+page < len(rows) {
-		out = append(out, m.st.Hint.Render("  ↓ more"))
-	}
-	return out
+	page := pageFor(m.height, wizardReservedRows)
+	return windowRows(rows, page, cursorOffset(cursor, page, len(rows)), m.st.Hint)
 }
 
 // ---- agents (US2) ------------------------------------------------------------
@@ -600,87 +557,47 @@ func (m wizardModel) viewPreview() string {
 	return b.String()
 }
 
-// previewBody renders the full plan as lines: metadata, per-agent actions with
-// file operations, warnings, and conflicts (FR-015).
+// previewBody renders the full plan as styled lines from the shared
+// app.InstallPlan.Lines sequence — the same content `add --dry-run` prints —
+// so the wizard preview and the scripted plan cannot drift (FR-015/FR-024).
 func (m wizardModel) previewBody() []string {
 	var lines []string
-	lines = append(lines,
-		"Source:  "+m.st.Accent.Render(Sanitize(m.plan.Source)),
-		"Version: "+m.st.Accent.Render(Sanitize(m.versionDisplay())),
-		"Agents:  "+m.st.Accent.Render(strings.Join(m.plan.AgentIDs, ", ")),
-		"",
-	)
-	if m.plan.InitProject {
-		lines = append(lines, m.st.Warning.Render("• gskill.toml will be created (new project)"))
-	}
-
-	byAgent := map[string][]app.PlannedAction{}
-	for _, act := range m.plan.Actions {
-		byAgent[act.AgentID] = append(byAgent[act.AgentID], act)
-	}
-	agents := make([]string, 0, len(byAgent))
-	for id := range byAgent {
-		agents = append(agents, id)
-	}
-	sort.Strings(agents)
-	for _, id := range agents {
-		lines = append(lines, m.st.Subtitle.Render(id+":"))
-		for _, act := range byAgent[id] {
-			lines = append(lines, fmt.Sprintf("  + %s → %s", Sanitize(act.Skill), Sanitize(act.Destination)))
-			for _, op := range act.FileOps {
-				lines = append(lines, fmt.Sprintf("      %s %s", op.Op, Sanitize(op.Path)))
+	sawConflict := false
+	for _, pl := range m.plan.Lines(m.versionDisplay()) {
+		text := Sanitize(pl.Text)
+		switch pl.Kind {
+		case app.PlanLineMeta:
+			lines = append(lines, m.st.Accent.Render(text))
+		case app.PlanLineInit:
+			lines = append(lines, m.st.Warning.Render("• "+text))
+		case app.PlanLineAgent:
+			lines = append(lines, m.st.Subtitle.Render(text))
+		case app.PlanLineAction:
+			lines = append(lines, "  + "+text)
+		case app.PlanLineFileOp:
+			lines = append(lines, "      "+text)
+		case app.PlanLineWarning:
+			lines = append(lines, m.st.Warning.Render("warning: "+text))
+		case app.PlanLineConflict:
+			if !sawConflict {
+				sawConflict = true
+				lines = append(lines, "", m.st.Error.Render("Conflicts block approval:"))
 			}
-		}
-	}
-	for _, w := range m.plan.Warnings {
-		lines = append(lines, m.st.Warning.Render("warning: "+Sanitize(w)))
-	}
-	if len(m.plan.Conflicts) > 0 {
-		lines = append(lines, "", m.st.Error.Render("Conflicts block approval:"))
-		for _, c := range m.plan.Conflicts {
-			lines = append(lines, "  "+m.st.Error.Render("✗")+" "+Sanitize(c.Detail))
+			lines = append(lines, "  "+m.st.Error.Render("✗")+" "+text)
 		}
 	}
 	return lines
 }
 
-// previewReservedRows is the frame around the preview's scrollable window:
-// header (2), the two more-markers, and the hint footer (2).
-const previewReservedRows = 6
+// wizardReservedRows is the frame around a wizard step's scrollable window:
+// header (2), the two more-markers, and the hint footer (2). It governs the
+// preview and the version list alike.
+const wizardReservedRows = 6
 
-// windowLines bounds body to the terminal height with more-markers, clamping
-// the scroll offset so small terminals stay readable (FR-022, SC at 80×24).
+// windowLines bounds body to the terminal height at the free-scroll preview
+// offset, so small terminals stay readable (FR-022, SC at 80×24).
 func (m wizardModel) windowLines(body []string) []string {
-	page := defaultPageSize
-	if m.height > 0 {
-		if p := m.height - previewReservedRows; p > 0 {
-			page = p
-		} else {
-			page = 1
-		}
-	}
-	if len(body) <= page {
-		return body
-	}
-
-	maxOffset := len(body) - page
-	offset := m.previewOffset
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	out := make([]string, 0, page+2)
-	if offset > 0 {
-		out = append(out, m.st.Hint.Render("  ↑ more"))
-	}
-	out = append(out, body[offset:offset+page]...)
-	if offset < maxOffset {
-		out = append(out, m.st.Hint.Render("  ↓ more"))
-	}
-	return out
+	return windowRows(body, pageFor(m.height, wizardReservedRows), m.previewOffset, m.st.Hint)
 }
 
 // versionDisplay renders the chosen version for the preview and summary.

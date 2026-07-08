@@ -119,27 +119,25 @@ func (c addCmd) runDryRun(ctx context.Context, out *Output, a *app.App, root pro
 	return out.Result(renderPlanText(plan), plan)
 }
 
-// renderPlanText renders an InstallPlan for humans, mirroring the wizard's
-// preview content.
+// renderPlanText renders an InstallPlan for humans from the same shared line
+// sequence the wizard preview styles, so the two surfaces describe identical
+// plans (FR-015/FR-024).
 func renderPlanText(plan app.InstallPlan) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Plan (dry run — nothing will be written):\n")
-	fmt.Fprintf(&b, "  source: %s\n", plan.Source)
-	fmt.Fprintf(&b, "  agents: %s\n", strings.Join(plan.AgentIDs, ", "))
-	if plan.InitProject {
-		b.WriteString("  gskill.toml will be created (new project)\n")
-	}
-	for _, act := range plan.Actions {
-		fmt.Fprintf(&b, "  + %s → %s\n", act.Skill, act.Destination)
-		for _, op := range act.FileOps {
-			fmt.Fprintf(&b, "      %s %s\n", op.Op, op.Path)
+	b.WriteString("Plan (dry run — nothing will be written):\n")
+	for _, pl := range plan.Lines("") {
+		switch pl.Kind {
+		case app.PlanLineAction:
+			fmt.Fprintf(&b, "  + %s\n", pl.Text)
+		case app.PlanLineFileOp:
+			fmt.Fprintf(&b, "      %s\n", pl.Text)
+		case app.PlanLineWarning:
+			fmt.Fprintf(&b, "  warning: %s\n", pl.Text)
+		case app.PlanLineConflict:
+			fmt.Fprintf(&b, "  conflict: %s\n", pl.Text)
+		default: // meta, init, agent group headers
+			fmt.Fprintf(&b, "  %s\n", pl.Text)
 		}
-	}
-	for _, w := range plan.Warnings {
-		fmt.Fprintf(&b, "  warning: %s\n", w)
-	}
-	for _, cf := range plan.Conflicts {
-		fmt.Fprintf(&b, "  conflict: %s\n", cf.Detail)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

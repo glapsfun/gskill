@@ -292,16 +292,16 @@ func TestSelector_EscIsTwoStageThenCancels(t *testing.T) {
 	m := update(t, newSelectorModel(its), key("/"), key("a"))
 	// esc #1: unfocus, keep the query.
 	m = update(t, m, key("esc"))
-	if m.filtering || m.query != "a" {
-		t.Fatalf("first esc: filtering=%v query=%q, want false/\"a\"", m.filtering, m.query)
+	if m.filtering || m.filter.value != "a" {
+		t.Fatalf("first esc: filtering=%v query=%q, want false/\"a\"", m.filtering, m.filter.value)
 	}
 	if m.cancelled {
 		t.Fatal("first esc must not cancel")
 	}
 	// esc #2: clear the query, restore the full list.
 	m = update(t, m, key("esc"))
-	if m.query != "" || m.cancelled {
-		t.Fatalf("second esc: query=%q cancelled=%v, want \"\"/false", m.query, m.cancelled)
+	if m.filter.value != "" || m.cancelled {
+		t.Fatalf("second esc: query=%q cancelled=%v, want \"\"/false", m.filter.value, m.cancelled)
 	}
 	if len(m.visible) != 2 {
 		t.Errorf("cleared filter should restore full list: visible=%v", m.visible)
@@ -350,15 +350,15 @@ func TestSelector_FilterTypingDoesNotNavigateOrCancel(t *testing.T) {
 	if m.cancelled {
 		t.Error("'j' while filtering should not cancel")
 	}
-	if m.query != "j" {
-		t.Errorf("query = %q, want %q", m.query, "j")
+	if m.filter.value != "j" {
+		t.Errorf("query = %q, want %q", m.filter.value, "j")
 	}
 	m = update(t, m, key("q"))
 	if m.cancelled {
 		t.Error("'q' while filtering must not cancel")
 	}
-	if m.query != "jq" {
-		t.Errorf("query = %q, want %q", m.query, "jq")
+	if m.filter.value != "jq" {
+		t.Errorf("query = %q, want %q", m.filter.value, "jq")
 	}
 }
 
