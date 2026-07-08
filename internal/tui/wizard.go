@@ -175,7 +175,7 @@ type executeDoneMsg struct {
 type wizardModel struct {
 	ctx     context.Context //nolint:containedctx // Bubble Tea commands are built from model state; the run context must travel with the model
 	phases  WizardPhases
-	st      wizardStyles
+	st      Theme
 	session Session
 
 	step    stepID
@@ -241,7 +241,7 @@ func newWizardModel(ctx context.Context, cfg WizardConfig) wizardModel {
 	m := wizardModel{
 		ctx:         ctx,
 		phases:      cfg.Phases,
-		st:          defaultWizardStyles(),
+		st:          DefaultTheme(),
 		session:     cfg.Session,
 		agentChosen: make(map[int]bool),
 	}
