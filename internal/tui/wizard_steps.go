@@ -92,9 +92,9 @@ func (m wizardModel) viewWelcome() string {
 	m.writeWelcomeDetection(&b)
 	b.WriteString("\n")
 	b.WriteString(m.st.Subtitle.Render("This guided flow will walk you through:") + "\n")
-	b.WriteString("  1. selecting skills   2. choosing a version   3. picking target agents\n")
-	b.WriteString("  4. reviewing the plan  5. approving            6. installing\n")
-	b.WriteString("\nNothing is written until you approve the plan.\n")
+	b.WriteString(m.st.Subtitle.Render("  1. selecting skills   2. choosing a version   3. picking target agents") + "\n")
+	b.WriteString(m.st.Subtitle.Render("  4. reviewing the plan  5. approving            6. installing") + "\n")
+	b.WriteString("\n" + m.st.Hint.Render("Nothing is written until you approve the plan.") + "\n")
 	for _, w := range m.disc.Warnings {
 		b.WriteString(m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")
 	}
@@ -609,9 +609,9 @@ func (m wizardModel) viewPreview() string {
 	}
 
 	body := m.previewBody()
-	for _, line := range m.windowLines(body) {
-		b.WriteString(line + "\n")
-	}
+	lines := windowRows(body, pageFor(m.height, wizardReservedRows+2), m.previewOffset, m.st.Hint)
+	panel := m.st.Panel().Width(maxInt(20, m.width-2))
+	b.WriteString(panel.Render(strings.Join(lines, "\n")) + "\n")
 
 	if len(m.plan.Conflicts) > 0 {
 		b.WriteString(m.hintLine("↑/↓ scroll · esc/b go back and edit · q cancel"))
@@ -663,12 +663,6 @@ const wizardReservedRows = 6
 // its spacer (2), and the hint footer (2).
 const wizardSelectReservedRows = 9
 
-// windowLines bounds body to the terminal height at the free-scroll preview
-// offset, so small terminals stay readable (FR-022, SC at 80×24).
-func (m wizardModel) windowLines(body []string) []string {
-	return windowRows(body, pageFor(m.height, wizardReservedRows), m.previewOffset, m.st.Hint)
-}
-
 // versionDisplay renders the chosen version for the preview and summary: the
 // user's picked label when one exists, else the shared app.RevisionLabel —
 // the same label `add --dry-run` prints for the identical plan.
@@ -691,7 +685,7 @@ func (m wizardModel) viewProgress() string {
 		}
 	}
 	for _, s := range m.session.Selected {
-		mark := "…"
+		mark := m.st.Hint.Render("…")
 		if done[s.ID] {
 			mark = m.st.Success.Render("✓")
 		}
@@ -722,10 +716,10 @@ func (m wizardModel) viewSummary() string {
 		b.WriteString("  " + m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")
 	}
 	b.WriteString("\n" + m.st.Subtitle.Render("Next steps:") + "\n")
-	b.WriteString("  gskill list      view installed skills\n")
-	b.WriteString("  gskill status    check per-agent health\n")
-	b.WriteString("  gskill update    advance versions later\n")
-	b.WriteString("  gskill remove    uninstall a skill\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill list") + "      " + m.st.Subtitle.Render("view installed skills") + "\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill status") + "    " + m.st.Subtitle.Render("check per-agent health") + "\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill update") + "    " + m.st.Subtitle.Render("advance versions later") + "\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill remove") + "    " + m.st.Subtitle.Render("uninstall a skill") + "\n")
 	b.WriteString(m.hintLine("enter/q exit"))
 	return b.String()
 }

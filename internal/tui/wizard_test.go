@@ -1664,3 +1664,22 @@ func TestWizardAgents_EscGoesBackNotCancel(t *testing.T) {
 		t.Fatalf("esc did not leave the agents step")
 	}
 }
+
+func TestWizardPreview_RendersBorderedPanel(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter")) // welcome → select alpha
+	m = advanceToPreview(t, m)
+	if m.step != stepPreview {
+		t.Fatalf("step = %v, want preview", m.step)
+	}
+	if v := m.View(); !strings.Contains(v, "─") {
+		t.Errorf("preview has no panel border:\n%s", v)
+	}
+}
