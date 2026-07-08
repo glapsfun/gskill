@@ -13,5 +13,6 @@ paths = [
   '''^\.docs/''',
   '''^\.specify/''',
   '''^specs/''',
+  '''^.superpowers/''',
   '''^bin/''',
 ]
