@@ -1216,3 +1216,267 @@ func TestWizardVersion_ListIsBoundedAndFollowsCursor(t *testing.T) {
 		t.Errorf("scrolled version list renders %d lines at a 24-row terminal", got)
 	}
 }
+
+// ---- Review fixes, Phase B ------------------------------------------------------
+
+func TestWizard_StalePlanDoneNeverAutoApprovesOffPreview(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true, ApprovalAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha", "beta"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter")) // welcome → select; user is editing here
+
+	// A plan message from an earlier, abandoned preview visit arrives late.
+	stale := planDoneMsg{plan: app.InstallPlan{Source: "example/repo"}, gen: m.planGen}
+	m = drive(t, m, stale)
+	if calls.execute != 0 {
+		t.Fatalf("stale planDoneMsg executed the plan while the user was on %v", m.step)
+	}
+	if m.step != stepSelect {
+		t.Fatalf("step = %v, want to remain on select", m.step)
+	}
+}
+
+func TestWizard_SupersededPlanResultIgnored(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter"))
+	m = advanceToPreview(t, m)
+
+	// A result from a superseded plan request (older generation) must not
+	// overwrite the current plan state.
+	m.planReady = false
+	old := planDoneMsg{plan: app.InstallPlan{Source: "STALE"}, gen: m.planGen - 1}
+	m = drive(t, m, old)
+	if m.planReady {
+		t.Fatal("superseded plan result marked the plan ready")
+	}
+	if m.plan.Source == "STALE" {
+		t.Fatal("superseded plan result overwrote the current plan")
+	}
+}
+
+// sourceAwarePhases returns phases whose discovery and version listing depend
+// on the source chosen in the wizard, recording per-source calls.
+func sourceAwarePhases(calls *phaseCalls, versionCalls *[]string) (WizardPhases, *string) {
+	src := new(string)
+	catalogs := map[string][]discovery.DiscoveredSkill{
+		"srcA": fakeSkills("a1", "a2", "a3"),
+		"srcB": fakeSkills("b1", "b2", "b3"),
+	}
+	phases := WizardPhases{
+		SourceChosen: func(v string) { *src = v },
+		Discover: func(context.Context) (app.DiscoverResult, error) {
+			calls.discover++
+			return app.DiscoverResult{Skills: catalogs[*src]}, nil
+		},
+		Versions: func(context.Context) (app.VersionList, error) {
+			*versionCalls = append(*versionCalls, *src)
+			return app.VersionList{Candidates: []app.VersionCandidate{
+				{Kind: app.VersionLatest, Label: "latest of " + *src},
+			}}, nil
+		},
+		Plan: func(_ context.Context, s *Session) (app.InstallPlan, error) {
+			calls.plan++
+			return app.InstallPlan{Source: s.Source}, nil
+		},
+		Execute: func(context.Context, app.InstallPlan, func(app.ProgressEvent)) (app.AddResult, error) {
+			calls.execute++
+			return app.AddResult{}, nil
+		},
+	}
+	return phases, src
+}
+
+func typeString(t *testing.T, m wizardModel, s string) wizardModel {
+	t.Helper()
+	for _, r := range s {
+		m = drive(t, m, key(string(r)))
+	}
+	return m
+}
+
+func TestWizard_SourceChangeResetsCatalogAndVersions(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	var versionCalls []string
+	phases, _ := sourceAwarePhases(&calls, &versionCalls)
+	m := newWizardModel(context.Background(), WizardConfig{Phases: phases})
+	m = start(t, m)
+	if m.step != stepSource {
+		t.Fatalf("step = %v, want source", m.step)
+	}
+
+	m = typeString(t, m, "srcA")
+	m = drive(t, m, key("enter")) // accept source; discovery lands
+	m = drive(t, m, key("enter")) // welcome → select
+	if v := m.View(); !strings.Contains(v, "a1") {
+		t.Fatalf("select does not show source A's skills:\n%s", v)
+	}
+
+	// Back to the source step and switch to source B (same skill count).
+	m = drive(t, m, key("esc"), key("esc"))
+	if m.step != stepSource {
+		t.Fatalf("step = %v, want source after backing out", m.step)
+	}
+	for range len("srcA") {
+		m = drive(t, m, key("backspace"))
+	}
+	m = typeString(t, m, "srcB")
+	m = drive(t, m, key("enter")) // accept source; discovery lands
+	m = drive(t, m, key("enter")) // welcome → select
+
+	view := m.View()
+	if strings.Contains(view, "a1") || !strings.Contains(view, "b1") {
+		t.Fatalf("select still shows source A's catalog after switching to B:\n%s", view)
+	}
+	m = drive(t, m, key(" "), key("enter")) // pick b1 → version step
+	if len(m.session.Selected) != 1 || m.session.Selected[0].ID != "b1" {
+		t.Fatalf("session.Selected = %+v, want b1 (what was shown)", m.session.Selected)
+	}
+
+	// The version listing must have been refetched for source B.
+	if len(versionCalls) < 2 || versionCalls[len(versionCalls)-1] != "srcB" {
+		t.Fatalf("version listing calls = %v, want a refetch for srcB", versionCalls)
+	}
+	if v := m.View(); !strings.Contains(v, "latest of srcB") {
+		t.Fatalf("version step shows stale listing:\n%s", v)
+	}
+}
+
+func TestWizard_ReconfirmDoesNotAliasEarlierPlanInput(t *testing.T) {
+	t.Parallel()
+
+	var seen [][]discovery.DiscoveredSkill
+	var calls phaseCalls
+	phases := fakePhases(&calls, fakeSkills("alpha", "beta"), nil)
+	phases.Plan = func(_ context.Context, s *Session) (app.InstallPlan, error) {
+		calls.plan++
+		seen = append(seen, s.Selected) // keep the header, not a copy: aliasing detector
+		return app.InstallPlan{Source: s.Source}, nil
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  phases,
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter")) // select alpha → preview
+	m = advanceToPreview(t, m)
+
+	// Back to selection, switch the choice to beta, re-confirm.
+	for i := 0; i < 4 && m.step != stepSelect; i++ {
+		m = drive(t, m, key("esc"))
+	}
+	m = drive(t, m, key(" "), key("down"), key(" "), key("enter")) // deselect alpha, select beta
+	m = advanceToPreview(t, m)
+
+	if len(seen) < 2 {
+		t.Fatalf("plan called %d times, want ≥2", len(seen))
+	}
+	if len(seen[0]) != 1 || seen[0][0].ID != "alpha" {
+		t.Fatalf("first plan input was mutated by the later confirmation: %+v", seen[0])
+	}
+	if len(seen[1]) != 1 || seen[1][0].ID != "beta" {
+		t.Fatalf("second plan input = %+v, want beta", seen[1])
+	}
+}
+
+func TestWizard_FlagAnsweredAgentsSurviveListingError(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	phases := fakePhases(&calls, fakeSkills("alpha"), nil)
+	phases.Agents = func(context.Context) ([]app.AgentChoice, error) {
+		return nil, errors.New("agent detection exploded")
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{
+			Source: "example/repo", SourceAnswered: true,
+			AgentIDs: []string{"claude"}, AgentsAnswered: true,
+		},
+		Phases: phases,
+	})
+	m = start(t, m)
+
+	if m.failed != nil {
+		t.Fatalf("wizard failed on an agents listing it never needed: %v", m.failed)
+	}
+	m = drive(t, m, key("enter"), key(" "), key("enter"))
+	m = advanceToPreview(t, m)
+	if m.step != stepPreview {
+		t.Fatalf("step = %v, want preview (agents step is flag-answered)", m.step)
+	}
+}
+
+func TestWizard_OnboardDiscoveryErrorReturnsToSource(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	var calls phaseCalls
+	phases, _ := sourceAwarePhases(&calls, new([]string))
+	inner := phases.Discover
+	phases.Discover = func(ctx context.Context) (app.DiscoverResult, error) {
+		attempts++
+		if attempts == 1 {
+			return app.DiscoverResult{}, errors.New("repository not found")
+		}
+		return inner(ctx)
+	}
+	m := newWizardModel(context.Background(), WizardConfig{Phases: phases})
+	m = start(t, m)
+
+	m = typeString(t, m, "srcA")
+	m = drive(t, m, key("enter")) // discover fails
+	if m.failed != nil {
+		t.Fatalf("discovery error was terminal; onboard must return to the source step: %v", m.failed)
+	}
+	if m.step != stepSource {
+		t.Fatalf("step = %v, want source with inline error", m.step)
+	}
+	if !strings.Contains(m.View(), "repository not found") {
+		t.Fatalf("inline error missing:\n%s", m.View())
+	}
+
+	// Correcting (same input, retry) proceeds.
+	m = drive(t, m, key("enter"))
+	if m.step != stepWelcome || m.failed != nil {
+		t.Fatalf("retry did not proceed: step=%v failed=%v", m.step, m.failed)
+	}
+}
+
+func TestWizardVersion_TypedModeResetsAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	vl := app.VersionList{Candidates: []app.VersionCandidate{{Kind: app.VersionLatest, Label: "latest"}}}
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, vl),
+	}))
+	m = drive(t, m, key("down"), key("enter")) // typed-ref row
+	m = typeString(t, m, "v1.2.3")
+	m = drive(t, m, key("enter")) // commit → forward
+
+	m = drive(t, m, key("esc")) // back to the version step
+	if m.step != stepVersion {
+		t.Fatalf("step = %v, want version", m.step)
+	}
+	if m.versionTyping {
+		t.Fatal("typed-input mode still active on re-entry")
+	}
+	m = drive(t, m, key("up")) // must navigate, not append to a stale buffer
+	if m.versionTyped != "" {
+		t.Fatalf("stale typed buffer: %q", m.versionTyped)
+	}
+}

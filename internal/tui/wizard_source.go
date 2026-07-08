@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/glapsfun/gskill/internal/app"
 )
 
 // The source-input step (US5): entering onboarding without a predefined
@@ -81,6 +83,9 @@ func (m wizardModel) acceptSource(value string) (wizardModel, tea.Cmd, bool) {
 		}
 	}
 	m.srcErr = ""
+	if value != m.session.Source {
+		m.resetSourceDerivedState()
+	}
 	m.session.Source = value
 	if m.phases.SourceChosen != nil {
 		m.phases.SourceChosen(value)
@@ -89,6 +94,28 @@ func (m wizardModel) acceptSource(value string) (wizardModel, tea.Cmd, bool) {
 	m.step = stepWelcome
 	m.markWelcomeLoading()
 	return m, m.welcomeLoads(), true
+}
+
+// resetSourceDerivedState clears everything computed from the previous source
+// so a source switch can never leak a stale catalog, version list, or plan
+// into the new flow (review finding). Agent choices are project-scoped and
+// survive.
+func (m *wizardModel) resetSourceDerivedState() {
+	m.disc = app.DiscoverResult{}
+	m.discovered = false
+	m.sel = newSelectorModel(nil)
+	m.selSource = ""
+	m.selErr = ""
+	m.session.Selected = nil
+	m.versions = app.VersionList{}
+	m.versionsLoading = false
+	m.versionCursor = 0
+	m.versionTyping = false
+	m.versionTyped = ""
+	m.session.Version, m.session.RefSpec, m.session.Commit, m.session.VersionLabel = "", "", "", ""
+	m.plan = app.InstallPlan{}
+	m.planReady = false
+	m.planning = false
 }
 
 func (m wizardModel) viewSource() string {

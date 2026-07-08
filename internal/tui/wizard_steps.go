@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 )
 
@@ -174,10 +175,13 @@ func (m wizardModel) confirmSelection() (wizardModel, tea.Cmd, bool) {
 		return m, nil, true
 	}
 	m.selErr = ""
-	m.session.Selected = m.session.Selected[:0]
+	// A fresh slice, never a truncate-and-reuse: an in-flight plan snapshot
+	// may still be reading the previous backing array (review finding).
+	selected := make([]discovery.DiscoveredSkill, 0, len(idx))
 	for _, i := range idx {
-		m.session.Selected = append(m.session.Selected, m.disc.Skills[i])
+		selected = append(selected, m.disc.Skills[i])
 	}
+	m.session.Selected = selected
 	next, cmd := m.goForward()
 	return next, cmd, true
 }
@@ -310,6 +314,10 @@ func (m wizardModel) versionTypedKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool
 			m.session.RefSpec = value
 		}
 		m.session.VersionLabel = value
+		// Leave input mode so re-entering the step navigates the list again
+		// instead of resuming a stale buffer (review finding).
+		m.versionTyping = false
+		m.versionTyped = ""
 		next, cmd := m.goForward()
 		return next, cmd, true
 	case tea.KeyEsc:

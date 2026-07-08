@@ -154,6 +154,9 @@ type agentsDoneMsg struct {
 type planDoneMsg struct {
 	plan app.InstallPlan
 	err  error
+	// gen ties the result to the startPlan call that requested it, so a
+	// superseded (backed-out, re-planned) request cannot land as current.
+	gen int
 }
 
 type wizProgressMsg app.ProgressEvent
@@ -188,8 +191,9 @@ type wizardModel struct {
 	disc        app.DiscoverResult
 
 	// Skill selection: the spec-009 selector embedded as a step (US1).
-	sel    selectorModel
-	selErr string
+	sel       selectorModel
+	selSource string // source the selector's items were built from
+	selErr    string
 
 	// Version step (US3).
 	versions        app.VersionList
@@ -209,7 +213,13 @@ type wizardModel struct {
 	planning      bool
 	planReady     bool
 	plan          app.InstallPlan
+	planGen       int // generation of the most recent startPlan request
 	previewOffset int // scroll offset into the preview body (bounded viewport)
+
+	// sourceEditable marks a run that began without a source (the onboard
+	// entry point): discovery failures return to the source step for inline
+	// correction instead of ending the wizard (US5/AC2).
+	sourceEditable bool
 
 	// Execution.
 	executing bool
@@ -239,17 +249,19 @@ func newWizardModel(ctx context.Context, cfg WizardConfig) wizardModel {
 		m.markWelcomeLoading()
 	} else {
 		m.step = stepSource
+		m.sourceEditable = true
 	}
 	return m
 }
 
 // markWelcomeLoading flags the async loads Init (or the source step) is about
 // to fire, so the welcome step renders loading states instead of empty data.
-// Version and agent listings are fetched only when their step will be shown.
+// Version and agent listings are fetched only when their step will be shown —
+// a flag-answered step must never fetch (or fail on) data it will not use.
 func (m *wizardModel) markWelcomeLoading() {
 	m.discovering = true
 	m.versionsLoading = m.phases.Versions != nil && !m.skipped(stepVersion) && len(m.versions.Candidates) == 0
-	m.agentsLoading = m.phases.Agents != nil && len(m.agentChoices) == 0
+	m.agentsLoading = m.phases.Agents != nil && !m.skipped(stepAgents) && len(m.agentChoices) == 0
 }
 
 // firstErrorProblem returns the first error-severity diagnostic message of a
@@ -309,15 +321,20 @@ func (m wizardModel) discoverCmd() tea.Cmd {
 }
 
 // startPlan launches phase 3 as a command; the preview renders when it lands.
+// The session snapshot deep-copies Selected so a later re-confirmation cannot
+// mutate the slice the in-flight plan is reading (review finding: data race).
 func (m *wizardModel) startPlan() tea.Cmd {
 	m.planning = true
 	m.planReady = false
+	m.planGen++
+	gen := m.planGen
 	plan := m.phases.Plan
 	ctx := m.ctx
 	session := m.session
+	session.Selected = append([]discovery.DiscoveredSkill(nil), m.session.Selected...)
 	return func() tea.Msg {
 		p, err := plan(ctx, &session)
-		return planDoneMsg{plan: p, err: err}
+		return planDoneMsg{plan: p, err: err, gen: gen}
 	}
 }
 
@@ -421,11 +438,14 @@ func (m *wizardModel) loadChoices(s stepID) tea.Cmd {
 }
 
 // syncSelector (re)builds the selection step from the discovery catalog while
-// preserving any earlier selection across back-navigation (FR-007).
+// preserving any earlier selection across back-navigation (FR-007). The guard
+// is the source identity — never the item count — so switching sources always
+// rebuilds even when the catalogs happen to be the same size (review finding).
 func (m *wizardModel) syncSelector() {
-	if len(m.sel.items) == len(m.disc.Skills) && len(m.disc.Skills) > 0 {
-		return // keep cursor, filter, and chosen state
+	if m.selSource == m.session.Source && len(m.sel.items) > 0 {
+		return // same catalog: keep cursor, filter, and chosen state
 	}
+	m.selSource = m.session.Source
 	items := make([]SkillItem, len(m.disc.Skills))
 	chosen := make(map[string]bool, len(m.session.Selected))
 	for _, s := range m.session.Selected {
@@ -486,21 +506,23 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// onDiscoverDone lands phase 1's result on the welcome step.
+// onDiscoverDone lands phase 1's result on the welcome step. In a source-
+// editable run (onboard), discovery failures — unreachable source, no skills —
+// return to the source step with an inline error so the user can correct the
+// input without the flow exiting (US5/AC2, review finding).
 func (m wizardModel) onDiscoverDone(msg discoverDoneMsg) (tea.Model, tea.Cmd) {
 	m.discovering = false
 	if msg.err != nil {
-		m.failed = msg.err
-		return m, nil
+		return m.discoverFailed(msg.err)
 	}
 	if len(msg.res.Skills) == 0 {
 		// Same category and message as the non-interactive path, so the exit
 		// code matches (edge case: repository with no skills).
-		m.failed = fmt.Errorf("%w: no SKILL.md found in source", errs.ErrSourceUnavailable)
-		return m, nil
+		return m.discoverFailed(fmt.Errorf("%w: no SKILL.md found in source", errs.ErrSourceUnavailable))
 	}
 	m.discovered = true
 	m.disc = msg.res
+	m.syncSelector()
 	if m.phases.ResolveSelection != nil && !m.session.SkillsAnswered {
 		selected, err := m.phases.ResolveSelection(m.ctx, m.disc)
 		if err != nil {
@@ -513,10 +535,34 @@ func (m wizardModel) onDiscoverDone(msg discoverDoneMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// discoverFailed routes a discovery failure: back to the source step with an
+// inline error when the source is user-editable, terminal otherwise (`add`).
+func (m wizardModel) discoverFailed(err error) (tea.Model, tea.Cmd) {
+	if !m.sourceEditable {
+		m.failed = err
+		return m, nil
+	}
+	m.srcErr = err.Error()
+	m.step = stepSource
+	if n := len(m.history); n > 0 && m.history[n-1] == stepSource {
+		m.history = m.history[:n-1]
+	}
+	return m, nil
+}
+
 // onPlanDone lands phase 3's plan on the preview, auto-approving for --yes
-// sessions when nothing conflicts.
+// sessions when nothing conflicts. Results from superseded requests are
+// dropped, and a result arriving after the user navigated away never
+// auto-approves — re-entering the preview always recomputes (review finding:
+// stale plan must not install against edited answers).
 func (m wizardModel) onPlanDone(msg planDoneMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.planGen {
+		return m, nil // superseded by a newer plan request
+	}
 	m.planning = false
+	if m.step != stepPreview {
+		return m, nil // user backed out; enterStep(stepPreview) will re-plan
+	}
 	if msg.err != nil {
 		m.failed = msg.err
 		return m, nil
