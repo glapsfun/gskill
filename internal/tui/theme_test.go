@@ -46,3 +46,30 @@ func TestThemeAdapters_NotNil(t *testing.T) {
 		t.Error("Header style must be bold")
 	}
 }
+
+func TestHealthCell_Vocabulary(t *testing.T) {
+	t.Parallel()
+	th := DefaultTheme()
+	cases := []struct{ state, glyph string }{
+		{"ok", "●"},
+		{"ok-symlink", "●"},
+		{"ok-copy", "●"},
+		{"mode-mismatch", "◐"},
+		{"legacy-store", "◐"},
+		{"missing", "✗"},
+		{"broken", "✗"},
+		{"broken-link", "✗"},
+		{"foreign", "✗"},
+		{"corrupt", "✗"},
+		{"wrong-store-target", "✗"},
+	}
+	for _, c := range cases {
+		got := th.HealthCell(c.state)
+		if !strings.Contains(got, c.glyph) || !strings.Contains(got, c.state) {
+			t.Errorf("HealthCell(%q) = %q, want glyph %q and the raw state", c.state, got, c.glyph)
+		}
+	}
+	if got := th.HealthCell("someday-state"); got != "someday-state" {
+		t.Errorf("unknown state must render plain, got %q", got)
+	}
+}

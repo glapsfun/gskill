@@ -74,6 +74,24 @@ func (t Theme) StatusCell(status string) string {
 	}
 }
 
+// HealthCell renders an active-layer or agent-target health state with its
+// semantic glyph and color (internal/active and internal/app/health.go
+// vocabularies). Unknown states render plain so a new state is never hidden
+// or miscolored.
+func (t Theme) HealthCell(state string) string {
+	switch state {
+	case "ok", "ok-symlink", "ok-copy":
+		return t.Success.Render("● " + state)
+	case "mode-mismatch", "legacy-store":
+		return t.Warning.Render("◐ " + state)
+	case "missing", "broken", "broken-link", "foreign",
+		"corrupt", "wrong-store-target":
+		return t.Error.Render("✗ " + state)
+	default:
+		return state
+	}
+}
+
 // Panel returns a thin bordered panel style in the theme's border color.
 func (t Theme) Panel() lipgloss.Style {
 	return lipgloss.NewStyle().

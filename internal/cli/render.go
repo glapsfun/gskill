@@ -38,6 +38,34 @@ func renderListStyled(skills []app.ListedSkill) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// renderStatusStyled renders `gskill status` for a TTY.
+func renderStatusStyled(report app.StatusReport) string {
+	if len(report.Skills) == 0 {
+		return "0 skill(s)"
+	}
+	st := tui.DefaultTheme()
+	nameW, activeW := len("NAME"), len("ACTIVE")
+	for _, s := range report.Skills {
+		nameW, activeW = max(nameW, len(s.Name)), max(activeW, len(s.Active)+2)
+	}
+	pad := func(s string, w int) string { return s + strings.Repeat(" ", w-len(s)+2) }
+
+	var b strings.Builder
+	b.WriteString(st.TableHeader.Render(pad("NAME", nameW)+pad("ACTIVE", activeW)+"AGENTS") + "\n")
+	for _, s := range report.Skills {
+		b.WriteString(st.Accent.Render(pad(s.Name, nameW)))
+		// The glyph adds two visible runes; pad the raw state to keep columns.
+		b.WriteString(st.HealthCell(s.Active) + strings.Repeat(" ", activeW-len(s.Active)))
+		agents := make([]string, 0, len(s.Agents))
+		for _, ag := range s.Agents {
+			agents = append(agents, st.Subtitle.Render(ag.ID)+" "+st.HealthCell(ag.Health))
+		}
+		b.WriteString(strings.Join(agents, "  "))
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // renderInfoStyled renders `gskill info` for a TTY.
 func renderInfoStyled(info app.SkillInfo) string {
 	st := tui.DefaultTheme()

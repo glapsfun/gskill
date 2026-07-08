@@ -43,3 +43,35 @@ func TestRenderInfoStyled_Fields(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderStatusStyled_ColumnsAndGlyphs(t *testing.T) {
+	t.Parallel()
+	report := app.StatusReport{Skills: []app.SkillStatus{
+		{Name: "audience-ingestion", Active: "ok", Agents: []app.AgentStatus{
+			{ID: "claude", Health: "ok-symlink"}, {ID: "codex", Health: "ok-symlink"},
+		}},
+		{Name: "event-ingestion", Active: "ok", Agents: []app.AgentStatus{
+			{ID: "claude", Health: "missing"},
+		}},
+	}}
+	got := renderStatusStyled(report)
+	for _, want := range []string{"NAME", "ACTIVE", "AGENTS", "●", "✗", "audience-ingestion", "claude", "ok-symlink", "missing"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("styled status missing %q:\n%s", want, got)
+		}
+	}
+	// The ACTIVE column aligns: both data rows place their active glyph at the
+	// header's ACTIVE offset.
+	lines := strings.Split(got, "\n")
+	if idx := strings.Index(lines[0], "ACTIVE"); idx <= 0 ||
+		!strings.HasPrefix(strings.TrimLeft(lines[1][idx:], " "), "●") {
+		t.Errorf("ACTIVE column not aligned:\n%s", got)
+	}
+}
+
+func TestRenderStatusStyled_Empty(t *testing.T) {
+	t.Parallel()
+	if got := renderStatusStyled(app.StatusReport{}); got != "0 skill(s)" {
+		t.Errorf("empty styled status = %q", got)
+	}
+}

@@ -15,4 +15,8 @@ paths = [
   '''^specs/''',
   '''^.superpowers/''',
   '''^bin/''',
+  # .gskill data dirs (cache/store) hold downloaded third-party skill content —
+  # gitignored, and reference docs in the wild legitimately contain example
+  # tokens. Matches any depth so local test projects inside the repo pass too.
+  '''(^|/)\.gskill/''',
 ]
