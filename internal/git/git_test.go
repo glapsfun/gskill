@@ -5,9 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/git"
+	"github.com/glapsfun/gskill/internal/progress"
 )
 
 // fixtureRepo creates a local git repo with one commit tagged v1.0.0 and returns
@@ -209,6 +211,39 @@ func TestSystemRunner_LsRemoteHeads(t *testing.T) {
 	for _, name := range []string{"main", "dev"} {
 		if got[name] != commit {
 			t.Errorf("head %q = %q, want %q", name, got[name], commit)
+		}
+	}
+}
+
+// TestSystemRunner_FetchCommitWithSink: with a progress sink on the context,
+// FetchCommit must still materialize identically; local transport prints
+// little progress, so emitted events are only checked for well-formedness.
+func TestSystemRunner_FetchCommitWithSink(t *testing.T) {
+	t.Parallel()
+
+	repo, commit := fixtureRepo(t)
+	r := git.NewSystemRunner()
+
+	var mu sync.Mutex
+	var events []progress.Event
+	ctx := progress.WithSink(context.Background(), func(e progress.Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
+	})
+
+	dest := filepath.Join(t.TempDir(), "out")
+	if err := r.FetchCommit(ctx, repo, commit, dest); err != nil {
+		t.Fatalf("FetchCommit with sink: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "SKILL.md")); err != nil {
+		t.Errorf("SKILL.md not materialized: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, e := range events {
+		if e.Percent < -1 || e.Percent > 100 {
+			t.Errorf("malformed percent in %+v", e)
 		}
 	}
 }

@@ -90,10 +90,6 @@ func (m wizardModel) viewWelcome() string {
 	}
 	b.WriteString(".\n")
 	m.writeWelcomeDetection(&b)
-	b.WriteString("\n")
-	b.WriteString(m.st.Subtitle.Render("This guided flow will walk you through:") + "\n")
-	b.WriteString(m.st.Subtitle.Render("  1. selecting skills   2. choosing a version   3. picking target agents") + "\n")
-	b.WriteString(m.st.Subtitle.Render("  4. reviewing the plan  5. approving            6. installing") + "\n")
 	b.WriteString("\n" + m.st.Hint.Render("Nothing is written until you approve the plan.") + "\n")
 	for _, w := range m.disc.Warnings {
 		b.WriteString(m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")

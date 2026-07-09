@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/progress"
 )
 
 // installCmd installs all declared skills.
@@ -27,6 +28,10 @@ func (installCmd) Help() string {
 
 // Run executes `gskill install`. The --offline and --no-cache flags are global.
 func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
+	fp := out.fetchProgress()
+	if fp != nil {
+		ctx = progress.WithSink(ctx, fp.Sink())
+	}
 	res, err := a.Install(ctx, app.InstallRequest{
 		Root:           string(root),
 		Scope:          scopeFlag(c.Global),
@@ -36,6 +41,8 @@ func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root proje
 		NoCache:        g.NoCache,
 		UpdateLockfile: c.UpdateLockfile,
 	})
+	// Close before the summary prints so the live line never precedes it.
+	fp.Close()
 	if err != nil {
 		return err
 	}

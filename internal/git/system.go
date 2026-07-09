@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/progress"
 )
 
 // SystemRunner implements Runner by shelling out to the system git binary.
@@ -151,9 +152,21 @@ func (SystemRunner) FetchCommit(ctx context.Context, url, commit, dest string) e
 		return err
 	}
 
-	if _, err := runGit(ctx, dest, "fetch", "--quiet", "--depth", "1", "origin", commit); err != nil {
+	// With a progress sink on the context, the fetches trade --quiet for
+	// --progress and stream git's stderr through the parser; without one the
+	// exec path is byte-identical to before (spec 013).
+	fetch := func(args ...string) error {
+		sink := progress.FromContext(ctx)
+		if sink == nil {
+			_, err := runGit(ctx, dest, append([]string{"fetch", "--quiet"}, args...)...)
+			return err
+		}
+		_, err := runGitProgress(ctx, dest, sink, append([]string{"fetch", "--progress"}, args...)...)
+		return err
+	}
+	if err := fetch("--depth", "1", "origin", commit); err != nil {
 		// Some servers disallow fetching an arbitrary SHA shallowly; fall back.
-		if _, ferr := runGit(ctx, dest, "fetch", "--quiet", "origin"); ferr != nil {
+		if ferr := fetch("origin"); ferr != nil {
 			return ferr
 		}
 	}

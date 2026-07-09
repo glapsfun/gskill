@@ -18,6 +18,7 @@ import (
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
+	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/selection"
 	"github.com/glapsfun/gskill/internal/source"
@@ -684,8 +685,14 @@ func (a *App) installAll(ctx context.Context, p *project, m *manifest.Manifest, 
 	}
 	var out InstallResult
 	manifestChanged := false
-	for _, name := range sortedKeys(m.Skills) {
-		change, newMS, applyErr := a.installOne(ctx, p, lf, name, m.Skills[name], req, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
+	names := sortedKeys(m.Skills)
+	for k, name := range names {
+		// Stamp every progress event from this skill's resolve/fetch with its
+		// [k/N] position so the CLI can render a multi-repo counter (spec 013).
+		sctx := progress.Stamp(ctx, func(e *progress.Event) {
+			e.Skill, e.Index, e.Count = name, k+1, len(names)
+		})
+		change, newMS, applyErr := a.installOne(sctx, p, lf, name, m.Skills[name], req, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
 		if applyErr != nil {
 			return InstallResult{}, applyErr
 		}
@@ -726,12 +733,14 @@ func (a *App) installOne(ctx context.Context, p *project, lf *lockfile.Lockfile,
 	if err != nil {
 		return SkillChange{}, ms, err
 	}
+	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolving, Repo: ref.Display()})
 	rev, _, err := resolver.Resolve(ctx, a.git, ref, resolver.Requested{
 		Version: ms.Version, Ref: ms.Ref, Commit: ms.Commit,
 	})
 	if err != nil {
 		return SkillChange{}, ms, err
 	}
+	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolved, Repo: ref.Display(), Commit: rev.Commit})
 
 	// Backfill the always-present fields before building the lock entry, so the
 	// lockfile's `requested` is derived from the same pinned manifest entry and

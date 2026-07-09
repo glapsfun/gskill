@@ -12,6 +12,7 @@ import (
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
@@ -94,6 +95,10 @@ func (c addCmd) wizardWanted(ctx context.Context, out *Output, a *app.App, root 
 // (FR-024): scripts get non-interactive access to exactly what the wizard's
 // preview shows. Selection follows the same rules as a direct add.
 func (c addCmd) runDryRun(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+	if fp := out.fetchProgress(); fp != nil {
+		ctx = progress.WithSink(ctx, fp.Sink())
+		defer fp.Close()
+	}
 	disc, err := a.DiscoverSource(ctx, app.DiscoverRequest{
 		Root: string(root), Source: c.Source,
 		Version: c.Version, Ref: c.Ref, Commit: c.Commit,
@@ -250,6 +255,10 @@ func finishWizardOutcome(out *Output, outcome tui.WizardOutcome) error {
 
 // runDirect executes the pre-wizard, non-interactive add path unchanged.
 func (c addCmd) runDirect(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+	if fp := out.fetchProgress(); fp != nil {
+		ctx = progress.WithSink(ctx, fp.Sink())
+		defer fp.Close()
+	}
 	res, err := a.Add(ctx, app.AddRequest{
 		Root:        string(root),
 		Source:      c.Source,
