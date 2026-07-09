@@ -18,6 +18,7 @@ import (
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
+	"github.com/glapsfun/gskill/internal/progress"
 )
 
 // Shell tests (spec 011 T009): step advance and auto-advance (FR-004), back
@@ -1815,5 +1816,94 @@ func TestWizardPreview_RendersBorderedPanel(t *testing.T) {
 	}
 	if v := m.View(); !strings.Contains(v, "─") {
 		t.Errorf("preview has no panel border:\n%s", v)
+	}
+}
+
+// ---- Wizard discovery fetch progress -------------------------------------------
+
+// TestWizardWelcome_ShowsFetchProgress: while discovery is downloading the
+// repo, the welcome step surfaces the live fetch percent instead of only the
+// static resolving line.
+func TestWizardWelcome_ShowsFetchProgress(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha"), nil),
+	})
+	// The constructor marks discovery in flight for a source-answered run.
+	if !m.discovering {
+		t.Fatal("precondition: welcome must be in the discovering state")
+	}
+
+	next, _ := m.Update(wizFetchMsg{
+		e:   progress.Event{Phase: progress.PhaseReceiving, Percent: 62, Detail: "4.1 MiB | 2.3 MiB/s"},
+		gen: m.sourceGen,
+		ch:  make(chan tea.Msg, 1),
+	})
+	m, ok := next.(wizardModel)
+	if !ok {
+		t.Fatalf("Update returned %T, want wizardModel", next)
+	}
+	v := m.View()
+	if !strings.Contains(v, "62%") || !strings.Contains(v, "4.1 MiB | 2.3 MiB/s") {
+		t.Errorf("welcome does not show the live fetch percent:\n%s", v)
+	}
+}
+
+// TestWizardWelcome_StaleFetchProgressDropped: fetch events from an abandoned
+// source generation must not paint onto the current discovery.
+func TestWizardWelcome_StaleFetchProgressDropped(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha"), nil),
+	})
+
+	next, _ := m.Update(wizFetchMsg{
+		e:   progress.Event{Phase: progress.PhaseReceiving, Percent: 62},
+		gen: m.sourceGen - 1,
+		ch:  make(chan tea.Msg, 1),
+	})
+	m, ok := next.(wizardModel)
+	if !ok {
+		t.Fatalf("Update returned %T, want wizardModel", next)
+	}
+	if strings.Contains(m.View(), "62%") {
+		t.Errorf("stale fetch progress painted onto the current discovery:\n%s", m.View())
+	}
+}
+
+// TestWizardDiscovery_EmittedEventsReachTheModel: the discover phase runs
+// with a progress sink on its context; events it emits stream through the
+// wizard without blocking or leaking into the final state.
+func TestWizardDiscovery_EmittedEventsReachTheModel(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	phases := fakePhases(&calls, fakeSkills("alpha"), nil)
+	inner := phases.Discover
+	phases.Discover = func(ctx context.Context) (app.DiscoverResult, error) {
+		progress.Emit(ctx, progress.Event{Phase: progress.PhaseReceiving, Percent: 40})
+		progress.Emit(ctx, progress.Event{Phase: progress.PhaseDone})
+		return inner(ctx)
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  phases,
+	})
+	m = start(t, m) // drains the event stream and the done message
+	if m.discovering {
+		t.Fatal("discovery did not complete")
+	}
+	if m.fetch != nil {
+		t.Error("fetch progress not cleared after discovery completed")
+	}
+	m = drive(t, m, key("enter")) // welcome → select must still work
+	if m.step != stepSelect {
+		t.Errorf("step = %v, want select", m.step)
 	}
 }
