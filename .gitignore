@@ -38,6 +38,7 @@ go.work.sum
 /bin/
 
 # SDD
+.superpowers
 specs
 .specify
 .docs

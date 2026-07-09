@@ -38,5 +38,8 @@ func (statusCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	if len(lines) > 0 {
 		human = strings.Join(lines, "\n")
 	}
+	if out.Interactive() {
+		human = renderStatusStyled(report)
+	}
 	return out.Result(human, map[string]any{"skills": report.Skills})
 }

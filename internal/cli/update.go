@@ -42,5 +42,6 @@ func renderInstallChanges(out *Output, verb string, res app.InstallResult) error
 		})
 	}
 	human := fmt.Sprintf("%s %d skill(s); %d changed", verb, len(res.Skills), changed)
+	human = out.summary(human)
 	return out.Result(human, map[string]any{"changed": res.Changed, "skills": skills})
 }

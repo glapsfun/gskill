@@ -29,7 +29,13 @@ func (tuiCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot
 		if mdErr != nil {
 			markdown = "# " + s.Name + "\n\n_" + s.Status + "_\n"
 		}
-		rows = append(rows, tui.SkillRow{Name: s.Name, Status: s.Status, Markdown: markdown})
+		rows = append(rows, tui.SkillRow{
+			Name:     s.Name,
+			Version:  s.Version,
+			Source:   s.Source,
+			Status:   s.Status,
+			Markdown: markdown,
+		})
 	}
 	return tui.Run(rows, out.Interactive())
 }

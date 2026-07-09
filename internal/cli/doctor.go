@@ -43,7 +43,11 @@ func (doctorCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	_, _ = fmt.Fprintf(&b, "detected agents: %s\n", strings.Join(report.DetectedAgents, ", "))
 	_, _ = fmt.Fprintf(&b, "warnings:        %d", len(report.Warnings))
 
-	return out.Result(b.String(), map[string]any{
+	human := b.String()
+	if out.Interactive() {
+		human = renderDoctorStyled(report)
+	}
+	return out.Result(human, map[string]any{
 		"git_available":   report.GitAvailable,
 		"detected_agents": report.DetectedAgents,
 		"requirements":    reqs,

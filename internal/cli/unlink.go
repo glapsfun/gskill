@@ -30,12 +30,14 @@ func (c unlinkCmd) Run(ctx context.Context, out *Output, a *app.App, root projec
 		return err
 	}
 
-	human := fmt.Sprintf("Unlinked %s from %s; %d agent(s) remain", c.Agent, c.Skill, len(res.RemainingAgents))
+	var human string
 	switch {
 	case res.Pruned:
-		human = fmt.Sprintf("Unlinked %s from %s and pruned the skill (no agents remain)", c.Agent, c.Skill)
+		human = out.summary(fmt.Sprintf("Unlinked %s from %s and pruned the skill (no agents remain)", c.Agent, c.Skill))
 	case res.Unreferenced:
-		human = fmt.Sprintf("Unlinked %s from %s; skill retained but unreferenced (run with --prune to remove)", c.Agent, c.Skill)
+		human = out.warnSummary(fmt.Sprintf("Unlinked %s from %s; skill retained but unreferenced (run with --prune to remove)", c.Agent, c.Skill))
+	default:
+		human = out.summary(fmt.Sprintf("Unlinked %s from %s; %d agent(s) remain", c.Agent, c.Skill, len(res.RemainingAgents)))
 	}
 	return out.Result(human, map[string]any{
 		"skill":            res.Skill,

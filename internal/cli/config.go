@@ -74,6 +74,9 @@ func (configListCmd) Run(out *Output) error {
 		human += fmt.Sprintf("%s = %s\n", k, values[k])
 		obj[k] = values[k]
 	}
+	if out.Interactive() {
+		human = renderConfigListStyled(values)
+	}
 	return out.Result(human, obj)
 }
 

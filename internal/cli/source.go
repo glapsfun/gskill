@@ -61,7 +61,11 @@ func (c sourceListCmd) Run(ctx context.Context, out *Output, a *app.App) error {
 		items = append(items, item{s.ID, s.DisplayName, s.Description, s.RepoPath, s.Valid})
 		lines = append(lines, fmt.Sprintf("%-30s %-8s %s", s.ID, validity(s.Valid), pathOrRoot(s.RepoPath)))
 	}
-	return out.Result(strings.Join(lines, "\n"), items)
+	human := strings.Join(lines, "\n")
+	if out.Interactive() {
+		human = renderSkillCatalogStyled(res.Skills)
+	}
+	return out.Result(human, items)
 }
 
 // sourceInspectCmd implements `gskill source inspect`.
@@ -138,6 +142,8 @@ func (c sourceCheckCmd) Run(ctx context.Context, out *Output, a *app.App) error 
 	human := "no problems found"
 	if report.HasProblems() {
 		human = strings.Join(lines, "\n")
+	} else {
+		human = out.summary(human)
 	}
 	if rErr := out.Result(human, map[string]any{"invalid": invalid, "duplicates": dups}); rErr != nil {
 		return rErr

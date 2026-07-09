@@ -118,7 +118,11 @@ func (c addCmd) runDryRun(ctx context.Context, out *Output, a *app.App, root pro
 	if err != nil {
 		return err
 	}
-	return out.Result(renderPlanText(plan), plan)
+	human := renderPlanText(plan)
+	if out.Interactive() {
+		human = renderPlanTextStyled(plan)
+	}
+	return out.Result(human, plan)
 }
 
 // renderPlanText renders an InstallPlan for humans from the same shared line
@@ -303,7 +307,11 @@ func (c addCmd) renderList(out *Output, res app.AddResult) error {
 		}
 		lines = append(lines, fmt.Sprintf("%-30s %-10s %s", s.ID, mark, path))
 	}
-	return out.Result(strings.Join(lines, "\n"), items)
+	human := strings.Join(lines, "\n")
+	if out.Interactive() {
+		human = renderSkillCatalogStyled(res.Listed)
+	}
+	return out.Result(human, items)
 }
 
 // renderInstalled prints the installed skills.
@@ -313,6 +321,7 @@ func (c addCmd) renderInstalled(out *Output, res app.AddResult) error {
 		names = append(names, s.Name)
 	}
 	human := fmt.Sprintf("Installed %d skill(s): %s", len(res.Installed), strings.Join(names, ", "))
+	human = out.summary(human)
 	return out.Result(human, map[string]any{
 		"installed": res.Installed,
 		"warnings":  res.Warnings,

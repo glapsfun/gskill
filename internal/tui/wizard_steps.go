@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
@@ -90,9 +92,9 @@ func (m wizardModel) viewWelcome() string {
 	m.writeWelcomeDetection(&b)
 	b.WriteString("\n")
 	b.WriteString(m.st.Subtitle.Render("This guided flow will walk you through:") + "\n")
-	b.WriteString("  1. selecting skills   2. choosing a version   3. picking target agents\n")
-	b.WriteString("  4. reviewing the plan  5. approving            6. installing\n")
-	b.WriteString("\nNothing is written until you approve the plan.\n")
+	b.WriteString(m.st.Subtitle.Render("  1. selecting skills   2. choosing a version   3. picking target agents") + "\n")
+	b.WriteString(m.st.Subtitle.Render("  4. reviewing the plan  5. approving            6. installing") + "\n")
+	b.WriteString("\n" + m.st.Hint.Render("Nothing is written until you approve the plan.") + "\n")
 	for _, w := range m.disc.Warnings {
 		b.WriteString(m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")
 	}
@@ -255,6 +257,73 @@ func (m wizardModel) versionsCmd() tea.Cmd {
 	}
 }
 
+// buildVersionForm constructs the candidate select; the synthetic last option
+// (index len(candidates)) opens the typed-ref input (FR-012). The pick target
+// is heap-allocated (see buildAgentForm). Rebuilds (resize, back-navigation)
+// land the cursor on the previously highlighted candidate — Value positions
+// the select on the option matching the seeded pick — so a resize mid-scroll
+// or a return visit never silently resets the choice to the first option.
+func (m *wizardModel) buildVersionForm() {
+	prev := 0
+	if m.versionPick != nil {
+		prev = *m.versionPick
+	}
+	if m.versionSel != nil {
+		if v, ok := m.versionSel.Hovered(); ok {
+			prev = v
+		}
+	}
+	pick := new(int)
+	if prev > 0 && prev <= len(m.versions.Candidates) {
+		*pick = prev
+	}
+	opts := make([]huh.Option[int], 0, len(m.versions.Candidates)+1)
+	for i, c := range m.versions.Candidates {
+		label := Sanitize(c.Label)
+		if c.Metadata != "" {
+			label += "  " + Sanitize(c.Metadata)
+		}
+		opts = append(opts, huh.NewOption(label, i))
+	}
+	opts = append(opts, huh.NewOption("type an exact ref or commit…", len(m.versions.Candidates)))
+	sel := huh.NewSelect[int]().
+		Title("").
+		Options(opts...).
+		// One frame row is reserved for the overflow marker under the list.
+		Height(pageFor(m.height, wizardReservedRows+1)).
+		Value(pick)
+	m.versionPick = pick
+	m.versionSel = sel
+	// huh enables '/'-filtering on selects by default, but the wizard's
+	// contract keys (q cancel, b/esc back) are intercepted before the form
+	// sees them — typing them into a filter would abandon the step — so the
+	// filter is disabled, matching the agents multi-select.
+	keymap := huh.NewDefaultKeyMap()
+	keymap.Select.Filter.SetEnabled(false)
+	m.versionForm = huh.NewForm(huh.NewGroup(sel)).
+		WithTheme(m.st.Huh()).
+		WithKeyMap(keymap).
+		WithShowHelp(false).
+		WithWidth(m.width)
+	m.versionForm.Init()
+	m.refForm = nil
+}
+
+// buildRefForm constructs the typed-ref input (esc returns to the list).
+func (m *wizardModel) buildRefForm() {
+	value := new(string)
+	in := huh.NewInput().
+		Title("Exact ref or commit").
+		Placeholder("v1.2.3, branch-name, or a 40-hex commit").
+		Value(value)
+	m.refValue = value
+	m.refForm = huh.NewForm(huh.NewGroup(in)).
+		WithTheme(m.st.Huh()).
+		WithShowHelp(false).
+		WithWidth(m.width)
+	m.refForm.Init()
+}
+
 func (m wizardModel) onVersionsDone(msg versionsDoneMsg) (tea.Model, tea.Cmd) {
 	if msg.gen != m.sourceGen {
 		return m, nil // listing from an abandoned source: drop
@@ -266,81 +335,93 @@ func (m wizardModel) onVersionsDone(msg versionsDoneMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.versions = msg.res
 	}
-	// A shrunken listing must never leave the cursor past the typed-ref row.
-	if m.versionCursor > len(m.versions.Candidates) {
-		m.versionCursor = len(m.versions.Candidates)
-	}
+	m.buildVersionForm()
 	return m, nil
 }
 
 func (m wizardModel) versionKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
-	if m.versionTyping {
-		return m.versionTypedKey(key)
+	if m.refForm != nil {
+		return m.refFormKey(key)
+	}
+	if m.versionForm == nil {
+		return m, nil, false
 	}
 	switch key.String() {
-	case keyUp, "k":
-		if m.versionCursor > 0 {
-			m.versionCursor--
-		}
-		return m, nil, true
-	case keyDown, "j":
-		// The row after the last candidate is the typed-exact-ref entry.
-		if m.versionCursor < len(m.versions.Candidates) {
-			m.versionCursor++
-		}
-		return m, nil, true
-	case keyEnter:
-		if m.versionCursor == len(m.versions.Candidates) {
-			m.versionTyping = true
-			return m, nil, true
-		}
-		m.applyVersionChoice()
-		next, cmd := m.goForward()
-		return next, cmd, true
+	case "q", keyCtrlC, keyEsc, "b":
+		return m, nil, false // contract keys: the shell handles cancel/back
 	}
-	return m, nil, false
+	next, cmd := m.versionFormMsg(key)
+	return next, cmd, true
 }
 
-// versionTypedKey edits and applies a typed exact ref or commit (FR-012): a
-// full 40-hex value pins a commit, anything else is requested as a ref.
-func (m wizardModel) versionTypedKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
-	switch key.Type { //nolint:exhaustive // enter/esc here; editing is the shared lineInput
-	case tea.KeyEnter:
-		value := strings.TrimSpace(m.versionInput.value)
-		if value == "" {
-			m.versionTyping = false
-			return m, nil, true
-		}
-		m.session.Version, m.session.RefSpec, m.session.Commit = "", "", ""
-		if git.IsFullSHA(value) {
-			m.session.Commit = value
-		} else {
-			m.session.RefSpec = value
-		}
-		m.session.VersionLabel = value
-		// Leave input mode so re-entering the step navigates the list again
-		// instead of resuming a stale buffer (review finding).
-		m.versionTyping = false
-		m.versionInput = newLineInput()
-		next, cmd := m.goForward()
-		return next, cmd, true
-	case tea.KeyEsc:
-		m.versionTyping = false
-		return m, nil, true
-	default:
-		m.versionInput.handleKey(key)
-		return m, nil, true
+// versionFormMsg drives the candidate list with any message and lands
+// completion: a candidate advances the wizard, the synthetic last option
+// swaps in the typed-ref input.
+func (m wizardModel) versionFormMsg(msg tea.Msg) (wizardModel, tea.Cmd) {
+	next, cmd := m.versionForm.Update(msg)
+	if f, ok := next.(*huh.Form); ok {
+		m.versionForm = f
 	}
+	if m.versionForm.State != huh.StateCompleted {
+		return m, cmd
+	}
+	if *m.versionPick == len(m.versions.Candidates) {
+		m.buildRefForm()
+		return m, nil
+	}
+	m.applyVersionChoice()
+	return m.goForward()
 }
 
-// applyVersionChoice writes the highlighted candidate into the session's
+// refFormKey drives the typed-ref input: esc cancels the input and rebuilds
+// the list (never leaves the step); everything else goes to the form.
+func (m wizardModel) refFormKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
+	switch key.String() {
+	case keyEsc:
+		m.buildVersionForm()
+		return m, nil, true
+	case keyCtrlC:
+		return m, nil, false // shell: cancel
+	}
+	next, cmd := m.refFormMsg(key)
+	return next, cmd, true
+}
+
+// refFormMsg drives the typed-ref form with any message. On completion a
+// full 40-hex value pins a commit, anything else is requested as a ref, and
+// an empty input returns to the candidate list (FR-012). The list form is
+// rebuilt either way so re-entering the step never resumes a stale buffer.
+func (m wizardModel) refFormMsg(msg tea.Msg) (wizardModel, tea.Cmd) {
+	next, cmd := m.refForm.Update(msg)
+	if f, ok := next.(*huh.Form); ok {
+		m.refForm = f
+	}
+	if m.refForm.State != huh.StateCompleted {
+		return m, cmd
+	}
+	value := strings.TrimSpace(*m.refValue)
+	m.buildVersionForm()
+	if value == "" {
+		return m, nil
+	}
+	m.session.Version, m.session.RefSpec, m.session.Commit = "", "", ""
+	if git.IsFullSHA(value) {
+		m.session.Commit = value
+	} else {
+		m.session.RefSpec = value
+	}
+	m.session.VersionLabel = value
+	return m.goForward()
+}
+
+// applyVersionChoice writes the picked candidate into the session's
 // requested pin (FR-012/FR-013); "latest" keeps default resolution.
 func (m *wizardModel) applyVersionChoice() {
 	if len(m.versions.Candidates) == 0 {
 		m.session.VersionLabel = "latest"
 		return
 	}
-	c := m.versions.Candidates[m.versionCursor]
+	c := m.versions.Candidates[*m.versionPick]
 	m.session.Version, m.session.RefSpec, m.session.Commit = "", "", ""
 	m.session.VersionLabel = c.Label
 	switch c.Kind {
@@ -356,7 +437,7 @@ func (m *wizardModel) applyVersionChoice() {
 func (m wizardModel) viewVersion() string {
 	var b strings.Builder
 	b.WriteString(m.header("Choose a version"))
-	if m.versionsLoading {
+	if m.versionsLoading || (m.versionForm == nil && m.refForm == nil) {
 		b.WriteString("⏳ Listing releases and branches…\n")
 		b.WriteString(m.hintLine("q cancel"))
 		return b.String()
@@ -365,47 +446,21 @@ func (m wizardModel) viewVersion() string {
 		b.WriteString(m.st.Warning.Render("⚠ version browsing unavailable: "+Sanitize(m.versions.DegradedReason)) + "\n")
 		b.WriteString(m.st.Subtitle.Render("\"latest\" will be used; a branch, tag, or commit can still be set with --ref/--commit.") + "\n\n")
 	}
-	rows := make([]string, 0, len(m.versions.Candidates)+1)
-	for i, c := range m.versions.Candidates {
-		cursor := "  "
-		label := Sanitize(c.Label)
-		if i == m.versionCursor {
-			cursor = m.st.Cursor.Render("❯") + " "
-			label = m.st.Selected.Render(label)
-		}
-		row := cursor + label
-		if c.Metadata != "" {
-			row += "  " + m.st.Subtitle.Render(Sanitize(c.Metadata))
-		}
-		rows = append(rows, row)
-	}
-
-	// Synthetic last row: type an exact ref or commit (FR-012).
-	typedCursor := "  "
-	typedLabel := "type an exact ref or commit…"
-	if m.versionCursor == len(m.versions.Candidates) {
-		typedCursor = m.st.Cursor.Render("❯") + " "
-		typedLabel = m.st.Selected.Render(typedLabel)
-	}
-	if m.versionTyping {
-		fmt.Fprintf(&b, "%s%s %s█\n", typedCursor, m.st.Selected.Render("ref:"), Sanitize(m.versionInput.value))
+	if m.refForm != nil {
+		b.WriteString(m.refForm.View())
 		b.WriteString(m.hintLine("enter apply · esc cancel input"))
 		return b.String()
 	}
-	rows = append(rows, typedCursor+typedLabel)
-
-	for _, line := range m.cursorWindow(rows, m.versionCursor) {
-		b.WriteString(line + "\n")
+	b.WriteString(m.versionForm.View())
+	if total := len(m.versions.Candidates) + 1; total > pageFor(m.height, wizardReservedRows+1) {
+		pos := ""
+		if v, ok := m.versionSel.Hovered(); ok {
+			pos = fmt.Sprintf("%d/%d · ", v+1, total)
+		}
+		b.WriteString(m.st.Hint.Render("  "+pos+"more with ↑/↓") + "\n")
 	}
 	b.WriteString(m.hintLine("↑/↓ move · enter choose · esc back · q cancel"))
 	return b.String()
-}
-
-// cursorWindow bounds rows to the terminal height, keeping the cursor row
-// visible, so long version lists never overflow a small terminal (FR-022).
-func (m wizardModel) cursorWindow(rows []string, cursor int) []string {
-	page := pageFor(m.height, wizardReservedRows)
-	return windowRows(rows, page, cursorOffset(cursor, page, len(rows)), m.st.Hint)
 }
 
 // ---- agents (US2) ------------------------------------------------------------
@@ -425,6 +480,50 @@ func (m wizardModel) agentsCmd() tea.Cmd {
 	}
 }
 
+// buildAgentForm constructs the agents multi-select with the detected agents
+// pre-selected (or the user's previous picks on re-entry), themed and
+// validated (≥1, same wording as before the huh port). The pick target is
+// heap-allocated: the form writes through this pointer while the wizard model
+// is copied by value between updates.
+func (m *wizardModel) buildAgentForm() {
+	prev := make(map[int]bool)
+	if m.agentPick != nil {
+		for _, i := range *m.agentPick {
+			prev[i] = true
+		}
+	}
+	pick := new([]int)
+	opts := make([]huh.Option[int], 0, len(m.agentChoices))
+	for i, c := range m.agentChoices {
+		label := Sanitize(c.DisplayName)
+		if c.Detected {
+			label += "  (detected)"
+		}
+		selected := c.Preselected
+		if len(prev) > 0 {
+			selected = prev[i]
+		}
+		opts = append(opts, huh.NewOption(label, i).Selected(selected))
+	}
+	ms := huh.NewMultiSelect[int]().
+		Title("").
+		Options(opts...).
+		Filterable(false).
+		Validate(func(v []int) error {
+			if len(v) == 0 {
+				return errors.New("select at least one agent (space toggles)")
+			}
+			return nil
+		}).
+		Value(pick)
+	m.agentPick = pick
+	m.agentForm = huh.NewForm(huh.NewGroup(ms)).
+		WithTheme(m.st.Huh()).
+		WithShowHelp(false).
+		WithWidth(m.width)
+	m.agentForm.Init()
+}
+
 func (m wizardModel) onAgentsDone(msg agentsDoneMsg) (tea.Model, tea.Cmd) {
 	m.agentsLoading = false
 	if msg.err != nil {
@@ -432,79 +531,67 @@ func (m wizardModel) onAgentsDone(msg agentsDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.agentChoices = msg.choices
-	for i, c := range m.agentChoices {
-		if c.Preselected {
-			m.agentChosen[i] = true
+	m.agentPick = nil // fresh listing: preselect from the choices, not stale picks
+	m.buildAgentForm()
+	return m, nil
+}
+
+func (m wizardModel) agentsKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
+	if m.agentForm == nil {
+		return m, nil, false
+	}
+	switch key.String() {
+	case "q", keyCtrlC, keyEsc, "b":
+		return m, nil, false // contract keys: the shell handles cancel/back
+	}
+	next, cmd := m.agentsFormMsg(key)
+	return next, cmd, true
+}
+
+// agentsFormMsg drives the agents form with any message (keys and huh's
+// internal submit/advance messages alike) and lands completion in the session.
+func (m wizardModel) agentsFormMsg(msg tea.Msg) (wizardModel, tea.Cmd) {
+	next, cmd := m.agentForm.Update(msg)
+	if f, ok := next.(*huh.Form); ok {
+		m.agentForm = f
+	}
+	if m.agentForm.State == huh.StateCompleted {
+		ids := make([]string, 0, len(*m.agentPick))
+		for _, i := range *m.agentPick {
+			ids = append(ids, m.agentChoices[i].ID)
+		}
+		m.session.AgentIDs = ids
+		return m.goForward()
+	}
+	return m, cmd
+}
+
+// stepMsg forwards non-key messages to the active step's form, so huh's
+// command-driven field submission and group advancement reach it.
+func (m wizardModel) stepMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.step == stepAgents && m.agentForm != nil {
+		return m.agentsFormMsg(msg)
+	}
+	if m.step == stepVersion {
+		if m.refForm != nil {
+			return m.refFormMsg(msg)
+		}
+		if m.versionForm != nil {
+			return m.versionFormMsg(msg)
 		}
 	}
 	return m, nil
 }
 
-func (m wizardModel) agentsKey(key tea.KeyMsg) (wizardModel, tea.Cmd, bool) {
-	switch key.String() {
-	case keyUp, "k":
-		if m.agentCursor > 0 {
-			m.agentCursor--
-		}
-		return m, nil, true
-	case keyDown, "j":
-		if m.agentCursor < len(m.agentChoices)-1 {
-			m.agentCursor++
-		}
-		return m, nil, true
-	case " ", "x":
-		m.agentChosen[m.agentCursor] = !m.agentChosen[m.agentCursor]
-		m.agentErr = ""
-		return m, nil, true
-	case keyEnter:
-		var ids []string
-		for i, c := range m.agentChoices {
-			if m.agentChosen[i] {
-				ids = append(ids, c.ID)
-			}
-		}
-		if len(ids) == 0 {
-			m.agentErr = "select at least one agent (space toggles)"
-			return m, nil, true
-		}
-		m.agentErr = ""
-		m.session.AgentIDs = ids
-		next, cmd := m.goForward()
-		return next, cmd, true
-	}
-	return m, nil, false
-}
-
 func (m wizardModel) viewAgents() string {
 	var b strings.Builder
 	b.WriteString(m.header("Choose target agents"))
-	if m.agentsLoading {
+	if m.agentsLoading || m.agentForm == nil {
 		b.WriteString("⏳ Detecting agents…\n")
 		b.WriteString(m.hintLine("q cancel"))
 		return b.String()
 	}
-	for i, c := range m.agentChoices {
-		cursor := "  "
-		if i == m.agentCursor {
-			cursor = m.st.Cursor.Render("❯") + " "
-		}
-		check := "[ ]"
-		if m.agentChosen[i] {
-			check = m.st.Selected.Render("[x]")
-		}
-		name := c.DisplayName
-		if i == m.agentCursor {
-			name = m.st.Selected.Render(name)
-		}
-		b.WriteString(cursor + check + " " + name)
-		if c.Detected {
-			b.WriteString("  " + m.st.Success.Render("(detected)"))
-		}
-		b.WriteString("\n")
-	}
-	if m.agentErr != "" {
-		b.WriteString(m.st.Error.Render(m.agentErr) + "\n")
-	}
+	b.WriteString(m.agentForm.View())
 	b.WriteString(m.hintLine("↑/↓ move · space toggle · enter continue · esc back · q cancel"))
 	return b.String()
 }
@@ -544,9 +631,9 @@ func (m wizardModel) viewPreview() string {
 	}
 
 	body := m.previewBody()
-	for _, line := range m.windowLines(body) {
-		b.WriteString(line + "\n")
-	}
+	lines := windowRows(body, pageFor(m.height, wizardReservedRows+2), m.previewOffset, m.st.Hint)
+	panel := m.st.Panel().Width(max(20, m.width-2))
+	b.WriteString(panel.Render(strings.Join(lines, "\n")) + "\n")
 
 	if len(m.plan.Conflicts) > 0 {
 		b.WriteString(m.hintLine("↑/↓ scroll · esc/b go back and edit · q cancel"))
@@ -574,7 +661,9 @@ func (m wizardModel) previewBody() []string {
 		case app.PlanLineAction:
 			lines = append(lines, "  + "+text)
 		case app.PlanLineFileOp:
-			lines = append(lines, "      "+text)
+			// Hint-styled to match renderPlanTextStyled: the two plan surfaces
+			// must not drift apart (FR-015/FR-024).
+			lines = append(lines, "      "+m.st.Hint.Render(text))
 		case app.PlanLineWarning:
 			lines = append(lines, m.st.Warning.Render("warning: "+text))
 		case app.PlanLineConflict:
@@ -598,12 +687,6 @@ const wizardReservedRows = 6
 // its spacer (2), and the hint footer (2).
 const wizardSelectReservedRows = 9
 
-// windowLines bounds body to the terminal height at the free-scroll preview
-// offset, so small terminals stay readable (FR-022, SC at 80×24).
-func (m wizardModel) windowLines(body []string) []string {
-	return windowRows(body, pageFor(m.height, wizardReservedRows), m.previewOffset, m.st.Hint)
-}
-
 // versionDisplay renders the chosen version for the preview and summary: the
 // user's picked label when one exists, else the shared app.RevisionLabel —
 // the same label `add --dry-run` prints for the identical plan.
@@ -626,7 +709,7 @@ func (m wizardModel) viewProgress() string {
 		}
 	}
 	for _, s := range m.session.Selected {
-		mark := "…"
+		mark := m.st.Hint.Render("…")
 		if done[s.ID] {
 			mark = m.st.Success.Render("✓")
 		}
@@ -657,10 +740,10 @@ func (m wizardModel) viewSummary() string {
 		b.WriteString("  " + m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")
 	}
 	b.WriteString("\n" + m.st.Subtitle.Render("Next steps:") + "\n")
-	b.WriteString("  gskill list      view installed skills\n")
-	b.WriteString("  gskill status    check per-agent health\n")
-	b.WriteString("  gskill update    advance versions later\n")
-	b.WriteString("  gskill remove    uninstall a skill\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill list") + "      " + m.st.Subtitle.Render("view installed skills") + "\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill status") + "    " + m.st.Subtitle.Render("check per-agent health") + "\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill update") + "    " + m.st.Subtitle.Render("advance versions later") + "\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill remove") + "    " + m.st.Subtitle.Render("uninstall a skill") + "\n")
 	b.WriteString(m.hintLine("enter/q exit"))
 	return b.String()
 }

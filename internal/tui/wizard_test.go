@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/glapsfun/gskill/internal/agent"
@@ -100,6 +101,11 @@ func runCmd(cmd tea.Cmd) []tea.Msg {
 		return out
 	}
 	if _, isQuit := msg.(tea.QuitMsg); isQuit {
+		return nil
+	}
+	if _, isBlink := msg.(cursor.BlinkMsg); isBlink {
+		// huh's text inputs re-arm a blink tick on every update: following it
+		// synchronously would loop forever, and it never changes behavior.
 		return nil
 	}
 	return []tea.Msg{msg}
@@ -537,7 +543,7 @@ func TestWizardAgents_ListsMarksAndPreselects(t *testing.T) {
 			t.Errorf("agents view missing %q:\n%s", want, view)
 		}
 	}
-	if !strings.Contains(view, "[x] Claude") {
+	if !strings.Contains(view, "[✓] Claude") {
 		t.Errorf("detected default agent not preselected (FR-014):\n%s", view)
 	}
 
@@ -584,6 +590,9 @@ func TestWizardAgents_RequiresAtLeastOne(t *testing.T) {
 
 // ---- US3: version step (spec 011 T025) -----------------------------------------
 
+// refV100 is the release ref the version-step tests pick and assert on.
+const refV100 = "v1.0.0"
+
 func versionPhases(calls *phaseCalls, vl app.VersionList) WizardPhases {
 	phases := fakePhases(calls, fakeSkills("alpha"), nil)
 	phases.Versions = func(context.Context) (app.VersionList, error) { return vl, nil }
@@ -608,7 +617,7 @@ func TestWizardVersion_PreselectsLatestAndPicksRelease(t *testing.T) {
 	vl := app.VersionList{Candidates: []app.VersionCandidate{
 		{Kind: app.VersionLatest, Label: "latest → v2.0.0"},
 		{Kind: app.VersionRelease, Label: "v2.0.0", Ref: "v2.0.0", Metadata: "c2"},
-		{Kind: app.VersionRelease, Label: "v1.0.0", Ref: "v1.0.0", Metadata: "c1"},
+		{Kind: app.VersionRelease, Label: refV100, Ref: refV100, Metadata: "c1"},
 		{Kind: app.VersionBranch, Label: "main", Ref: "main"},
 	}}
 	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
@@ -617,7 +626,7 @@ func TestWizardVersion_PreselectsLatestAndPicksRelease(t *testing.T) {
 	}))
 
 	view := m.View()
-	for _, want := range []string{"latest → v2.0.0", "v1.0.0", "main"} {
+	for _, want := range []string{"latest → v2.0.0", refV100, "main"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("version view missing %q:\n%s", want, view)
 		}
@@ -625,11 +634,142 @@ func TestWizardVersion_PreselectsLatestAndPicksRelease(t *testing.T) {
 
 	// Pick v1.0.0 (two rows down from the preselected latest).
 	m = drive(t, m, key("down"), key("down"), key("enter"))
-	if m.session.RefSpec != "v1.0.0" {
+	if m.session.RefSpec != refV100 {
 		t.Errorf("session.RefSpec = %q, want v1.0.0", m.session.RefSpec)
 	}
-	if m.session.VersionLabel != "v1.0.0" {
+	if m.session.VersionLabel != refV100 {
 		t.Errorf("session.VersionLabel = %q, want v1.0.0", m.session.VersionLabel)
+	}
+}
+
+func TestWizardVersion_ResizeKeepsHighlight(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	vl := app.VersionList{Candidates: []app.VersionCandidate{
+		{Kind: app.VersionLatest, Label: "latest → v2.0.0"},
+		{Kind: app.VersionRelease, Label: "v2.0.0", Ref: "v2.0.0"},
+		{Kind: app.VersionRelease, Label: refV100, Ref: refV100},
+	}}
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, vl),
+	}))
+
+	// Move onto v1.0.0, then resize (the form is rebuilt to re-bake its
+	// height); the highlight must survive, or enter right after a resize
+	// silently pins the first option instead of the chosen one.
+	m = drive(t, m, key("down"), key("down"), win(90, 28), key("enter"))
+	if m.session.RefSpec != refV100 {
+		t.Errorf("session.RefSpec = %q, want v1.0.0 (highlight lost on resize)", m.session.RefSpec)
+	}
+}
+
+func TestWizardVersion_BackNavigationKeepsPick(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	vl := app.VersionList{Candidates: []app.VersionCandidate{
+		{Kind: app.VersionLatest, Label: "latest → v2.0.0"},
+		{Kind: app.VersionRelease, Label: "v2.0.0", Ref: "v2.0.0"},
+		{Kind: app.VersionRelease, Label: refV100, Ref: refV100},
+	}}
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, vl),
+	}))
+
+	m = drive(t, m, key("down"), key("down"), key("enter")) // pick v1.0.0 → preview
+	if m.session.RefSpec != refV100 {
+		t.Fatalf("session.RefSpec = %q, want v1.0.0", m.session.RefSpec)
+	}
+	m = drive(t, m, key("esc")) // back to the version step
+	if m.step != stepVersion {
+		t.Fatalf("step = %v, want version after esc from preview", m.step)
+	}
+	m = drive(t, m, key("enter")) // confirm without moving
+	if m.session.RefSpec != refV100 {
+		t.Errorf("session.RefSpec = %q, want the earlier pick preserved across back-navigation", m.session.RefSpec)
+	}
+}
+
+func TestWizardVersion_SlashDoesNotOpenFilter(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	vl := app.VersionList{Candidates: []app.VersionCandidate{
+		{Kind: app.VersionLatest, Label: "latest → v2.0.0"},
+		{Kind: app.VersionRelease, Label: "v2.0.0", Ref: "v2.0.0"},
+	}}
+	m := toVersionStep(t, newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  versionPhases(&calls, vl),
+	}))
+
+	// huh's default '/' filter must stay disabled: the wizard intercepts q, b,
+	// and esc as contract keys before the form sees them, so typing a query
+	// containing those letters would abandon the step mid-word. With the
+	// filter enabled, '/z' would narrow the list to nothing; disabled, both
+	// keys are no-ops and every candidate keeps rendering.
+	m = drive(t, m, key("/"), key("z"))
+	if v := m.View(); !strings.Contains(v, "v2.0.0") || !strings.Contains(v, "latest → v2.0.0") {
+		t.Fatalf("'/z' narrowed the version list — the filter must be disabled:\n%s", v)
+	}
+	m = drive(t, m, key("down"), key("enter"))
+	if m.session.RefSpec != "v2.0.0" {
+		t.Errorf("session.RefSpec = %q, want v2.0.0 ('/' must be a no-op on the version list)", m.session.RefSpec)
+	}
+}
+
+// TestWizardVersion_SourceSwitchResetsHighlight: the highlight preserved
+// across rebuilds must come from the current source's list — a hover carried
+// over from the previous source would silently pre-seed the new list at the
+// old index instead of "latest".
+func TestWizardVersion_SourceSwitchResetsHighlight(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	var versionCalls []string
+	phases, src := sourceAwarePhases(&calls, &versionCalls)
+	phases.Versions = func(context.Context) (app.VersionList, error) {
+		versionCalls = append(versionCalls, *src)
+		return app.VersionList{Candidates: []app.VersionCandidate{
+			{Kind: app.VersionLatest, Label: "latest of " + *src},
+			{Kind: app.VersionRelease, Label: "v9.0.0", Ref: "v9.0.0"},
+		}}, nil
+	}
+	m := newWizardModel(context.Background(), WizardConfig{Phases: phases})
+	m = start(t, m)
+
+	m = typeString(t, m, "srcA")
+	m = drive(t, m, key("enter"))           // accept source; discovery lands
+	m = drive(t, m, key("enter"))           // welcome → select
+	m = drive(t, m, key(" "), key("enter")) // pick a skill → version step
+	if m.step != stepVersion {
+		t.Fatalf("step = %v, want version", m.step)
+	}
+	m = drive(t, m, key("down")) // hover v9.0.0 on source A
+
+	// Back out to the source step and switch to source B.
+	m = drive(t, m, key("esc"), key("esc"), key("esc"))
+	if m.step != stepSource {
+		t.Fatalf("step = %v, want source after backing out", m.step)
+	}
+	for range len("srcA") {
+		m = drive(t, m, key("backspace"))
+	}
+	m = typeString(t, m, "srcB")
+	m = drive(t, m, key("enter"))           // accept source; discovery lands
+	m = drive(t, m, key("enter"))           // welcome → select
+	m = drive(t, m, key(" "), key("enter")) // reselect a skill → version step
+	if m.step != stepVersion {
+		t.Fatalf("step = %v, want version for source B", m.step)
+	}
+
+	m = drive(t, m, key("enter")) // confirm without moving: must be latest
+	if m.session.RefSpec != "" || m.session.VersionLabel != "latest of srcB" {
+		t.Errorf("RefSpec = %q, VersionLabel = %q — source A's hover leaked into source B's list",
+			m.session.RefSpec, m.session.VersionLabel)
 	}
 }
 
@@ -1163,7 +1303,7 @@ func TestWizardWelcome_ReportsAgentsAndVersions(t *testing.T) {
 		return app.VersionList{Candidates: []app.VersionCandidate{
 			{Kind: app.VersionLatest, Label: "latest → v2.0.0"},
 			{Kind: app.VersionRelease, Label: "v2.0.0", Ref: "v2.0.0"},
-			{Kind: app.VersionRelease, Label: "v1.0.0", Ref: "v1.0.0"},
+			{Kind: app.VersionRelease, Label: refV100, Ref: refV100},
 			{Kind: app.VersionBranch, Label: "main", Ref: "main"},
 		}}, nil
 	}
@@ -1472,12 +1612,12 @@ func TestWizardVersion_TypedModeResetsAfterCommit(t *testing.T) {
 	if m.step != stepVersion {
 		t.Fatalf("step = %v, want version", m.step)
 	}
-	if m.versionTyping {
+	if m.refForm != nil {
 		t.Fatal("typed-input mode still active on re-entry")
 	}
-	m = drive(t, m, key("up")) // must navigate, not append to a stale buffer
-	if m.versionInput.value != "" {
-		t.Fatalf("stale typed buffer: %q", m.versionInput.value)
+	// Re-entry must land on a navigable candidate list, not a stale buffer.
+	if v := m.View(); !strings.Contains(v, "type an exact ref or commit") {
+		t.Fatalf("version list not shown on re-entry:\n%s", v)
 	}
 }
 
@@ -1631,5 +1771,49 @@ func TestWizardSelect_SpaceTogglesWhileFilterFocused(t *testing.T) {
 	m = drive(t, m, key("enter"))
 	if len(m.session.Selected) != 1 || m.session.Selected[0].ID != "beta" {
 		t.Errorf("selection = %+v, want beta", m.session.Selected)
+	}
+}
+
+func TestWizardAgents_EscGoesBackNotCancel(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	choices := []app.AgentChoice{
+		{ID: "claude", DisplayName: "Claude", Detected: true, Preselected: true},
+	}
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  agentPhases(&calls, choices),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter")) // → agents
+	if m.step != stepAgents {
+		t.Fatalf("step = %v, want agents", m.step)
+	}
+	m = drive(t, m, key("esc"))
+	if m.cancelled {
+		t.Fatal("esc on the agents step must go back, not cancel")
+	}
+	if m.step == stepAgents {
+		t.Fatalf("esc did not leave the agents step")
+	}
+}
+
+func TestWizardPreview_RendersBorderedPanel(t *testing.T) {
+	t.Parallel()
+
+	var calls phaseCalls
+	m := newWizardModel(context.Background(), WizardConfig{
+		Session: Session{Source: "example/repo", SourceAnswered: true},
+		Phases:  fakePhases(&calls, fakeSkills("alpha"), nil),
+	})
+	m = start(t, m)
+	m = drive(t, m, key("enter"), key(" "), key("enter")) // welcome → select alpha
+	m = advanceToPreview(t, m)
+	if m.step != stepPreview {
+		t.Fatalf("step = %v, want preview", m.step)
+	}
+	if v := m.View(); !strings.Contains(v, "─") {
+		t.Errorf("preview has no panel border:\n%s", v)
 	}
 }

@@ -57,6 +57,7 @@ func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root proje
 	if !res.Changed {
 		human = fmt.Sprintf("Up to date (%d skill(s), no changes)", len(res.Skills))
 	}
+	human = out.summary(human)
 	return out.Result(human, map[string]any{
 		"changed": res.Changed,
 		"skills":  skills,

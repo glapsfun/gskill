@@ -118,9 +118,11 @@ func (m *wizardModel) resetSourceDerivedState() {
 	m.session.Selected = nil
 	m.versions = app.VersionList{}
 	m.versionsLoading = false
-	m.versionCursor = 0
-	m.versionTyping = false
-	m.versionInput = newLineInput()
+	m.versionForm = nil
+	m.versionSel = nil // buildVersionForm seeds the highlight from it
+	m.refForm = nil
+	m.versionPick = nil
+	m.refValue = nil
 	m.session.Version, m.session.RefSpec, m.session.Commit, m.session.VersionLabel = "", "", "", ""
 	m.plan = app.InstallPlan{}
 	m.planReady = false

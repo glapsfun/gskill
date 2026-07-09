@@ -14,6 +14,7 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/selection"
+	"github.com/glapsfun/gskill/internal/tui"
 	"github.com/glapsfun/gskill/internal/version"
 )
 
@@ -107,7 +108,11 @@ func (versionCmd) Run(out *Output) error {
 	if out.JSON() {
 		return out.Result("", map[string]string{"version": version.Version()})
 	}
-	return out.Result(version.String(), nil)
+	human := version.String()
+	if out.Interactive() {
+		human = tui.DefaultTheme().Accent.Render(human)
+	}
+	return out.Result(human, nil)
 }
 
 // helpWrapWidth pins help wrapping so output is byte-identical regardless of
@@ -121,12 +126,7 @@ func grammarOptions() []kong.Option {
 	return []kong.Option{
 		kong.Name("gskill"),
 		kong.Description("Reproducible package manager for agentic AI skills."),
-		kong.ExplicitGroups([]kong.Group{
-			{Key: "core", Title: "CORE"},
-			{Key: "inspect", Title: "INSPECT"},
-			{Key: "project", Title: "PROJECT (manifest · lockfile · installed state)"},
-			{Key: "more", Title: "MORE"},
-		}),
+		kong.ExplicitGroups(helpGroupTitles),
 		kong.ConfigureHelp(kong.HelpOptions{
 			NoExpandSubcommands: true,
 			WrapUpperBound:      helpWrapWidth,
@@ -171,6 +171,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	options := append(grammarOptions(),
 		kong.Writers(stdout, stderr),
 		kong.Exit(func(int) { helpRequested = true }),
+		kong.Help(styledHelpPrinter(stdout)),
 	)
 	parser, err := kong.New(&root, options...)
 	if err != nil {

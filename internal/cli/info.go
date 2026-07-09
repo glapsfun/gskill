@@ -36,7 +36,11 @@ func (c infoCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	_, _ = fmt.Fprintf(&b, "  desc:    %s\n", info.Description)
 	_, _ = fmt.Fprintf(&b, "  agents:  %s\n", strings.Join(info.Agents, ", "))
 
-	return out.Result(strings.TrimRight(b.String(), "\n"), map[string]any{
+	human := strings.TrimRight(b.String(), "\n")
+	if out.Interactive() {
+		human = renderInfoStyled(info)
+	}
+	return out.Result(human, map[string]any{
 		"name":         info.Name,
 		"source":       info.Source,
 		"version":      info.Version,

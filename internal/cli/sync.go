@@ -48,6 +48,7 @@ func (c syncCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	if !res.UpToDate {
 		human = fmt.Sprintf("Reconciled %d skill(s) (%d changed); pruned %d", len(res.Reconciled), changed, len(res.Pruned))
 	}
+	human = out.summary(human)
 	return out.Result(human, map[string]any{
 		"reconciled": res.Reconciled,
 		"pruned":     res.Pruned,

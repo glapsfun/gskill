@@ -30,9 +30,9 @@ func (c checkCmd) Run(ctx context.Context, out *Output, a *app.App, root project
 		skills = append(skills, map[string]any{"name": s.Name, "status": s.Status})
 	}
 
-	human := fmt.Sprintf("Checked %d skill(s): no drift", len(report.Skills))
+	human := out.summary(fmt.Sprintf("Checked %d skill(s): no drift", len(report.Skills)))
 	if report.HasDrift {
-		human = fmt.Sprintf("Drift detected in %d skill(s)", countDrift(report.Skills))
+		human = out.warnSummary(fmt.Sprintf("Drift detected in %d skill(s)", countDrift(report.Skills)))
 	}
 	if rErr := out.Result(human, map[string]any{"has_drift": report.HasDrift, "skills": skills}); rErr != nil {
 		return rErr
