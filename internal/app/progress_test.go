@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/app"
@@ -82,7 +83,7 @@ func TestDiscoverSource_EmitsResolveAndFetchProgress(t *testing.T) {
 	// on a local fetch; assert the structural milestones around them.
 	got := milestones(events)
 	want := []progress.Phase{progress.PhaseResolving, progress.PhaseResolved, progress.PhaseFetching, progress.PhaseDone}
-	if !equalPhases(got, want) {
+	if !slices.Equal(got, want) {
 		t.Fatalf("milestones = %v, want %v (all events: %+v)", got, want, events)
 	}
 	if events[1].Commit == "" {
@@ -100,7 +101,7 @@ func TestDiscoverSource_EmitsResolveAndFetchProgress(t *testing.T) {
 	}
 	got = milestones(events)
 	want = []progress.Phase{progress.PhaseResolving, progress.PhaseResolved, progress.PhaseCached}
-	if !equalPhases(got, want) {
+	if !slices.Equal(got, want) {
 		t.Fatalf("cached milestones = %v, want %v", got, want)
 	}
 }
@@ -118,18 +119,6 @@ func milestones(events []progress.Event) []progress.Phase {
 		}
 	}
 	return out
-}
-
-func equalPhases(a, b []progress.Phase) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // TestInstall_StampsSkillAndCounter: `gskill install` over a two-skill

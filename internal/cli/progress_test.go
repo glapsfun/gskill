@@ -35,7 +35,7 @@ func TestFetchProgress_AddFlow(t *testing.T) {
 	}
 
 	sink(progress.Event{Phase: progress.PhaseFetching, Repo: "acme/skills", Commit: "a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0"})
-	if got := buf.String(); !strings.Contains(got, "Fetching acme/skills @ a1b2c3d\n") {
+	if got := buf.String(); !strings.Contains(got, "Fetching acme/skills @ a1b2c3d4e5f6\n") {
 		t.Fatalf("fetch header not persisted: %q", got)
 	}
 
@@ -45,9 +45,16 @@ func TestFetchProgress_AddFlow(t *testing.T) {
 		t.Fatalf("live bar missing percent/detail: %q", got)
 	}
 
-	sink(progress.Event{Phase: progress.PhaseDone, Repo: "acme/skills"})
+	sink(progress.Event{Phase: progress.PhaseDone, Repo: "acme/skills", Commit: "a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0"})
 	if !strings.HasSuffix(buf.String(), eraseLine) {
 		t.Fatalf("done (add path) must erase the live line and persist nothing: %q", buf.String())
+	}
+
+	// Execute-phase re-materialize is a cache hit on the commit the user just
+	// watched download: no misleading "(cached)" line may follow.
+	sink(progress.Event{Phase: progress.PhaseCached, Repo: "acme/skills", Commit: "a1b2c3d4e5f6a7b8c9d0a1b2c3d4e5f6a7b8c9d0"})
+	if strings.Contains(buf.String(), "(cached)") {
+		t.Fatalf("cache hit after a fresh download printed a cached line: %q", buf.String())
 	}
 }
 
@@ -75,8 +82,15 @@ func TestFetchProgress_InstallFlow(t *testing.T) {
 		Phase: progress.PhaseDone, Skill: "beta", Index: 2, Count: 3,
 		Commit: "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432",
 	})
-	if got := buf.String(); !strings.Contains(got, "✓ beta @ 9f8e7d6\n") {
+	if got := buf.String(); !strings.Contains(got, "✓ beta @ 9f8e7d6c5b4a\n") {
 		t.Fatalf("finished skill line missing: %q", got)
+	}
+
+	// A local-source skill finishes with no commit: the ✓ line must not
+	// render a dangling "@".
+	sink(progress.Event{Phase: progress.PhaseDone, Skill: "gamma", Index: 3, Count: 3, Repo: "/local/path"})
+	if got := buf.String(); !strings.Contains(got, "✓ gamma\n") || strings.Contains(got, "gamma @") {
+		t.Fatalf("local-source completion line wrong: %q", got)
 	}
 }
 
@@ -130,16 +144,19 @@ func TestFetchProgress_CloseErasesLiveLine(t *testing.T) {
 	}
 }
 
-// TestFetchProgress_SanitizesHostileNames: repo/skill/detail strings are
-// remote-origin and must never carry escape sequences to the terminal.
+// TestFetchProgress_SanitizesHostileNames: repo/skill/detail/commit strings
+// are remote-origin (the commit can come from a hostile manifest) and must
+// never carry escape sequences to the terminal (constitution VI).
 func TestFetchProgress_SanitizesHostileNames(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	f := newTestFetchProgress(&buf)
-	f.Sink()(progress.Event{Phase: progress.PhaseResolving, Repo: "evil\x1b[2Jrepo"})
+	sink := f.Sink()
+	sink(progress.Event{Phase: progress.PhaseResolving, Repo: "evil\x1b[2Jrepo"})
+	sink(progress.Event{Phase: progress.PhaseFetching, Repo: "acme/skills", Commit: "\x1b[2Jgarbage"})
 	if strings.Contains(buf.String(), "\x1b[2J") {
-		t.Fatalf("hostile repo name leaked an escape sequence: %q", buf.String())
+		t.Fatalf("hostile string leaked an escape sequence: %q", buf.String())
 	}
 }
 

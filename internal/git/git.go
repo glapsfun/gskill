@@ -1,9 +1,7 @@
 package git
 
 import (
-	"bytes"
 	"context"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -48,19 +46,11 @@ func redact(text string) string {
 }
 
 // runGit executes git with args (optionally in dir) and returns trimmed stdout,
-// classifying failures into typed errors with credentials redacted.
+// classifying failures into typed errors with credentials redacted. It shares
+// the exec path with runGitProgress (nil sink), so the two can never diverge
+// in classification or environment.
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		return "", classify(err, errb.String())
-	}
-	return strings.TrimRight(out.String(), "\n"), nil
+	return runGitProgress(ctx, dir, nil, args...)
 }
 
 // classify maps a git failure to a typed error using its stderr.

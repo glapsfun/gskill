@@ -687,11 +687,7 @@ func (a *App) installAll(ctx context.Context, p *project, m *manifest.Manifest, 
 	manifestChanged := false
 	names := sortedKeys(m.Skills)
 	for k, name := range names {
-		// Stamp every progress event from this skill's resolve/fetch with its
-		// [k/N] position so the CLI can render a multi-repo counter (spec 013).
-		sctx := progress.Stamp(ctx, func(e *progress.Event) {
-			e.Skill, e.Index, e.Count = name, k+1, len(names)
-		})
+		sctx := stampSkill(ctx, name, k+1, len(names))
 		change, newMS, applyErr := a.installOne(sctx, p, lf, name, m.Skills[name], req, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
 		if applyErr != nil {
 			return InstallResult{}, applyErr
@@ -718,6 +714,15 @@ func (a *App) installAll(ctx context.Context, p *project, m *manifest.Manifest, 
 	return out, nil
 }
 
+// stampSkill marks every progress event from one skill's resolve/fetch with
+// the skill's name and its [k/N] position, so the CLI can render a multi-repo
+// counter and per-skill completion lines.
+func stampSkill(ctx context.Context, name string, index, count int) context.Context {
+	return progress.Stamp(ctx, func(e *progress.Event) {
+		e.Skill, e.Index, e.Count = name, index, count
+	})
+}
+
 // installOne installs a single declared skill and updates lf in place. It
 // returns the (possibly backfilled) manifest entry so the caller can persist the
 // always-present fields; SkillChange.ManifestChanged reports whether it differs
@@ -733,14 +738,12 @@ func (a *App) installOne(ctx context.Context, p *project, lf *lockfile.Lockfile,
 	if err != nil {
 		return SkillChange{}, ms, err
 	}
-	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolving, Repo: ref.Display()})
 	rev, _, err := resolver.Resolve(ctx, a.git, ref, resolver.Requested{
 		Version: ms.Version, Ref: ms.Ref, Commit: ms.Commit,
 	})
 	if err != nil {
 		return SkillChange{}, ms, err
 	}
-	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolved, Repo: ref.Display(), Commit: rev.Commit})
 
 	// Backfill the always-present fields before building the lock entry, so the
 	// lockfile's `requested` is derived from the same pinned manifest entry and

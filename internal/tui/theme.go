@@ -30,10 +30,18 @@ type Theme struct {
 	TableHeader lipgloss.Style // column header rows
 }
 
+// accent is the palette's primary color, shared with AccentColor so
+// components needing a raw color (progress-bar fills) cannot drift from the
+// styles built on it.
+var accent = lipgloss.AdaptiveColor{Light: "#5B4FE9", Dark: "#8B83FF"}
+
+// AccentColor returns the theme's adaptive accent for components that need a
+// color rather than a style.
+func AccentColor() lipgloss.AdaptiveColor { return accent }
+
 // DefaultTheme returns the indigo-minimal palette.
 func DefaultTheme() Theme {
 	var (
-		accent  = lipgloss.AdaptiveColor{Light: "#5B4FE9", Dark: "#8B83FF"}
 		subtle  = lipgloss.AdaptiveColor{Light: "#6C6F85", Dark: "#9399B2"}
 		good    = lipgloss.AdaptiveColor{Light: "#1A7F37", Dark: "#3FB950"}
 		warning = lipgloss.AdaptiveColor{Light: "#9A6700", Dark: "#D29922"}

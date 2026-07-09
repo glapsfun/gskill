@@ -9,7 +9,6 @@ import (
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/manifest"
-	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
 )
@@ -99,14 +98,12 @@ func (a *App) DiscoverSource(ctx context.Context, req DiscoverRequest) (Discover
 	}
 	ref = promoteLocalGit(ref)
 
-	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolving, Repo: ref.Display()})
 	rev, warnings, err := resolver.Resolve(ctx, a.git, ref, resolver.Requested{
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
 	})
 	if err != nil {
 		return DiscoverResult{}, err
 	}
-	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolved, Repo: ref.Display(), Commit: rev.Commit})
 
 	p := openProject(req.Root)
 	mode := req.Mode

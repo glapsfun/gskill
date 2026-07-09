@@ -154,7 +154,7 @@ func (SystemRunner) FetchCommit(ctx context.Context, url, commit, dest string) e
 
 	// With a progress sink on the context, the fetches trade --quiet for
 	// --progress and stream git's stderr through the parser; without one the
-	// exec path is byte-identical to before (spec 013).
+	// exec path is byte-identical to before.
 	fetch := func(args ...string) error {
 		sink := progress.FromContext(ctx)
 		if sink == nil {

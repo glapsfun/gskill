@@ -37,12 +37,14 @@ func (a *App) installFrozen(ctx context.Context, req InstallRequest) (InstallRes
 
 	var out InstallResult
 	err = a.withLock(ctx, p, func() error {
-		for _, name := range sortedKeys(lf.Skills) {
+		names := sortedKeys(lf.Skills)
+		for k, name := range names {
 			ireq, reqErr := a.frozenRequest(p, name, lf.Skills[name], req)
 			if reqErr != nil {
 				return reqErr
 			}
-			if _, instErr := a.installerForScope(p, string(ireq.Scope)).Install(ctx, ireq); instErr != nil {
+			sctx := stampSkill(ctx, name, k+1, len(names))
+			if _, instErr := a.installerForScope(p, string(ireq.Scope)).Install(sctx, ireq); instErr != nil {
 				return instErr
 			}
 			out.Skills = append(out.Skills, SkillChange{

@@ -87,8 +87,10 @@ func TestParseFetchProgress(t *testing.T) {
 
 // TestProgressWriter_SplitsCRAndLF: git separates in-place progress frames
 // with \r; the writer must treat both \r and \n as line terminators, cope
-// with frames split across Write calls, and keep the raw stream for the
-// classify error path.
+// with frames split across Write calls, and keep non-progress diagnostics
+// for the classify error path while excluding the frames themselves — a
+// failed fetch must classify against a concise tail, not a screenful of
+// \r-separated progress.
 func TestProgressWriter_SplitsCRAndLF(t *testing.T) {
 	t.Parallel()
 
@@ -101,7 +103,7 @@ func TestProgressWriter_SplitsCRAndLF(t *testing.T) {
 		"00), 4.10 MiB | 2.30 MiB/s\r",
 		"Receiving objects: 100% (200/200), 6.60 MiB | 2.30 MiB/s, done.\n",
 		"Resolving deltas:  10% (5/50)\r",
-		"garbage that is not progress\n",
+		"fatal: early EOF\n",
 	}
 	for _, c := range chunks {
 		if _, err := w.Write([]byte(c)); err != nil {
@@ -127,10 +129,35 @@ func TestProgressWriter_SplitsCRAndLF(t *testing.T) {
 	}
 
 	raw := w.String()
-	for _, want := range []string{"garbage that is not progress", "Resolving deltas"} {
-		if !strings.Contains(raw, want) {
-			t.Errorf("raw stderr capture lost %q:\n%s", want, raw)
+	if !strings.Contains(raw, "fatal: early EOF") {
+		t.Errorf("raw capture lost the diagnostic line:\n%s", raw)
+	}
+	if strings.Contains(raw, "Receiving objects") || strings.Contains(raw, "\r") {
+		t.Errorf("raw capture must exclude progress frames and carriage returns:\n%q", raw)
+	}
+}
+
+// TestProgressWriter_CapsCapture: a very long non-progress stream is bounded,
+// keeping the tail where git prints its diagnostics.
+func TestProgressWriter_CapsCapture(t *testing.T) {
+	t.Parallel()
+
+	w := newProgressWriter(nil)
+	line := strings.Repeat("x", 1024)
+	for range 128 { // 128 KiB of noise
+		if _, err := w.Write([]byte(line + "\n")); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if _, err := w.Write([]byte("fatal: the remote end hung up\n")); err != nil {
+		t.Fatal(err)
+	}
+	raw := w.String()
+	if len(raw) > rawCaptureCap+len(line)+64 {
+		t.Errorf("capture grew past the cap: %d bytes", len(raw))
+	}
+	if !strings.Contains(raw, "fatal: the remote end hung up") {
+		t.Error("capture lost the trailing diagnostic")
 	}
 }
 

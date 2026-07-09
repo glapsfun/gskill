@@ -80,14 +80,15 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 			return lockErr
 		}
 		manifestChanged := false
-		for _, name := range targets {
+		for k, name := range targets {
 			ms, ok := m.Skills[name]
 			if !ok {
 				return errs.WithHint(
 					fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, name),
 					"run 'gskill list' to see installed skills")
 			}
-			change, newMS, applyErr := a.installOne(ctx, p, lf, name, ms, InstallRequest{Root: root}, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
+			sctx := stampSkill(ctx, name, k+1, len(targets))
+			change, newMS, applyErr := a.installOne(sctx, p, lf, name, ms, InstallRequest{Root: root}, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
 			if applyErr != nil {
 				return applyErr
 			}

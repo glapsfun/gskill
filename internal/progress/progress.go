@@ -1,6 +1,6 @@
 // Package progress carries a download-progress sink through context.Context
 // so the git/installer/app layers can report fetch progress to the CLI
-// without any signature changes (spec 013). Every emitter no-ops when no
+// without any signature changes. Every emitter no-ops when no
 // sink is installed, so non-interactive runs are structurally unchanged.
 package progress
 

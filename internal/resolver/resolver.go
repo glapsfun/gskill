@@ -8,6 +8,7 @@ import (
 	"github.com/Masterminds/semver/v3"
 
 	"github.com/glapsfun/gskill/internal/git"
+	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/source"
 )
 
@@ -32,12 +33,20 @@ type Revision struct {
 }
 
 // Resolve turns a source reference plus requested version into a Revision,
-// returning any advisory warnings (e.g. mutable refs, SC-008).
+// returning any advisory warnings (e.g. mutable refs, SC-008). Git sources
+// report the ls-remote round-trip through the context progress sink, so every
+// caller gets resolve progress without emitting its own.
 func Resolve(ctx context.Context, runner git.Runner, ref source.Ref, req Requested) (Revision, []string, error) {
 	if ref.Type == source.TypeLocal {
 		return Revision{RefKind: RefKindLocal, MutableRef: true}, nil, nil
 	}
-	return resolveGit(ctx, runner, ref, req)
+	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolving, Repo: ref.Display()})
+	rev, warnings, err := resolveGit(ctx, runner, ref, req)
+	if err != nil {
+		return rev, warnings, err
+	}
+	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolved, Repo: ref.Display(), Commit: rev.Commit})
+	return rev, warnings, nil
 }
 
 // resolveGit handles git sources by dispatching on which intent field is set.

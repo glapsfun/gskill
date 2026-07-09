@@ -12,7 +12,6 @@ import (
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
-	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
@@ -95,10 +94,8 @@ func (c addCmd) wizardWanted(ctx context.Context, out *Output, a *app.App, root 
 // (FR-024): scripts get non-interactive access to exactly what the wizard's
 // preview shows. Selection follows the same rules as a direct add.
 func (c addCmd) runDryRun(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
-	if fp := out.fetchProgress(); fp != nil {
-		ctx = progress.WithSink(ctx, fp.Sink())
-		defer fp.Close()
-	}
+	ctx, done := out.withFetchProgress(ctx)
+	defer done()
 	disc, err := a.DiscoverSource(ctx, app.DiscoverRequest{
 		Root: string(root), Source: c.Source,
 		Version: c.Version, Ref: c.Ref, Commit: c.Commit,
@@ -178,7 +175,9 @@ func (c addCmd) wizardSession(yes bool) tui.Session {
 }
 
 // runWizard drives the guided flow over the phased app API and maps its
-// outcome to the CLI contract (cancel → exit 130, zero writes).
+// outcome to the CLI contract (cancel → exit 130, zero writes). Deliberately
+// no out.withFetchProgress here: bubbletea owns the terminal, and the raw
+// stderr renderer would corrupt its screen.
 func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
 	// The Plan closure needs the discovery result the wizard obtained; the
 	// phases run strictly in order on one wizard, so a captured local is safe.
@@ -255,10 +254,8 @@ func finishWizardOutcome(out *Output, outcome tui.WizardOutcome) error {
 
 // runDirect executes the pre-wizard, non-interactive add path unchanged.
 func (c addCmd) runDirect(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
-	if fp := out.fetchProgress(); fp != nil {
-		ctx = progress.WithSink(ctx, fp.Sink())
-		defer fp.Close()
-	}
+	ctx, done := out.withFetchProgress(ctx)
+	defer done()
 	res, err := a.Add(ctx, app.AddRequest{
 		Root:        string(root),
 		Source:      c.Source,

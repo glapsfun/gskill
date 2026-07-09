@@ -19,7 +19,10 @@ func (repairCmd) Help() string {
 
 // Run executes `gskill project repair` (alias: `gskill repair`).
 func (repairCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+	ctx, done := out.withFetchProgress(ctx)
+	defer done()
 	res, err := a.Repair(ctx, string(root))
+	done()
 	if err != nil {
 		return err
 	}

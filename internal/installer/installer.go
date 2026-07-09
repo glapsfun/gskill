@@ -184,6 +184,10 @@ func (i *Installer) DiscoverAll(ctx context.Context, req Request, opts discovery
 // local sources, or a cached/fetched checkout for git sources.
 func (i *Installer) materialize(ctx context.Context, req Request) (string, error) {
 	if req.Ref.Type == source.TypeLocal {
+		// Local sources have nothing to fetch, but the terminal event still
+		// fires so a renderer's live line finishes instead of dangling on the
+		// last reported phase.
+		progress.Emit(ctx, progress.Event{Phase: progress.PhaseDone, Repo: req.Ref.Display()})
 		return req.Ref.LocalPath, nil
 	}
 
@@ -192,7 +196,7 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 		return "", fmt.Errorf("%w: git source resolved without a commit", errs.ErrSourceUnavailable)
 	}
 	// The installer knows the repo identity and the cache outcome, so it
-	// stamps both onto every progress event from here down (spec 013).
+	// stamps both onto every progress event from here down.
 	ctx = progress.Stamp(ctx, func(e *progress.Event) {
 		e.Repo, e.Commit = req.Ref.Display(), commit
 	})

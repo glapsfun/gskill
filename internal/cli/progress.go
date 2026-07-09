@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,18 +11,21 @@ import (
 
 	pbar "github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 
+	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
-// Live download-progress rendering for the plain CLI (spec 013): a single
-// in-place stderr line driven by progress events, with completed repos
-// persisted as ✓ lines above it. No bubbletea program — commands stay
-// synchronous and stdout (results, JSON) is never touched. The wizard paths
-// deliberately never get this renderer: bubbletea owns the terminal there.
+// Live download-progress rendering for the plain CLI: a single in-place
+// stderr line driven by progress events, with completed repos persisted as ✓
+// lines above it. No bubbletea program — commands stay synchronous and
+// stdout (results, JSON) is never touched. The wizard paths deliberately
+// never get this renderer: bubbletea owns the terminal there, and a raw
+// stderr writer would corrupt its screen.
 
 // eraseLiveLine returns the cursor to column 0 and clears the line.
 const eraseLiveLine = "\r\x1b[2K"
@@ -39,12 +43,14 @@ const tickInterval = 100 * time.Millisecond
 type fetchProgress struct {
 	mu     sync.Mutex
 	w      io.Writer
+	f      *os.File // w when it is a terminal; width source
 	st     tui.Theme
 	bar    pbar.Model
 	frames []string
 	frame  int
 	cur    *progress.Event // latest event driving the live line; nil = none
 	width  int
+	last   string // last written live line; identical frames are skipped
 	// seen dedups the persisted ✓ lines: add materializes the same commit at
 	// discovery time and again at execute time (a cache hit by then).
 	seen map[string]bool
@@ -53,18 +59,21 @@ type fetchProgress struct {
 	wg   sync.WaitGroup
 }
 
-// newFetchProgress builds a renderer writing to w at the given terminal
+// newFetchProgress builds a renderer writing to w at the given fallback
 // width. The spinner ticker is started separately (start) so tests can drive
 // frames deterministically.
 func newFetchProgress(w io.Writer, width int) *fetchProgress {
-	st := tui.DefaultTheme()
+	fill := tui.AccentColor().Light
+	if lipgloss.HasDarkBackground() {
+		fill = tui.AccentColor().Dark
+	}
 	bar := pbar.New(
 		pbar.WithWidth(barWidth),
 		pbar.WithoutPercentage(),
-		pbar.WithSolidFill("#8B83FF"), // theme accent (dark variant)
+		pbar.WithSolidFill(fill),
 	)
 	return &fetchProgress{
-		w: w, st: st, bar: bar, frames: spinner.Dot.Frames, width: width,
+		w: w, st: tui.DefaultTheme(), bar: bar, frames: spinner.Dot.Frames, width: width,
 		seen: make(map[string]bool),
 	}
 }
@@ -98,7 +107,8 @@ func (f *fetchProgress) Sink() progress.Sink {
 }
 
 // Close stops the ticker and erases any live line so the command's final
-// stdout summary starts on a clean row. Safe on a nil renderer.
+// stdout summary starts on a clean row. Safe on a nil renderer and safe to
+// call more than once.
 func (f *fetchProgress) Close() {
 	if f == nil {
 		return
@@ -106,16 +116,15 @@ func (f *fetchProgress) Close() {
 	if f.done != nil {
 		close(f.done)
 		f.wg.Wait()
+		f.done = nil
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.cur != nil {
-		f.cur = nil
-		_, _ = fmt.Fprint(f.w, eraseLiveLine)
-	}
+	f.clearLiveLocked()
 }
 
-// tick advances the spinner and redraws the live line.
+// tick advances the spinner and redraws the live line (identical frames are
+// skipped, so bar-only frames do not rewrite every tick).
 func (f *fetchProgress) tick() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -135,31 +144,33 @@ func (f *fetchProgress) handle(e progress.Event) {
 	switch e.Phase {
 	case progress.PhaseResolved:
 		// The single-repo add path persists the resolve round-trip; during a
-		// multi-repo install the per-skill ✓ line already tells the story.
+		// multi-repo run the per-skill ✓ line already tells the story.
 		if e.Count == 0 {
-			f.persistLocked(f.st.Hint.Render("resolving "+tui.Sanitize(e.Repo)+" … done"), nil)
+			f.persistLocked(f.st.Hint.Render("resolving " + tui.Sanitize(e.Repo) + " … done"))
 			return
 		}
 		f.setLiveLocked(e)
 	case progress.PhaseFetching:
-		f.persistLocked(
-			"Fetching "+f.st.Accent.Render(tui.Sanitize(e.Repo))+" @ "+shortSHA(e.Commit), &e)
+		f.persistLocked("Fetching " + f.st.Accent.Render(tui.Sanitize(e.Repo)) + " @ " + displayCommit(e.Commit))
+		f.setLiveLocked(e)
 	case progress.PhaseCached:
 		if f.announcedLocked(e) {
-			f.setLiveLocked(progress.Event{})
+			f.clearLiveLocked()
 			return
 		}
-		f.persistLocked(
-			f.st.Success.Render("✓ ")+tui.Sanitize(skillOrRepo(e))+f.st.Subtitle.Render(" (cached)"), nil)
+		f.persistLocked(f.st.Success.Render("✓ ") + tui.Sanitize(skillOrRepo(e)) + f.st.Subtitle.Render(" (cached)"))
 	case progress.PhaseDone:
-		if e.Skill != "" && !f.announcedLocked(e) {
-			f.persistLocked(
-				f.st.Success.Render("✓ ")+tui.Sanitize(e.Skill)+" @ "+shortSHA(e.Commit), nil)
+		if f.announcedLocked(e) || e.Skill == "" {
+			// Add path (or an already-announced unit): the command's own
+			// summary follows on stdout.
+			f.clearLiveLocked()
 			return
 		}
-		// Add path (or an already-announced unit): the command's own summary
-		// follows on stdout.
-		f.setLiveLocked(progress.Event{})
+		line := f.st.Success.Render("✓ ") + tui.Sanitize(e.Skill)
+		if e.Commit != "" {
+			line += " @ " + displayCommit(e.Commit)
+		}
+		f.persistLocked(line)
 	case progress.PhaseResolving, progress.PhaseCounting, progress.PhaseReceiving, progress.PhaseDeltas:
 		f.setLiveLocked(e)
 	}
@@ -176,39 +187,57 @@ func (f *fetchProgress) announcedLocked(e progress.Event) bool {
 	return false
 }
 
-// setLiveLocked replaces (or, for the zero event, clears) the live line.
-func (f *fetchProgress) setLiveLocked(e progress.Event) {
-	if e == (progress.Event{}) {
-		if f.cur != nil {
-			f.cur = nil
-			_, _ = fmt.Fprint(f.w, eraseLiveLine)
-		}
+// clearLiveLocked erases the live line, if any.
+func (f *fetchProgress) clearLiveLocked() {
+	if f.cur == nil {
 		return
 	}
+	f.cur = nil
+	f.last = ""
+	_, _ = fmt.Fprint(f.w, eraseLiveLine)
+}
+
+// setLiveLocked replaces the live line with the event's frame.
+func (f *fetchProgress) setLiveLocked(e progress.Event) {
 	f.cur = &e
 	f.redrawLocked()
 }
 
-// persistLocked writes line above the live region, then restores the live
-// line (replaced by next when non-nil).
-func (f *fetchProgress) persistLocked(line string, next *progress.Event) {
+// persistLocked writes line above the live region and leaves the live line
+// cleared; callers that keep a live frame set it afterwards.
+func (f *fetchProgress) persistLocked(line string) {
 	_, _ = fmt.Fprint(f.w, eraseLiveLine+line+"\n")
-	f.cur = next
-	if f.cur != nil {
-		f.redrawLocked()
-	}
+	f.cur = nil
+	f.last = ""
 }
 
-// redrawLocked renders the live line in place.
+// redrawLocked renders the live line in place, skipping writes when the
+// frame is byte-identical to the previous one (bar frames between ticks).
 func (f *fetchProgress) redrawLocked() {
 	if f.cur == nil {
 		return
 	}
 	line := f.frameFor(*f.cur)
-	if f.width > 0 {
-		line = ansi.Truncate(line, f.width-1, "…")
+	if w := f.termWidth(); w > 0 {
+		line = ansi.Truncate(line, w-1, "…")
 	}
+	if line == f.last {
+		return
+	}
+	f.last = line
 	_, _ = fmt.Fprint(f.w, eraseLiveLine+line)
+}
+
+// termWidth reports the current terminal width — re-queried live so a resize
+// mid-fetch cannot leave wrapped junk rows behind — with the construction
+// width as fallback.
+func (f *fetchProgress) termWidth() int {
+	if f.f != nil {
+		if w, _, err := term.GetSize(int(f.f.Fd())); err == nil && w > 0 {
+			return w
+		}
+	}
+	return f.width
 }
 
 // frameFor renders one live-line frame for the event.
@@ -266,12 +295,25 @@ func skillOrRepo(e progress.Event) string {
 	return e.Repo
 }
 
-// shortSHA abbreviates a commit for display.
-func shortSHA(commit string) string {
-	if len(commit) > 7 {
-		return commit[:7]
+// displayCommit abbreviates and sanitizes a commit for the terminal. The
+// commit string can come from a human-edited (or hostile) manifest, so it is
+// untrusted like every other remote-origin string (constitution VI).
+func displayCommit(commit string) string {
+	return tui.Sanitize(app.ShortCommit(commit))
+}
+
+// withFetchProgress installs the live download-progress renderer on ctx for
+// interactive runs and returns a done func that must run before the command
+// prints its final summary (idempotent; also safe under defer). Gated runs
+// (piped stdout, --json, --quiet, stderr not a terminal) get the context
+// unchanged and a no-op done.
+func (o *Output) withFetchProgress(ctx context.Context) (context.Context, func()) {
+	fp := o.fetchProgress()
+	if fp == nil {
+		return ctx, func() {}
 	}
-	return commit
+	var once sync.Once
+	return progress.WithSink(ctx, fp.Sink()), func() { once.Do(fp.Close) }
 }
 
 // fetchProgress returns a live download-progress renderer bound to stderr,
@@ -281,17 +323,10 @@ func (o *Output) fetchProgress() *fetchProgress {
 	if !o.interactive || o.json || o.quiet || !isTTY(o.stderr) {
 		return nil
 	}
-	f := newFetchProgress(o.stderr, stderrWidth(o.stderr))
+	f := newFetchProgress(o.stderr, 80)
+	if file, ok := o.stderr.(*os.File); ok {
+		f.f = file
+	}
 	f.start()
 	return f
-}
-
-// stderrWidth reports the terminal width of w, defaulting to 80.
-func stderrWidth(w io.Writer) int {
-	if file, ok := w.(*os.File); ok {
-		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 0 {
-			return width
-		}
-	}
-	return 80
 }
