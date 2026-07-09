@@ -335,7 +335,13 @@ func (m wizardModel) discoverCmd() tea.Cmd {
 	ch := make(chan tea.Msg, 64)
 	go func() {
 		sctx := progress.WithSink(ctx, func(e progress.Event) {
-			ch <- wizFetchMsg{e: e, gen: gen, ch: ch}
+			// Non-blocking: if the program quit mid-download nobody drains the
+			// channel, and a blocked sink would wedge git's stderr goroutine
+			// (and this one) until process exit. Dropping a frame is harmless.
+			select {
+			case ch <- wizFetchMsg{e: e, gen: gen, ch: ch}:
+			default:
+			}
 		})
 		res, err := discover(sctx)
 		ch <- discoverDoneMsg{res: res, err: err, gen: gen}

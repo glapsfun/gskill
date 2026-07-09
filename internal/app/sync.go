@@ -117,8 +117,10 @@ func (a *App) reconcileSkills(ctx context.Context, p *project, lf *lockfile.Lock
 	var out SyncResult
 	lockChanged := false
 	manifestChanged := false
-	for _, name := range sortedKeys(m.Skills) {
-		change, lc, mc, rErr := a.reconcileSkill(ctx, p, lf, m, name, desired[name], req)
+	names := sortedKeys(m.Skills)
+	for k, name := range names {
+		sctx := stampSkill(ctx, name, k+1, len(names))
+		change, lc, mc, rErr := a.reconcileSkill(sctx, p, lf, m, name, desired[name], req)
 		if rErr != nil {
 			return SyncResult{}, false, false, rErr
 		}

@@ -121,10 +121,10 @@ func milestones(events []progress.Event) []progress.Phase {
 	return out
 }
 
-// TestInstall_StampsSkillAndCounter: `gskill install` over a two-skill
-// manifest stamps every event with the skill name and its [k/N] position.
-func TestInstall_StampsSkillAndCounter(t *testing.T) {
-	t.Parallel()
+// twoSkillProject installs alpha and beta from two local git repos and
+// returns the project root and app, for exercising the reconcile commands.
+func twoSkillProject(t *testing.T) (string, *app.App) {
+	t.Helper()
 
 	root := projectWithAgent(t)
 	a := onboardApp()
@@ -134,16 +134,17 @@ func TestInstall_StampsSkillAndCounter(t *testing.T) {
 			t.Fatalf("add %s: %v", name, err)
 		}
 	}
+	return root, a
+}
 
-	var events []progress.Event
-	ctx := sinkCtx(&events)
-	if _, err := a.Install(ctx, app.InstallRequest{Root: root}); err != nil {
-		t.Fatalf("Install: %v", err)
-	}
+// assertStamped checks that every event carries a skill name and the [k/N]
+// counter, and that both skills appear at their sorted positions.
+func assertStamped(t *testing.T, events []progress.Event) {
+	t.Helper()
+
 	if len(events) == 0 {
-		t.Fatal("Install emitted no progress events")
+		t.Fatal("no progress events emitted")
 	}
-
 	seen := map[string][2]int{}
 	for _, e := range events {
 		if e.Skill == "" {
@@ -161,4 +162,58 @@ func TestInstall_StampsSkillAndCounter(t *testing.T) {
 	if got := seen["beta"]; got != [2]int{2, 2} {
 		t.Errorf("beta stamped %v, want [2 2]", got)
 	}
+}
+
+// TestInstall_StampsSkillAndCounter: every command that walks the per-skill
+// install pipeline stamps its events with the skill name and [k/N] position,
+// so the renderer can draw a multi-repo counter and per-skill ✓ lines.
+func TestInstall_StampsSkillAndCounter(t *testing.T) {
+	t.Parallel()
+
+	root, a := twoSkillProject(t)
+	var events []progress.Event
+	if _, err := a.Install(sinkCtx(&events), app.InstallRequest{Root: root}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	assertStamped(t, events)
+}
+
+func TestInstallFrozen_StampsSkillAndCounter(t *testing.T) {
+	t.Parallel()
+
+	root, a := twoSkillProject(t)
+	var events []progress.Event
+	if _, err := a.Install(sinkCtx(&events), app.InstallRequest{Root: root, Frozen: true}); err != nil {
+		t.Fatalf("frozen Install: %v", err)
+	}
+	assertStamped(t, events)
+}
+
+func TestUpdate_StampsSkillAndCounter(t *testing.T) {
+	t.Parallel()
+
+	root, a := twoSkillProject(t)
+	var events []progress.Event
+	if _, err := a.Update(sinkCtx(&events), root, nil); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	assertStamped(t, events)
+}
+
+func TestSync_StampsSkillAndCounter(t *testing.T) {
+	t.Parallel()
+
+	root, a := twoSkillProject(t)
+	// A healthy chain short-circuits with no installs (and no events); break
+	// the agent targets so sync actually re-materializes both skills.
+	for _, name := range []string{"alpha", "beta"} {
+		if err := os.RemoveAll(filepath.Join(root, ".claude", "skills", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var events []progress.Event
+	if _, err := a.Sync(sinkCtx(&events), app.SyncRequest{Root: root}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	assertStamped(t, events)
 }

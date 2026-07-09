@@ -36,7 +36,8 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 		if err != nil {
 			return fmt.Errorf("resolve store root: %w", err)
 		}
-		for _, name := range sortedKeys(lf.Skills) {
+		names := sortedKeys(lf.Skills)
+		for k, name := range names {
 			locked := lf.Skills[name]
 			h, hErr := a.evaluateSkill(p, name, locked, storeRoot, true)
 			if hErr != nil {
@@ -52,7 +53,8 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 			if reqErr != nil {
 				return reqErr
 			}
-			if _, instErr := a.installerForScope(p, string(ireq.Scope)).Install(ctx, ireq); instErr != nil {
+			sctx := stampSkill(ctx, name, k+1, len(names))
+			if _, instErr := a.installerForScope(p, string(ireq.Scope)).Install(sctx, ireq); instErr != nil {
 				return instErr
 			}
 			out.Repaired = append(out.Repaired, name)

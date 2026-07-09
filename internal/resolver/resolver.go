@@ -40,6 +40,11 @@ func Resolve(ctx context.Context, runner git.Runner, ref source.Ref, req Request
 	if ref.Type == source.TypeLocal {
 		return Revision{RefKind: RefKindLocal, MutableRef: true}, nil, nil
 	}
+	if req.Commit != "" {
+		// An explicit commit pin resolves without a network round-trip; a
+		// "resolving …" report would describe work that never happens.
+		return resolveGit(ctx, runner, ref, req)
+	}
 	progress.Emit(ctx, progress.Event{Phase: progress.PhaseResolving, Repo: ref.Display()})
 	rev, warnings, err := resolveGit(ctx, runner, ref, req)
 	if err != nil {
