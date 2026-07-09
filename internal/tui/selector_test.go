@@ -514,3 +514,59 @@ func TestSelector_InvalidRowShowsDescription(t *testing.T) {
 		t.Errorf("invalid rows must keep their description (FR-009):\n%s", v)
 	}
 }
+
+// --- Prefix-first filtering ------------------------------------------------
+
+// TestSelector_FilterPrefixWins: when any skill name starts with the query,
+// only prefix matches show — substring hits in other fields are suppressed,
+// so typing "s" narrows to s-* names instead of everything containing an s.
+func TestSelector_FilterPrefixWins(t *testing.T) {
+	t.Parallel()
+
+	its := []SkillItem{
+		{ID: "s3-sync", RepoPath: "skills/s3-sync", Description: "Syncs buckets", Valid: true},
+		{ID: "ssh-agent", RepoPath: "skills/ssh-agent", Description: "Manages keys", Valid: true},
+		{ID: "deploy", RepoPath: "skills/deploy", Description: "ships services", Valid: true},
+	}
+	m := update(t, newSelectorModel(its), key("/"), key("s"))
+	if len(m.visible) != 2 || m.visible[0] != 0 || m.visible[1] != 1 {
+		t.Fatalf("query 's': visible = %v, want [0 1] (prefix matches only)", m.visible)
+	}
+	m = update(t, m, key("s"))
+	if len(m.visible) != 1 || m.visible[0] != 1 {
+		t.Fatalf("query 'ss': visible = %v, want [1] (ssh-agent)", m.visible)
+	}
+}
+
+// TestSelector_FilterPrefixBeatsSubstringInName: a name merely containing the
+// query does not dilute the prefix matches.
+func TestSelector_FilterPrefixBeatsSubstringInName(t *testing.T) {
+	t.Parallel()
+
+	its := []SkillItem{
+		{ID: "py-lint", RepoPath: "skills/py-lint", Valid: true},
+		{ID: "numpy-helper", RepoPath: "skills/numpy-helper", Valid: true},
+	}
+	m := update(t, newSelectorModel(its), key("/"), key("p"), key("y"))
+	if len(m.visible) != 1 || m.visible[0] != 0 {
+		t.Fatalf("query 'py': visible = %v, want [0] (py-lint only)", m.visible)
+	}
+}
+
+// TestSelector_FilterFallsBackToSubstring: a query no name starts with still
+// searches name/path/description as before (FR-010 description search).
+func TestSelector_FilterFallsBackToSubstring(t *testing.T) {
+	t.Parallel()
+
+	its := []SkillItem{
+		{ID: "alpha", RepoPath: "skills/alpha", Description: "reviews pull requests", Valid: true},
+		{ID: "beta", RepoPath: "skills/beta", Description: "debugs kubernetes pods", Valid: true},
+	}
+	m := update(t, newSelectorModel(its), key("/"))
+	for _, r := range "kubernetes" {
+		m = update(t, m, key(string(r)))
+	}
+	if len(m.visible) != 1 || m.visible[0] != 1 {
+		t.Fatalf("query 'kubernetes': visible = %v, want [1] (description fallback)", m.visible)
+	}
+}
