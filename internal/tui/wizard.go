@@ -10,6 +10,7 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/progress"
 )
 
 // The guided onboarding wizard (spec 011). One Bubble Tea program owns a step
@@ -166,6 +167,16 @@ type planDoneMsg struct {
 
 type wizProgressMsg app.ProgressEvent
 
+// wizFetchMsg streams one download-progress observation from the discover
+// phase (which runs in a goroutine with a progress sink on its context). It
+// carries its own channel so the Update loop can re-arm the wait without the
+// model tracking the stream.
+type wizFetchMsg struct {
+	e   progress.Event
+	gen int
+	ch  chan tea.Msg
+}
+
 type executeDoneMsg struct {
 	res app.AddResult
 	err error
@@ -191,11 +202,13 @@ type wizardModel struct {
 	srcCursor      int // index into srcSuggestions; == len means the input row
 
 	// Discovery (welcome step). sourceGen identifies the current source's
-	// request wave; results from earlier waves are dropped.
+	// request wave; results from earlier waves are dropped. fetch is the
+	// latest download-progress observation, shown while discovering.
 	sourceGen   int
 	discovering bool
 	discovered  bool
 	disc        app.DiscoverResult
+	fetch       *progress.Event
 
 	// Skill selection: the spec-009 selector embedded as a step (US1).
 	sel       selectorModel
@@ -311,15 +324,30 @@ func (m *wizardModel) startDiscover() tea.Cmd {
 	return m.discoverCmd()
 }
 
-// discoverCmd is the flag-free phase-1 command builder.
+// discoverCmd is the flag-free phase-1 command builder. Discovery runs in a
+// goroutine with a progress sink on its context, so repo-download progress
+// streams into the program as wizFetchMsg while the phase works; the final
+// discoverDoneMsg closes the stream.
 func (m wizardModel) discoverCmd() tea.Cmd {
 	discover := m.phases.Discover
 	ctx := m.ctx
 	gen := m.sourceGen
-	return func() tea.Msg {
-		res, err := discover(ctx)
-		return discoverDoneMsg{res: res, err: err, gen: gen}
-	}
+	ch := make(chan tea.Msg, 64)
+	go func() {
+		sctx := progress.WithSink(ctx, func(e progress.Event) {
+			// Non-blocking: if the program quit mid-download nobody drains the
+			// channel, and a blocked sink would wedge git's stderr goroutine
+			// (and this one) until process exit. Dropping a frame is harmless.
+			select {
+			case ch <- wizFetchMsg{e: e, gen: gen, ch: ch}:
+			default:
+			}
+		})
+		res, err := discover(sctx)
+		ch <- discoverDoneMsg{res: res, err: err, gen: gen}
+		close(ch)
+	}()
+	return waitWizardMsg(ch)
 }
 
 // startPlan launches phase 3 as a command; the preview renders when it lands.
@@ -519,6 +547,12 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case discoverDoneMsg:
 		return m.onDiscoverDone(msg)
 
+	case wizFetchMsg:
+		if msg.gen == m.sourceGen {
+			m.fetch = &msg.e
+		}
+		return m, waitWizardMsg(msg.ch)
+
 	case versionsDoneMsg:
 		return m.onVersionsDone(msg)
 
@@ -552,6 +586,7 @@ func (m wizardModel) onDiscoverDone(msg discoverDoneMsg) (tea.Model, tea.Cmd) {
 		return m, nil // result from an abandoned source: drop
 	}
 	m.discovering = false
+	m.fetch = nil
 	if msg.err != nil {
 		return m.discoverFailed(msg.err)
 	}

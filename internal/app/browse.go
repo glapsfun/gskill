@@ -170,7 +170,12 @@ func displayVersion(r lockfile.Resolved) string {
 }
 
 // shortCommit truncates a commit SHA for display.
-func shortCommit(sha string) string {
+func shortCommit(sha string) string { return ShortCommit(sha) }
+
+// ShortCommit abbreviates a commit SHA to the display width every human
+// surface uses (plan/dry-run labels, version metadata, progress lines), so
+// the same commit never renders at two different lengths in one run.
+func ShortCommit(sha string) string {
 	const n = 12
 	if len(sha) > n {
 		return sha[:n]

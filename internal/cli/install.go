@@ -27,6 +27,8 @@ func (installCmd) Help() string {
 
 // Run executes `gskill install`. The --offline and --no-cache flags are global.
 func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
+	ctx, done := out.withFetchProgress(ctx)
+	defer done()
 	res, err := a.Install(ctx, app.InstallRequest{
 		Root:           string(root),
 		Scope:          scopeFlag(c.Global),
@@ -36,6 +38,9 @@ func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root proje
 		NoCache:        g.NoCache,
 		UpdateLockfile: c.UpdateLockfile,
 	})
+	// Finish the live line before the summary prints (done stays deferred for
+	// the error paths, but is idempotent so this early call is safe).
+	done()
 	if err != nil {
 		return err
 	}

@@ -94,18 +94,31 @@ func (m selectorModel) pageSize() int {
 }
 
 // recomputeVisible rebuilds the filtered index list from the current query
-// (case-insensitive substring match over ID, RepoPath, and Description —
-// FR-010) and re-clamps the cursor and scroll offset. It never touches the
-// selection set.
+// and re-clamps the cursor and scroll offset. Matching is prefix-first:
+// when any skill name starts with the query (case-insensitive), only those
+// show — typing "s" narrows to s-* names instead of everything containing
+// an s. Only when no name prefix-matches does the filter fall back to the
+// substring search over ID, RepoPath, and Description, keeping the FR-010
+// description search (a term like "kubernetes" still finds the skill whose
+// description mentions it). It never touches the selection set.
 func (m *selectorModel) recomputeVisible() {
 	q := strings.ToLower(strings.TrimSpace(m.filter.value))
 	m.visible = m.visible[:0]
-	for i, it := range m.items {
-		if q == "" ||
-			strings.Contains(strings.ToLower(it.ID), q) ||
-			strings.Contains(strings.ToLower(it.RepoPath), q) ||
-			strings.Contains(strings.ToLower(it.Description), q) {
-			m.visible = append(m.visible, i)
+	if q != "" {
+		for i, it := range m.items {
+			if strings.HasPrefix(strings.ToLower(it.ID), q) {
+				m.visible = append(m.visible, i)
+			}
+		}
+	}
+	if len(m.visible) == 0 {
+		for i, it := range m.items {
+			if q == "" ||
+				strings.Contains(strings.ToLower(it.ID), q) ||
+				strings.Contains(strings.ToLower(it.RepoPath), q) ||
+				strings.Contains(strings.ToLower(it.Description), q) {
+				m.visible = append(m.visible, i)
+			}
 		}
 	}
 	m.nameW = 0

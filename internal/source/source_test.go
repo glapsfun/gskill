@@ -128,3 +128,42 @@ func TestSourceRef_Identity(t *testing.T) {
 		t.Errorf("Identity() = %q, want %q", got, want)
 	}
 }
+
+func TestRefDisplay(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		ref  source.Ref
+		want string
+	}{
+		{
+			name: "owner and repo",
+			ref:  source.Ref{Type: source.TypeGit, URL: "https://github.com/acme/skills.git", Owner: "acme", Repo: "skills"},
+			want: "acme/skills",
+		},
+		{
+			name: "promoted local git has repo only",
+			ref:  source.Ref{Type: source.TypeGit, URL: "/abs/path/tools", Repo: "tools"},
+			want: "tools",
+		},
+		{
+			name: "bare url trims empty segments",
+			ref:  source.Ref{Type: source.TypeGit, URL: "https://example.com/skills"},
+			want: "example.com",
+		},
+		{
+			name: "local path passes through untrimmed",
+			ref:  source.Ref{Type: source.TypeLocal, LocalPath: "/Users/x/skills"},
+			want: "/Users/x/skills",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.ref.Display(); got != tc.want {
+				t.Errorf("Display() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

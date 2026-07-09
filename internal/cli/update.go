@@ -22,7 +22,10 @@ func (updateCmd) Help() string {
 
 // Run executes `gskill update`.
 func (c updateCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
+	ctx, done := out.withFetchProgress(ctx)
+	defer done()
 	res, err := a.Update(ctx, string(root), c.Skills)
+	done()
 	if err != nil {
 		return err
 	}

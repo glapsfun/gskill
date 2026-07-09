@@ -26,7 +26,10 @@ func (c syncCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	if c.Prune && !out.Confirm("Prune skills and targets the manifest no longer declares?", g.Yes) {
 		return errs.New(errs.CodeGeneric, "aborted")
 	}
+	ctx, done := out.withFetchProgress(ctx)
+	defer done()
 	res, err := a.Sync(ctx, app.SyncRequest{Root: string(root), Prune: c.Prune, Offline: g.Offline})
+	done()
 	if err != nil {
 		return err
 	}

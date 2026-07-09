@@ -14,6 +14,7 @@ import (
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/git"
+	"github.com/glapsfun/gskill/internal/progress"
 )
 
 // Per-step key handling and views for the onboarding wizard (spec 011 US1–US5).
@@ -72,6 +73,9 @@ func (m wizardModel) viewWelcome() string {
 
 	if m.discovering {
 		b.WriteString("⏳ Resolving source and discovering skills…\n")
+		if line := fetchStatusLine(m.st, m.fetch); line != "" {
+			b.WriteString(line + "\n")
+		}
 		b.WriteString(m.hintLine("q cancel"))
 		return b.String()
 	}
@@ -90,16 +94,44 @@ func (m wizardModel) viewWelcome() string {
 	}
 	b.WriteString(".\n")
 	m.writeWelcomeDetection(&b)
-	b.WriteString("\n")
-	b.WriteString(m.st.Subtitle.Render("This guided flow will walk you through:") + "\n")
-	b.WriteString(m.st.Subtitle.Render("  1. selecting skills   2. choosing a version   3. picking target agents") + "\n")
-	b.WriteString(m.st.Subtitle.Render("  4. reviewing the plan  5. approving            6. installing") + "\n")
 	b.WriteString("\n" + m.st.Hint.Render("Nothing is written until you approve the plan.") + "\n")
 	for _, w := range m.disc.Warnings {
 		b.WriteString(m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")
 	}
 	b.WriteString(m.hintLine("enter continue · q cancel"))
 	return b.String()
+}
+
+// fetchStatusLine renders the live repo-download state under the welcome
+// step's resolving line: the fetch percent when git reports totals, a phase
+// label otherwise. Empty when there is nothing worth showing.
+func fetchStatusLine(st Theme, e *progress.Event) string {
+	if e == nil {
+		return ""
+	}
+	switch e.Phase {
+	case progress.PhaseResolving:
+		return st.Hint.Render("   resolving " + Sanitize(e.Repo) + " …")
+	case progress.PhaseResolved, progress.PhaseFetching, progress.PhaseCounting:
+		return st.Hint.Render("   fetching " + Sanitize(e.Repo) + " …")
+	case progress.PhaseReceiving, progress.PhaseDeltas:
+		if e.Percent < 0 {
+			return st.Hint.Render(fmt.Sprintf("   receiving objects (%d)", e.Objects))
+		}
+		label := "downloading"
+		if e.Phase == progress.PhaseDeltas {
+			label = "resolving deltas"
+		}
+		line := fmt.Sprintf("   %s %d%%", label, e.Percent)
+		if e.Detail != "" {
+			line += "  " + Sanitize(e.Detail)
+		}
+		return st.Hint.Render(line)
+	case progress.PhaseCached, progress.PhaseDone:
+		return "" // discovery is about to land; nothing left to report
+	default:
+		return ""
+	}
 }
 
 // writeWelcomeDetection reports detected agents and available versions on the

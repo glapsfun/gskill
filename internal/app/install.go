@@ -18,6 +18,7 @@ import (
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
+	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/selection"
 	"github.com/glapsfun/gskill/internal/source"
@@ -684,8 +685,10 @@ func (a *App) installAll(ctx context.Context, p *project, m *manifest.Manifest, 
 	}
 	var out InstallResult
 	manifestChanged := false
-	for _, name := range sortedKeys(m.Skills) {
-		change, newMS, applyErr := a.installOne(ctx, p, lf, name, m.Skills[name], req, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
+	names := sortedKeys(m.Skills)
+	for k, name := range names {
+		sctx := stampSkill(ctx, name, k+1, len(names))
+		change, newMS, applyErr := a.installOne(sctx, p, lf, name, m.Skills[name], req, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
 		if applyErr != nil {
 			return InstallResult{}, applyErr
 		}
@@ -709,6 +712,15 @@ func (a *App) installAll(ctx context.Context, p *project, m *manifest.Manifest, 
 		}
 	}
 	return out, nil
+}
+
+// stampSkill marks every progress event from one skill's resolve/fetch with
+// the skill's name and its [k/N] position, so the CLI can render a multi-repo
+// counter and per-skill completion lines.
+func stampSkill(ctx context.Context, name string, index, count int) context.Context {
+	return progress.Stamp(ctx, func(e *progress.Event) {
+		e.Skill, e.Index, e.Count = name, index, count
+	})
 }
 
 // installOne installs a single declared skill and updates lf in place. It

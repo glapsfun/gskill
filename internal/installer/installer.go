@@ -14,6 +14,7 @@ import (
 	"github.com/glapsfun/gskill/internal/fsutil"
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
 	"github.com/glapsfun/gskill/internal/store"
@@ -183,6 +184,10 @@ func (i *Installer) DiscoverAll(ctx context.Context, req Request, opts discovery
 // local sources, or a cached/fetched checkout for git sources.
 func (i *Installer) materialize(ctx context.Context, req Request) (string, error) {
 	if req.Ref.Type == source.TypeLocal {
+		// Local sources have nothing to fetch, but the terminal event still
+		// fires so a renderer's live line finishes instead of dangling on the
+		// last reported phase.
+		progress.Emit(ctx, progress.Event{Phase: progress.PhaseDone, Repo: req.Ref.Display()})
 		return req.Ref.LocalPath, nil
 	}
 
@@ -190,7 +195,13 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 	if commit == "" {
 		return "", fmt.Errorf("%w: git source resolved without a commit", errs.ErrSourceUnavailable)
 	}
+	// The installer knows the repo identity and the cache outcome, so it
+	// stamps both onto every progress event from here down.
+	ctx = progress.Stamp(ctx, func(e *progress.Event) {
+		e.Repo, e.Commit = req.Ref.Display(), commit
+	})
 	if i.cache.Has(commit) {
+		progress.Emit(ctx, progress.Event{Phase: progress.PhaseCached})
 		return i.cache.Path(commit), nil
 	}
 	if req.Offline {
@@ -206,10 +217,16 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
+	progress.Emit(ctx, progress.Event{Phase: progress.PhaseFetching})
 	if err := i.git.FetchCommit(ctx, req.Ref.URL, commit, tmp); err != nil {
 		return "", err
 	}
-	return i.cache.Put(commit, tmp)
+	dir, err := i.cache.Put(commit, tmp)
+	if err != nil {
+		return "", err
+	}
+	progress.Emit(ctx, progress.Event{Phase: progress.PhaseDone})
+	return dir, nil
 }
 
 // stageAndVerify stores the skill content and re-hashes the stored copy,

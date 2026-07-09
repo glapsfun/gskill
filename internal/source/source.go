@@ -48,6 +48,24 @@ func (s Ref) Identity() string {
 	return id
 }
 
+// Display returns a short human name for progress lines: owner/repo when
+// known, else the repo name (local-promoted git repos have no owner), else
+// the canonical identity (never the raw URL, which may carry credentials).
+// For git identities the empty host/owner segments are trimmed so a bare-URL
+// ref renders as its host, not "host//"; local paths pass through untouched.
+func (s Ref) Display() string {
+	if s.Owner != "" && s.Repo != "" {
+		return s.Owner + "/" + s.Repo
+	}
+	if s.Repo != "" {
+		return s.Repo
+	}
+	if s.Type == TypeLocal {
+		return s.LocalPath
+	}
+	return strings.Trim(strings.ReplaceAll(s.Identity(), "//", "/"), "/")
+}
+
 // Parse classifies and normalizes a raw source argument.
 func Parse(raw string) (Ref, error) {
 	trimmed := strings.TrimSpace(raw)
