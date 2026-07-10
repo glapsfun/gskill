@@ -266,7 +266,7 @@ func TestInstallFromLock_ExistingManifestPreserved(t *testing.T) {
 	pre := manifest.New()
 	pre.Defaults.InstallMode = "copy"
 	pre.Defaults.Agents = []string{"codex"}
-	pre.Skills["alpha"] = manifest.Skill{Source: "github.com/acme/custom", Path: "skills/alpha"}
+	pre.Skills[skillAlpha] = manifest.Skill{Source: "github.com/acme/custom", Path: "skills/alpha"}
 	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestInstallFromLock_ExistingManifestPreserved(t *testing.T) {
 	if m.Defaults.InstallMode != "copy" {
 		t.Errorf("Defaults.InstallMode = %q, want preserved copy", m.Defaults.InstallMode)
 	}
-	if got := m.Skills["alpha"].Source; got != "github.com/acme/custom" {
+	if got := m.Skills[skillAlpha].Source; got != "github.com/acme/custom" {
 		t.Errorf("alpha source rewritten to %q", got)
 	}
 	if _, ok := m.Skills["beta"]; !ok {
@@ -299,8 +299,8 @@ func assertPartialOutcome(t *testing.T, root string, res app.InstallFromLockResu
 	for _, s := range res.Skills {
 		byName[s.Name] = s
 	}
-	if byName["alpha"].Status != app.LockSkillInstalled {
-		t.Errorf("alpha status = %q, want installed (%v)", byName["alpha"].Status, byName["alpha"].Err)
+	if byName[skillAlpha].Status != app.LockSkillInstalled {
+		t.Errorf("alpha status = %q, want installed (%v)", byName[skillAlpha].Status, byName[skillAlpha].Err)
 	}
 	if byName["beta"].Status != app.LockSkillFailed {
 		t.Errorf("beta status = %q, want failed", byName["beta"].Status)
@@ -318,7 +318,7 @@ func assertPartialOutcome(t *testing.T, root string, res app.InstallFromLockResu
 	if err != nil {
 		t.Fatalf("reload lock: %v", err)
 	}
-	if e, _ := l.Entry("alpha"); e.Ext == nil {
+	if e, _ := l.Entry(skillAlpha); e.Ext == nil {
 		t.Error("alpha gskill block missing after partial failure")
 	}
 	if e, _ := l.Entry("beta"); e.Ext != nil {
@@ -351,7 +351,7 @@ func TestInstallFromLock_PartialFailure(t *testing.T) {
 		if s.Name == "beta" && s.Status != app.LockSkillFailed {
 			t.Errorf("re-run beta status = %q, want failed", s.Status)
 		}
-		if s.Name == "alpha" && s.Status == app.LockSkillFailed {
+		if s.Name == skillAlpha && s.Status == app.LockSkillFailed {
 			t.Errorf("re-run alpha failed: %v", s.Err)
 		}
 	}
@@ -612,8 +612,8 @@ func TestInstallFromLock_RepairsMissingLink(t *testing.T) {
 	for _, s := range res.Skills {
 		statuses[s.Name] = s.Status
 	}
-	if statuses["alpha"] != app.LockSkillRepaired {
-		t.Errorf("alpha status = %q, want repaired", statuses["alpha"])
+	if statuses[skillAlpha] != app.LockSkillRepaired {
+		t.Errorf("alpha status = %q, want repaired", statuses[skillAlpha])
 	}
 	if statuses["beta"] != app.LockSkillUpToDate {
 		t.Errorf("beta status = %q, want up-to-date", statuses["beta"])
@@ -659,3 +659,60 @@ func TestInstallFromLock_OfflineEmptyStoreFails(t *testing.T) {
 		t.Fatal("offline install with an empty store should fail")
 	}
 }
+
+// TestInstallFromLock_EditedHashOnInstalledProject (regression, quickstart
+// S5): editing computedHash on an already-installed project must not be
+// swallowed by the idempotency fast path — the default fails closed and
+// --force rewrites the record.
+func TestInstallFromLock_EditedHashOnInstalledProject(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+
+	// Corrupt alpha's recorded hash in place (as a bad merge or edit would).
+	lockPath := filepath.Join(root, skillslock.FileName)
+	raw, err := os.ReadFile(lockPath) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupted := strings.Replace(string(raw), ha, strings.Repeat("0", 64), 1)
+	if corrupted == string(raw) {
+		t.Fatal("fixture: hash not found to corrupt")
+	}
+	if err := os.WriteFile(lockPath, []byte(corrupted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default: fail closed, never report up-to-date.
+	res, err := runLockInstall(t, root)
+	if err == nil {
+		t.Fatal("edited hash must not pass silently")
+	}
+	for _, s := range res.Skills {
+		if s.Name == skillAlpha && s.Status == app.LockSkillUpToDate {
+			t.Error("alpha reported up-to-date despite an edited recorded hash")
+		}
+	}
+
+	// --force: accept and rewrite the record to the actual content hash.
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent}, Force: true,
+	}); err != nil {
+		t.Fatalf("force install: %v", err)
+	}
+	l, err := skillslock.Load(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := l.Entry(skillAlpha)
+	if e.ComputedHash != ha {
+		t.Errorf("computedHash = %q, want rewritten back to actual %q", e.ComputedHash, ha)
+	}
+}
+
+// skillAlpha is the first fixture skill's name.
+const skillAlpha = "alpha"

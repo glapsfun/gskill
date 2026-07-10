@@ -398,7 +398,7 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 // full pipeline.
 func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *lockfile.Lockfile, name string, e skillslock.Entry, agents []agent.Agent, req InstallFromLockRequest) (LockSkillResult, bool) {
 	prior, ok := lf.Skills[name]
-	if !ok || e.ComputedHash == "" || prior.Resolved.CompatHash != e.ComputedHash {
+	if !ok || e.ComputedHash == "" {
 		return LockSkillResult{}, false
 	}
 	ids := agentIDs(agents)
@@ -406,6 +406,13 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *lockfile.Lo
 		return LockSkillResult{}, false // new agents requested: full path
 	}
 	if !p.store.Has(prior.Resolved.ContentHash) {
+		return LockSkillResult{}, false
+	}
+	// The recorded hash must match the actual stored content — comparing the
+	// entry against itself would let an edited or corrupted computedHash pass
+	// as "up to date" (it must fail closed, or be accepted via --force, on
+	// the full path).
+	if compat, err := integrity.CompatHash(p.store.Path(prior.Resolved.ContentHash)); err != nil || compat != e.ComputedHash {
 		return LockSkillResult{}, false
 	}
 

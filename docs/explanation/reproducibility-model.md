@@ -12,7 +12,7 @@ GSKILL keeps two records:
   skill from this source, within this version range, for these agents." It is human-editable and
   deliberately loose (a constraint like `^2.0.0`, not an exact version).
 
-- **`gskill.lock` — the lockfile — is reality.** GSKILL writes it. It records *what was actually
+- **`skills-lock.json` — the lockfile — is reality.** GSKILL writes it. It records *what was actually
   resolved*: the exact commit, the content hashes, the resolved version, the target agents, and the
   install mode. It is machine-generated, deterministic, and never hand-edited.
 
@@ -47,6 +47,6 @@ an immutable commit before being written.
 
 ## See also
 
-- [`gskill.toml` schema](../reference/manifest-schema.md) · [`gskill.lock` schema](../reference/lockfile-schema.md)
+- [`gskill.toml` schema](../reference/manifest-schema.md) · [`skills-lock.json` schema](../reference/lockfile-schema.md)
 - [Reproduce with --frozen-lockfile](../how-to/reproduce-with-frozen-lockfile.md)
 - [Integrity and trust](integrity-and-trust.md)

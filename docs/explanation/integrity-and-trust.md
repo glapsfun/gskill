@@ -43,4 +43,4 @@ rather than guessing and producing a subtly wrong install.
 
 - [Verify integrity](../how-to/verify-integrity.md)
 - [The reproducibility model](reproducibility-model.md)
-- [`gskill.lock` schema](../reference/lockfile-schema.md)
+- [`skills-lock.json` schema](../reference/lockfile-schema.md)

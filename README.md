@@ -5,7 +5,7 @@
 **GSKILL** is a reproducible package manager for agentic AI skills — it installs,
 versions, locks, verifies, and restores SKILL.md-based skill environments across
 AI coding agents, developer machines, and CI. Commit `gskill.toml` and
-`gskill.lock`, and reproduce a byte-identical skill environment anywhere.
+`skills-lock.json`, and reproduce a byte-identical skill environment anywhere.
 
 > **Status:** the v1 engine is implemented test-first behind the quality harness
 > below. `init`, `add`, `install` (incl. `--frozen-lockfile`/`--offline`),
@@ -65,7 +65,7 @@ gskill add github.com/openai/skills --list                # list skills, install
 gskill source list github.com/openai/skills   # enumerate skills in a source
 gskill source check github.com/openai/skills  # report invalid/duplicate skills (exit 3)
 gskill search kubernetes --owner glapsfun        # search a GitHub owner's repos
-gskill install --frozen-lockfile          # reproduce exactly from gskill.lock
+gskill install --frozen-lockfile          # reproduce exactly from skills-lock.json
 gskill project verify                             # re-hash installed content vs the lock
 gskill project check --fail-on-drift              # fast CI drift gate
 gskill outdated --exit-code               # exit 8 if updates are available
@@ -78,7 +78,7 @@ gskill remove <skill>                     # uninstall + GC the store
 gskill list --json                        # machine-readable inventory
 ```
 
-Commit `gskill.toml` (intent) and `gskill.lock` (resolved reality); reproduce a
+Commit `gskill.toml` (intent) and `skills-lock.json` (resolved reality); reproduce a
 byte-identical environment anywhere with `gskill install --frozen-lockfile`.
 
 ### Install once, share across agents

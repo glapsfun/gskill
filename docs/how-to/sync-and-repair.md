@@ -7,7 +7,7 @@ Reconcile what's on disk with the lockfile, and fix installs that have gone miss
 
 ## Before you start
 
-- A committed `gskill.lock`.
+- A committed `skills-lock.json`.
 
 ## Make disk match the lock
 
