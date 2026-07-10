@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -41,18 +42,36 @@ func CompatHash(dir string) (string, error) {
 		return coll.CompareString(files[i].rel, files[j].rel) < 0
 	})
 
+	// Stream each file into the hasher (path bytes then verbatim content, in
+	// sorted order — the exact byte sequence the reference implementation
+	// hashes) instead of buffering the whole skill directory in memory.
 	h := sha256.New()
 	for _, f := range files {
 		_, _ = h.Write([]byte(f.rel))
-		_, _ = h.Write(f.data)
+		if err := hashFileInto(h, f.full); err != nil {
+			return "", err
+		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashFileInto streams one file's bytes into w.
+func hashFileInto(w io.Writer, path string) error {
+	f, err := os.Open(path) //nolint:gosec // walking a caller-provided skill dir
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	defer f.Close() //nolint:errcheck // read-only handle
+	if _, err := io.Copy(w, f); err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	return nil
 }
 
 // compatFile is one file fed into the compat hash.
 type compatFile struct {
 	rel  string // relative, forward-slash
-	data []byte // verbatim bytes
+	full string // absolute path, read at hash time
 }
 
 // collectCompatFiles walks dir applying the reference implementation's
@@ -76,15 +95,11 @@ func collectCompatFiles(base, dir string) ([]compatFile, error) {
 			}
 			out = append(out, sub...)
 		case e.Type().IsRegular():
-			data, err := os.ReadFile(full) //nolint:gosec // walking a caller-provided skill dir
-			if err != nil {
-				return nil, fmt.Errorf("read %s: %w", full, err)
-			}
 			rel, err := filepath.Rel(base, full)
 			if err != nil {
 				return nil, fmt.Errorf("relativize %s: %w", full, err)
 			}
-			out = append(out, compatFile{rel: filepath.ToSlash(rel), data: data})
+			out = append(out, compatFile{rel: filepath.ToSlash(rel), full: full})
 		default:
 			// Symlinks and other non-regular entries are skipped, matching the
 			// reference implementation's entry.isFile() check.

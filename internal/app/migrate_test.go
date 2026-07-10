@@ -222,3 +222,83 @@ func TestMigrate_AutoTriggerOnLockTouchingCommands(t *testing.T) {
 		})
 	}
 }
+
+// TestFrozenInstallNeverMigrates (review fix): --frozen-lockfile must not
+// mutate anything, including the automatic lockfile migration.
+func TestFrozenInstallNeverMigrates(t *testing.T) {
+	t.Parallel()
+	root, legacyBytes := legacyProject(t)
+
+	// The frozen install itself may fail (nothing materialized to restore);
+	// the invariant is zero writes either way.
+	_, _ = lockApp().Install(context.Background(), app.InstallRequest{Root: root, Frozen: true})
+
+	after, err := os.ReadFile(filepath.Join(root, "gskill.lock")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf("gskill.lock was removed by a frozen run: %v", err)
+	}
+	if string(after) != string(legacyBytes) {
+		t.Error("frozen run modified gskill.lock")
+	}
+	if _, err := os.Stat(filepath.Join(root, skillslock.FileName)); err == nil {
+		t.Error("frozen run created skills-lock.json")
+	}
+	if _, err := os.Stat(filepath.Join(root, "gskill.lock.backup")); err == nil {
+		t.Error("frozen run created gskill.lock.backup")
+	}
+}
+
+// TestMigrateMergeNeverResurrectsRemovedSkills (review fix): a legacy entry
+// absent from an existing canonical skills-lock.json was removed after the
+// shared lock was written; the merge must not re-add it.
+func TestMigrateMergeNeverResurrectsRemovedSkills(t *testing.T) {
+	t.Parallel()
+	root, _ := legacyProject(t) // legacy holds skill "demo"
+	// Canonical shared lock exists and no longer contains "demo".
+	if err := os.WriteFile(filepath.Join(root, skillslock.FileName),
+		[]byte(`{"version": 1, "skills": {}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := lockApp().MigrateLockfile(context.Background(), root); err != nil {
+		t.Fatalf("MigrateLockfile: %v", err)
+	}
+	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Has("demo") {
+		t.Error("merge resurrected a skill absent from the canonical lock")
+	}
+}
+
+// TestRemoveMigratesLegacyLockFirst (review fix): Remove is a lock-writing
+// command and must retire gskill.lock before writing skills-lock.json, or the
+// removed skill returns on the next migration merge.
+func TestRemoveMigratesLegacyLockFirst(t *testing.T) {
+	t.Parallel()
+	root, _ := legacyProject(t)
+
+	if _, err := lockApp().Remove(context.Background(), root, []string{"demo"}); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "gskill.lock")); err == nil {
+		t.Error("gskill.lock survived a Remove on a legacy project")
+	}
+	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Has("demo") {
+		t.Error("removed skill still present in the shared lock")
+	}
+	// The follow-up install must not bring it back.
+	_, _ = lockApp().Install(context.Background(), app.InstallRequest{Root: root})
+	l2, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l2.Has("demo") {
+		t.Error("removed skill resurrected by a later install")
+	}
+}

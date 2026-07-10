@@ -4,11 +4,9 @@ import (
 	"path"
 	"strings"
 
+	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/lockfile"
 )
-
-// skillFileName is the canonical skill manifest filename inside a source repo.
-const skillFileName = "SKILL.md"
 
 // ExtState carries the residual gskill install state that has no place in the
 // interop-visible Ext fields but is still consumed by existing commands
@@ -62,9 +60,9 @@ func FromLegacy(ls lockfile.LockedSkill) Entry {
 	if ls.Source.Type == "github" && ls.Source.Owner != "" && ls.Source.Repo != "" {
 		src = ls.Source.Owner + "/" + ls.Source.Repo
 	}
-	skillPath := skillFileName
+	skillPath := integrity.SkillFileName
 	if ls.Source.Path != "" {
-		skillPath = path.Join(ls.Source.Path, skillFileName)
+		skillPath = path.Join(ls.Source.Path, integrity.SkillFileName)
 	}
 
 	ref := ls.Resolved.Tag

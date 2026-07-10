@@ -24,6 +24,9 @@ type UnlinkResult struct {
 // store content, and manifest entry are retained unless prune is set, in which
 // case the skill is removed entirely and unreferenced store content is GC'd.
 func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune bool) (UnlinkResult, error) {
+	if err := a.maybeMigrate(ctx, root); err != nil {
+		return UnlinkResult{}, err
+	}
 	p := openProject(root)
 	if !p.manifestExists() {
 		return UnlinkResult{}, errNoManifest()

@@ -12,6 +12,7 @@ import (
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
@@ -380,9 +381,9 @@ func entryFromDeclaration(ms manifest.Skill) skillslock.Entry {
 		ref.Type == source.TypeGit && ref.Owner != "" && ref.Repo != "" {
 		src, srcType = ref.Owner+"/"+ref.Repo, sourceTypeGitHub
 	}
-	skillPath := "SKILL.md"
+	skillPath := integrity.SkillFileName
 	if ms.Path != "" {
-		skillPath = path.Join(ms.Path, "SKILL.md")
+		skillPath = path.Join(ms.Path, integrity.SkillFileName)
 	}
 	return skillslock.Entry{Source: src, Ref: ms.Ref, SourceType: srcType, SkillPath: skillPath}
 }
@@ -432,9 +433,10 @@ func manifestSourceForEntry(e skillslock.Entry) string {
 }
 
 // skillDirOf returns the skill directory recorded by skillPath ("" for a
-// repo-root skill).
+// repo-root skill). Backslash separators (a Windows-authored lock) are
+// normalized first — validSkillPath accepts them, so resolution must too.
 func skillDirOf(skillPath string) string {
-	d := path.Dir(skillPath)
+	d := path.Dir(strings.ReplaceAll(skillPath, "\\", "/"))
 	if d == "." || d == "/" {
 		return ""
 	}
@@ -476,40 +478,9 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 		return r2
 	}
 
-	ref, rev, err := a.resolveLockEntry(ctx, lf, name, e)
+	staged, err := a.stageAndVerifyLockEntry(ctx, p, m, lf, name, e, req)
 	if err != nil {
 		return fail(err)
-	}
-	skillDir := skillDirOf(e.SkillPath)
-	ref.Path = skillDir
-
-	ireq := a.installRequest(req.Root, ref, rev, nil, "", modeOr(req.InstallMode, m.Defaults.InstallMode))
-	ireq.Name = name
-	ireq.Offline = req.Offline
-	inst := a.installerFor(p)
-
-	// Locate the skill and verify the shared computedHash before anything is
-	// activated into an agent directory.
-	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{})
-	if err != nil {
-		return fail(err)
-	}
-	found, ok := skillAtRepoPath(scan, skillDir)
-	if !ok {
-		return fail(fmt.Errorf("%w: skillPath %q not found in source %s",
-			errs.ErrInvalidManifest, e.SkillPath, e.Source))
-	}
-	compat, err := integrity.CompatHash(found.Dir)
-	if err != nil {
-		return fail(err)
-	}
-	// An empty recorded hash (a freshly migrated gskill.lock entry) has
-	// nothing to verify against; the hash is recorded after this install.
-	if e.ComputedHash != "" && compat != e.ComputedHash && (!req.Force || req.Frozen) {
-		return fail(errs.WithHint(
-			fmt.Errorf("%w: computedHash mismatch: lock records %s, source content is %s",
-				errs.ErrIntegrity, e.ComputedHash, compat),
-			"re-run with --force to accept the changed upstream content"))
 	}
 
 	if req.DryRun {
@@ -518,20 +489,98 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 		return r
 	}
 
-	ireq.Agents = agents
-	result, err := inst.Install(ctx, ireq)
+	staged.ireq.Agents = agents
+	result, err := a.installerFor(p).Install(ctx, staged.ireq)
 	if err != nil {
 		return fail(err)
 	}
 
-	ls := buildLockEntry(ref, rev, ireq, result, m.Skills[name])
-	ls.Resolved.CompatHash = compat
+	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result, m.Skills[name])
+	if err != nil {
+		return fail(err)
+	}
+	ls.Resolved.CompatHash = staged.compat
 	lf.Skills[name] = ls
 
-	r.ComputedHash = compat
+	r.ComputedHash = staged.compat
 	r.Status = LockSkillInstalled
 	r.Err = nil
 	return r
+}
+
+// stagedLockEntry is a resolved, materialized, hash-verified entry ready to
+// activate.
+type stagedLockEntry struct {
+	ref    source.Ref
+	rev    resolver.Revision
+	ireq   installer.Request
+	compat string
+}
+
+// stageAndVerifyLockEntry resolves and materializes one entry and verifies its
+// shared computedHash before anything is activated. A mismatch on the recorded
+// pin usually means an external tool updated the entry (new computedHash,
+// stale gskill pins): the source is re-resolved once and re-verified before
+// failing, so gskill fetches the update instead of demanding --force against
+// its own stale pin. An empty recorded hash (a freshly migrated gskill.lock
+// entry) has nothing to verify against; it is recorded after the install.
+func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, m *manifest.Manifest, lf *lockfile.Lockfile, name string, e skillslock.Entry, req InstallFromLockRequest) (stagedLockEntry, error) {
+	ref, rev, pinned, err := a.resolveLockEntry(ctx, lf, name, e)
+	if err != nil {
+		return stagedLockEntry{}, err
+	}
+	skillDir := skillDirOf(e.SkillPath)
+	inst := a.installerFor(p)
+	mode := modeOr(req.InstallMode, m.Defaults.InstallMode)
+
+	ireq, compat, err := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, ref, rev)
+	if err != nil {
+		return stagedLockEntry{}, err
+	}
+	staged := stagedLockEntry{ref: ref, rev: rev, ireq: ireq, compat: compat}
+	if e.ComputedHash == "" || compat == e.ComputedHash {
+		return staged, nil
+	}
+
+	if pinned && !req.Frozen && !req.Offline {
+		if ref2, rev2, rErr := a.freshResolveLockEntry(ctx, e, false); rErr == nil {
+			if ireq2, compat2, sErr := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, ref2, rev2); sErr == nil && compat2 == e.ComputedHash {
+				return stagedLockEntry{ref: ref2, rev: rev2, ireq: ireq2, compat: compat2}, nil
+			}
+		}
+	}
+	if !req.Force || req.Frozen {
+		return stagedLockEntry{}, errs.WithHint(
+			fmt.Errorf("%w: computedHash mismatch: lock records %s, source content is %s",
+				errs.ErrIntegrity, e.ComputedHash, staged.compat),
+			"re-run with --force to accept the changed upstream content")
+	}
+	return staged, nil
+}
+
+// stageLockEntry materializes a revision (no activation), locates the skill at
+// skillDir, and computes its shared computedHash. The returned request is
+// ready for Install once agents are attached.
+func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req InstallFromLockRequest, name, skillDir, mode string, ref source.Ref, rev resolver.Revision) (installer.Request, string, error) {
+	ref.Path = skillDir
+	ireq := a.installRequest(req.Root, ref, rev, nil, "", mode)
+	ireq.Name = name
+	ireq.Offline = req.Offline
+
+	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{})
+	if err != nil {
+		return installer.Request{}, "", err
+	}
+	found, ok := skillAtRepoPath(scan, skillDir)
+	if !ok {
+		return installer.Request{}, "", fmt.Errorf("%w: skillPath %q not found in source %s",
+			errs.ErrInvalidManifest, path.Join(skillDir, integrity.SkillFileName), ref.Original)
+	}
+	compat, err := integrity.CompatHash(found.Dir)
+	if err != nil {
+		return installer.Request{}, "", err
+	}
+	return ireq, compat, nil
 }
 
 // lockEntryUpToDate implements the no-op/repair fast path: when the entry's
@@ -568,7 +617,13 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *lockfile.Lo
 		}
 	}
 	r := LockSkillResult{Name: name, Source: e.Source, ComputedHash: e.ComputedHash, Status: LockSkillUpToDate}
-	if len(missing) == 0 || req.DryRun {
+	if len(missing) == 0 {
+		return r, true
+	}
+	if req.DryRun {
+		// A real run would relink the missing targets; the plan must say so
+		// rather than report "up to date".
+		r.Status = LockSkillPlanned
 		return r, true
 	}
 
@@ -584,13 +639,24 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *lockfile.Lo
 }
 
 // resolveLockEntry pins an entry to a revision: a previously recorded gskill
-// installation reuses its exact pin (reproduction path); otherwise the source
-// is resolved honoring the entry's optional ref and any gskill extension pins.
-func (a *App) resolveLockEntry(ctx context.Context, lf *lockfile.Lockfile, name string, e skillslock.Entry) (source.Ref, resolver.Revision, error) {
+// installation reuses its exact pin (reproduction path) — but only while the
+// entry's computedHash still matches what that pin produced. When an external
+// tool updated the entry (new computedHash), the stale pin would refetch the
+// OLD revision and --force would then overwrite the external update, so the
+// source is re-resolved instead.
+func (a *App) resolveLockEntry(ctx context.Context, lf *lockfile.Lockfile, name string, e skillslock.Entry) (ref source.Ref, rev resolver.Revision, pinned bool, err error) {
 	if prior, ok := lf.Skills[name]; ok && prior.Resolved.Commit != "" {
-		return refFromLock(prior.Source), revFromLock(prior.Resolved), nil
+		return refFromLock(prior.Source), revFromLock(prior.Resolved), true, nil
 	}
+	ref, rev, err = a.freshResolveLockEntry(ctx, e, true)
+	return ref, rev, false, err
+}
 
+// freshResolveLockEntry resolves an entry from its source. usePins applies the
+// gskill extension's commit pin; the mismatch-retry path passes false so an
+// external tool's update (new computedHash, stale gskill block) resolves the
+// ref's current head instead of refetching the old revision.
+func (a *App) freshResolveLockEntry(ctx context.Context, e skillslock.Entry, usePins bool) (source.Ref, resolver.Revision, error) {
 	srcStr := e.Source
 	if e.Ext != nil && e.Ext.SourceURL != "" {
 		srcStr = e.Ext.SourceURL
@@ -606,7 +672,9 @@ func (a *App) resolveLockEntry(ctx context.Context, lf *lockfile.Lockfile, name 
 		if requested.Ref == "" {
 			requested.Ref = e.Ext.Ref
 		}
-		requested.Commit = e.Ext.Commit
+		if usePins {
+			requested.Commit = e.Ext.Commit
+		}
 	}
 	rev, _, err := resolver.Resolve(ctx, a.git, ref, requested)
 	if err != nil {

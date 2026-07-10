@@ -55,7 +55,7 @@ func (a *App) MigrateLockfile(_ context.Context, root string) (MigrateResult, er
 		return MigrateResult{}, err
 	}
 
-	shared, err := mergedSharedLock(p, legacy, sharedExists)
+	shared, err := mergedSharedLock(a, p, legacy, sharedExists)
 	if err != nil {
 		return MigrateResult{}, err
 	}
@@ -77,8 +77,12 @@ func (a *App) MigrateLockfile(_ context.Context, root string) (MigrateResult, er
 
 // mergedSharedLock produces the migration target: a fresh conversion when no
 // shared lock exists, otherwise the existing canonical file gaining only the
-// gskill metadata it lacks (FR-011 — skills-lock.json always wins).
-func mergedSharedLock(p *project, legacy *lockfile.Lockfile, sharedExists bool) (*skillslock.Lock, error) {
+// gskill metadata it lacks (FR-011 — skills-lock.json always wins). Legacy
+// entries absent from an existing canonical file are NOT re-added: the shared
+// lock is the source of truth, and a legacy-only entry means it was removed
+// after the shared lock was written (re-adding would resurrect removed
+// skills).
+func mergedSharedLock(a *App, p *project, legacy *lockfile.Lockfile, sharedExists bool) (*skillslock.Lock, error) {
 	if !sharedExists {
 		return skillslock.MigrateFromLegacy(legacy), nil
 	}
@@ -88,7 +92,13 @@ func mergedSharedLock(p *project, legacy *lockfile.Lockfile, sharedExists bool) 
 		return nil, fmt.Errorf("%w: %w", errs.ErrInvalidManifest, err)
 	}
 	for _, name := range sortedKeys(legacy.Skills) {
-		if e, ok := shared.Entry(name); ok && e.Ext != nil {
+		e, ok := shared.Entry(name)
+		if !ok {
+			a.log.Warn("dropping legacy lock entry absent from canonical skills-lock.json",
+				"skill", name)
+			continue
+		}
+		if e.Ext != nil {
 			continue // canonical entry already carries gskill metadata
 		}
 		shared.SetEntry(name, skillslock.FromLegacy(legacy.Skills[name]))

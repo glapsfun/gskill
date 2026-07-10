@@ -174,6 +174,9 @@ type RemoveResult struct {
 // Remove uninstalls the named skills from the manifest, lockfile, and every
 // agent directory, then garbage-collects unreferenced store entries.
 func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveResult, error) {
+	if err := a.maybeMigrate(ctx, root); err != nil {
+		return RemoveResult{}, err
+	}
 	p := openProject(root)
 	if !p.manifestExists() {
 		return RemoveResult{}, errNoManifest()

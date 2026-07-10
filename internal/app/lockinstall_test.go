@@ -3,15 +3,13 @@ package app_test
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/integrity"
@@ -22,12 +20,8 @@ import (
 // testAgent is the agent every lock-install test targets.
 const testAgent = "claude"
 
-func lockApp() *app.App {
-	return app.New(app.Options{
-		Agents: agent.NewDefaultRegistry(),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
-}
+// lockApp is the lock-install tests' name for the shared test App constructor.
+func lockApp() *app.App { return onboardApp() }
 
 func runLockInstall(t *testing.T, root string) (app.InstallFromLockResult, error) {
 	t.Helper()
@@ -111,7 +105,7 @@ func writeLockOnly(t *testing.T, root, repo, hashAlpha, hashBeta string) {
 }
 
 func jsonStr(s string) string {
-	return `"` + strings.ReplaceAll(s, `\`, `\\`) + `"`
+	return strconv.Quote(s) // JSON-compatible escaping for paths
 }
 
 // assertProjectScaffold checks auto-init results (FR-019).
@@ -837,3 +831,92 @@ func TestInstallFromLock_EditedHashOnInstalledProject(t *testing.T) {
 
 // skillAlpha is the first fixture skill's name.
 const skillAlpha = "alpha"
+
+// TestInstallFromLock_ExternalUpdateRefetches (review fix): when an external
+// tool updates a skill (new content + computedHash) but the gskill block still
+// pins the old commit, install must re-resolve and fetch the NEW content — not
+// reinstall the stale pin and demand --force.
+func TestInstallFromLock_ExternalUpdateRefetches(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+
+	newHash := simulateExternalUpdate(t, repo, root)
+	lockPath := filepath.Join(root, skillslock.FileName)
+
+	// No --force needed: the entry changed, so the stale pin must not be reused.
+	res, err := runLockInstall(t, root)
+	if err != nil {
+		for _, s := range res.Skills {
+			t.Logf("skill %s: status=%s err=%v", s.Name, s.Status, s.Err)
+		}
+		t.Fatalf("install after external update: %v", err)
+	}
+	for _, s := range res.Skills {
+		if s.Name == skillAlpha && s.Status == app.LockSkillFailed {
+			t.Fatalf("alpha failed instead of refetching: %v", s.Err)
+		}
+	}
+	l2, err := skillslock.Load(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2, _ := l2.Entry(skillAlpha)
+	if e2.ComputedHash != newHash {
+		t.Errorf("computedHash = %q, want the external tool's %q preserved", e2.ComputedHash, newHash)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "."+testAgent, "skills", skillAlpha, "SKILL.md")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "alpha v2") {
+		t.Errorf("installed content is stale:\n%s", data)
+	}
+}
+
+// gitCommit commits all changes in repo.
+func gitCommit(t *testing.T, repo, msg string) {
+	t.Helper()
+	for _, args := range [][]string{{"add", "."}, {"commit", "--quiet", "-m", msg}} {
+		cmd := exec.CommandContext(context.Background(), "git", args...) //nolint:gosec // test-controlled fixture args
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// simulateExternalUpdate plays the external tool's role: commit new upstream
+// content for alpha and record its new computedHash in the lock, leaving the
+// gskill block (old pins) untouched.
+func simulateExternalUpdate(t *testing.T, repo, root string) (newHash string) {
+	t.Helper()
+	newBody := "---\nname: alpha\ndescription: The alpha skill v2\n---\n# alpha v2\n"
+	if err := os.WriteFile(filepath.Join(repo, "skills", "alpha", "SKILL.md"), []byte(newBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, repo, "alpha v2")
+	var err error
+	if newHash, err = integrity.CompatHash(filepath.Join(repo, "skills", "alpha")); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, skillslock.FileName)
+	l, err := skillslock.Load(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := l.Entry(skillAlpha)
+	l.SetEntry(skillAlpha, skillslock.Entry{Source: e.Source, SourceType: e.SourceType, SkillPath: e.SkillPath, ComputedHash: newHash})
+	if err := skillslock.Save(lockPath, l); err != nil {
+		t.Fatal(err)
+	}
+	return newHash
+}

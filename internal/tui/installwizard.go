@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -164,17 +165,8 @@ func (m lockWizardModel) Outcome() LockWizardOutcome {
 		Executed:  m.executed,
 		AgentIDs:  m.agentIDs,
 		Result:    m.result,
-		Err:       firstError(m.execErr, m.failed),
+		Err:       cmp.Or(m.execErr, m.failed),
 	}
-}
-
-func firstError(errsIn ...error) error {
-	for _, e := range errsIn {
-		if e != nil {
-			return e
-		}
-	}
-	return nil
 }
 
 // Update implements tea.Model.
@@ -290,9 +282,9 @@ func (m lockWizardModel) onKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m lockWizardModel) onConflictKey(k string) (tea.Model, tea.Cmd) {
 	switch k {
 	case "l":
-		return m.resolveConflict("lock")
+		return m.resolveConflict(app.ReconcileLock)
 	case "m":
-		return m.resolveConflict("manifest")
+		return m.resolveConflict(app.ReconcileManifest)
 	case "q", "n", keyEsc, keyCtrlC:
 		m.cancelled = true
 		return m, tea.Quit

@@ -87,15 +87,34 @@ func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root proje
 	if err != nil {
 		return err
 	}
-	if found && len(preview.Skills) > 0 {
-		if c.wizardEligible(out, g) {
-			return c.runLockWizard(ctx, out, a, string(root), preview, g)
+	if !found || len(preview.Skills) == 0 {
+		return c.runDirect(ctx, out, a, root, g)
+	}
+	if c.wizardEligible(out, g) {
+		if err := c.rejectGlobalOnLockPath(); err != nil {
+			return err
 		}
-		if c.lockDirectEligible(a, string(root)) || g.DryRun {
-			return c.runLockDirect(ctx, out, a, string(root), g)
+		return c.runLockWizard(ctx, out, a, string(root), preview, g)
+	}
+	if g.DryRun || c.lockDirectEligible(a, string(root)) {
+		if err := c.rejectGlobalOnLockPath(); err != nil {
+			return err
 		}
+		return c.runLockDirect(ctx, out, a, string(root), g)
 	}
 	return c.runDirect(ctx, out, a, root, g)
+}
+
+// rejectGlobalOnLockPath refuses --global on the lock-file-first pipeline
+// instead of silently installing project-scoped: the pipeline records and
+// restores project-scoped state only.
+func (c installCmd) rejectGlobalOnLockPath() error {
+	if !c.Global {
+		return nil
+	}
+	return errs.WithHint(
+		fmt.Errorf("%w: --global is not supported for lock-file-first installs", errs.ErrUsage),
+		"run without --global, or use 'gskill add --global <source>' for user-global skills")
 }
 
 // wizardEligible reports whether the guided lock-install flow may open:
@@ -172,6 +191,8 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 					Root:        root,
 					Agents:      agentIDs,
 					InstallMode: c.mode(),
+					NoInit:      c.NoInit,
+					Force:       c.Force,
 					Offline:     g.Offline,
 					Reconcile:   reconcile,
 				})
@@ -253,7 +274,7 @@ func (c installCmd) runDirect(ctx context.Context, out *Output, a *app.App, root
 	res, err := a.Install(ctx, app.InstallRequest{
 		Root:           string(root),
 		Scope:          scopeFlag(c.Global),
-		Mode:           modeFromFlags(c.Copy, false, false),
+		Mode:           c.mode(),
 		Frozen:         c.FrozenLockfile,
 		Offline:        g.Offline,
 		NoCache:        g.NoCache,

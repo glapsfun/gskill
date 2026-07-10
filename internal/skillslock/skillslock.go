@@ -35,6 +35,7 @@ type Lock struct {
 	doc     *object            // top level: version, skills, unknown fields
 	skills  *object            // entry-name ordering (values live in entries)
 	entries map[string]*object // per-entry key order + raw values
+	version int                // the parsed schema version
 }
 
 // Entry is the typed view of one skill entry's core fields plus gskill's
@@ -55,7 +56,7 @@ func New() *Lock {
 	doc.set("version", json.RawMessage("1"))
 	doc.set("skills", json.RawMessage("{}"))
 	doc.origLen = len(doc.keys)
-	return &Lock{doc: doc, skills: newObject(), entries: map[string]*object{}}
+	return &Lock{doc: doc, skills: newObject(), entries: map[string]*object{}, version: SchemaVersion}
 }
 
 // Unmarshal parses lock bytes, enforcing the structural schema: valid JSON,
@@ -101,7 +102,7 @@ func Unmarshal(data []byte) (*Lock, error) {
 		}
 		entries[name] = eo
 	}
-	return &Lock{doc: doc, skills: skills, entries: entries}, nil
+	return &Lock{doc: doc, skills: skills, entries: entries, version: version}, nil
 }
 
 // Load reads and parses the lock file at path.
@@ -153,7 +154,7 @@ func Save(path string, l *Lock) error {
 }
 
 // Version returns the parsed schema version.
-func (l *Lock) Version() int { return SchemaVersion }
+func (l *Lock) Version() int { return l.version }
 
 // Names returns the entry names in file order.
 func (l *Lock) Names() []string {
@@ -203,7 +204,14 @@ func (l *Lock) SetEntry(name string, e Entry) {
 		l.skills.setSortedSuffix(name, nil)
 	}
 	setStringFieldIfAbsent(eo, "source", e.Source)
-	setStringFieldIfAbsent(eo, "ref", e.Ref)
+	if e.Ext != nil {
+		// A managed write (the entry carries gskill's record): gskill owns the
+		// declared ref and must keep it current when the user re-pins, or the
+		// core field goes stale and later reads it as a manifest/lock conflict.
+		setStringField(eo, "ref", e.Ref)
+	} else {
+		setStringFieldIfAbsent(eo, "ref", e.Ref)
+	}
 	setStringFieldIfAbsent(eo, "sourceType", e.SourceType)
 	setStringFieldIfAbsent(eo, "skillPath", e.SkillPath)
 	setStringField(eo, "computedHash", e.ComputedHash)
@@ -262,9 +270,29 @@ func (l *Lock) Remove(name string) bool {
 	return l.skills.remove(name)
 }
 
+// CheckExts fails when any entry carries a gskill block that does not parse.
+// A corrupted block must fail closed, not silently degrade the entry to
+// external-only (which would drop it from restore/remove/sync).
+func (l *Lock) CheckExts() error {
+	for _, name := range l.skills.keys {
+		raw, ok := l.entries[name].get("gskill")
+		if !ok {
+			continue
+		}
+		var ext Ext
+		if err := json.Unmarshal(raw, &ext); err != nil {
+			return fmt.Errorf("%w: skill %q: corrupt \"gskill\" block: %w", ErrInvalid, name, err)
+		}
+	}
+	return nil
+}
+
 // Validate checks every entry's required core fields and rejects skillPath
 // values that are absolute or escape the project (path traversal, FR-027).
 func (l *Lock) Validate() error {
+	if err := l.CheckExts(); err != nil {
+		return err
+	}
 	for _, name := range l.skills.keys {
 		e, _ := l.Entry(name)
 		if e.Source == "" {

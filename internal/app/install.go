@@ -110,6 +110,9 @@ type AddResult struct {
 // lockfile. It errors on an already-declared key unless Force is set (FR-047),
 // and writes nothing when no target agent is available (FR-029).
 func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
+	if err := a.maybeMigrate(ctx, req.Root); err != nil {
+		return AddResult{}, err
+	}
 	p := openProject(req.Root)
 	if !p.manifestExists() {
 		return AddResult{}, errNoManifest()
@@ -424,27 +427,9 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 				return instErr
 			}
 			activated = append(activated, result)
-			if plan.mergeInto {
-				locked := lf.Skills[s.ID]
-				mergeAgentInstall(&locked, result)
-				ms := m.Skills[s.ID]
-				ms.Agents = plan.manifestIDs
-				// Backfill the version pin from the already-locked revision (not the
-				// freshly-resolved rev, so the pin matches what is locked), keeping
-				// the lock's requested consistent (008 finding 3).
-				ms = backfillPins(ms, revFromLock(locked.Resolved), ms.Agents, len(m.Defaults.Agents) > 0)
-				m.Skills[s.ID] = ms
-				locked.Requested = requestedFromSkill(ms)
-				lf.Skills[s.ID] = locked
-			} else {
-				entry := manifestEntry(req, s.RepoPath, plan.manifestIDs)
-				// Record the resolved version pin (and, when applicable, the
-				// agent set) before building the lock entry, so lockfile
-				// `requested` matches the manifest and sync stays idempotent
-				// (008 FR-004/FR-007). Agents are already decided by planAdd.
-				entry = backfillPins(entry, rev, plan.manifestIDs, len(m.Defaults.Agents) > 0)
-				m.Skills[s.ID] = entry
-				lf.Skills[s.ID] = buildLockEntry(ref, rev, ir, result, m.Skills[s.ID])
+			if lockErr := recordAdd(m, lf, req, s, ref, rev, ir, result, plan); lockErr != nil {
+				rollback()
+				return lockErr
 			}
 			res.Installed = append(res.Installed, InstalledSkill{
 				Name: s.ID, Path: s.RepoPath, ContentHash: result.ContentHash, Targets: result.Targets,
@@ -652,11 +637,15 @@ type InstallResult struct {
 // Install materializes every declared skill, additively and idempotently,
 // updating the lockfile only when resolved content changes (FR-022).
 func (a *App) Install(ctx context.Context, req InstallRequest) (InstallResult, error) {
+	if req.Frozen {
+		// Frozen runs never write anything — including the automatic lockfile
+		// migration (constitution I: --frozen-lockfile MUST NOT mutate the
+		// lockfile). The legacy read fallback in loadOrNewLock still serves a
+		// pre-migration project read-only.
+		return a.installFrozen(ctx, req)
+	}
 	if err := a.maybeMigrate(ctx, req.Root); err != nil {
 		return InstallResult{}, err
-	}
-	if req.Frozen {
-		return a.installFrozen(ctx, req)
 	}
 
 	p := openProject(req.Root)
@@ -770,7 +759,11 @@ func (a *App) installOne(ctx context.Context, p *project, lf *lockfile.Lockfile,
 
 	old, existed := lf.Skills[name]
 	changed := !existed || old.Resolved.ContentHash != result.ContentHash || old.Resolved.Commit != rev.Commit
-	lf.Skills[name] = buildLockEntry(ref, rev, ireq, result, backfilled)
+	locked, lockErr := buildLockEntry(ref, rev, ireq, result, backfilled)
+	if lockErr != nil {
+		return SkillChange{}, ms, lockErr
+	}
+	lf.Skills[name] = locked
 	return SkillChange{
 		Name: name, ContentHash: result.ContentHash, Changed: changed,
 		ManifestChanged: !reflect.DeepEqual(backfilled, ms),
@@ -890,6 +883,36 @@ func requestedFromSkill(ms manifest.Skill) lockfile.Requested {
 	return lockfile.Requested{Version: ms.Version, Ref: ms.Ref, Commit: ms.Commit}
 }
 
+// recordAdd writes the manifest declaration and lock entry for one added
+// skill. An agent-add (plan.mergeInto) merges the result into the existing
+// lock entry, backfilling the version pin from the already-locked revision
+// (not the freshly-resolved rev, so the pin matches what is locked, 008
+// finding 3). A fresh add builds a new declaration and lock entry, with the
+// resolved pin backfilled first so the lockfile `requested` matches the
+// manifest and sync stays idempotent (008 FR-004/FR-007).
+func recordAdd(m *manifest.Manifest, lf *lockfile.Lockfile, req AddRequest, s discovery.DiscoveredSkill, ref source.Ref, rev resolver.Revision, ireq installer.Request, result installer.Result, plan addPlan) error {
+	if plan.mergeInto {
+		locked := lf.Skills[s.ID]
+		mergeAgentInstall(&locked, result)
+		ms := m.Skills[s.ID]
+		ms.Agents = plan.manifestIDs
+		ms = backfillPins(ms, revFromLock(locked.Resolved), ms.Agents, len(m.Defaults.Agents) > 0)
+		m.Skills[s.ID] = ms
+		locked.Requested = requestedFromSkill(ms)
+		lf.Skills[s.ID] = locked
+		return nil
+	}
+	entry := manifestEntry(req, s.RepoPath, plan.manifestIDs)
+	entry = backfillPins(entry, rev, plan.manifestIDs, len(m.Defaults.Agents) > 0)
+	m.Skills[s.ID] = entry
+	locked, err := buildLockEntry(ref, rev, ireq, result, m.Skills[s.ID])
+	if err != nil {
+		return err
+	}
+	lf.Skills[s.ID] = locked
+	return nil
+}
+
 // manifestEntry builds the manifest record for an add (intent only). The path
 // is the selected skill's in-repo location, so the manifest pins which skill
 // inside the source was installed (FR-028/FR-030). agentIDs is the agent set to
@@ -948,7 +971,7 @@ func subtract(a, b []string) []string {
 }
 
 // buildLockEntry assembles the lockfile record from resolution + install reality.
-func buildLockEntry(ref source.Ref, rev resolver.Revision, ireq installer.Request, result installer.Result, intent manifest.Skill) lockfile.LockedSkill {
+func buildLockEntry(ref source.Ref, rev resolver.Revision, ireq installer.Request, result installer.Result, intent manifest.Skill) (lockfile.LockedSkill, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	fm := result.Skill.Frontmatter
 	resolved := lockfile.Resolved{
@@ -962,11 +985,14 @@ func buildLockEntry(ref source.Ref, rev resolver.Revision, ireq installer.Reques
 		MutableRef:    rev.MutableRef,
 	}
 	// Record the shared computedHash so the skills-lock.json entry stays
-	// consumable by external tooling (spec 012 FR-024). Best-effort: the
-	// gskill-canonical ContentHash above remains the verification anchor.
-	if compat, err := integrity.CompatHash(result.Skill.Dir); err == nil {
-		resolved.CompatHash = compat
+	// consumable by external tooling (spec 012 FR-024). A hashing failure must
+	// surface: silently leaving it empty would let a stale computedHash for
+	// changed content survive in the shared lock.
+	compat, err := integrity.CompatHash(result.Skill.Dir)
+	if err != nil {
+		return lockfile.LockedSkill{}, fmt.Errorf("compute shared computedHash for %s: %w", ireq.Name, err)
 	}
+	resolved.CompatHash = compat
 	if rev.RefKind == resolver.RefKindLocal {
 		resolved.LocalPathHash = result.ContentHash
 	}
@@ -990,7 +1016,7 @@ func buildLockEntry(ref source.Ref, rev resolver.Revision, ireq installer.Reques
 			Targets: result.Targets, Modes: result.Modes,
 		},
 		Provenance: lockfile.Provenance{FetchedAt: now, UpdatedAt: now, Trust: "checksum-ok"},
-	}
+	}, nil
 }
 
 // promoteLocalGit upgrades a local path that is a git repo to a git source so it
@@ -1058,6 +1084,11 @@ func loadOrNewLock(path string) (*lockfile.Lockfile, error) {
 	}
 	l, err := skillslock.Load(path)
 	if err != nil {
+		return nil, err
+	}
+	// A corrupt gskill block must fail closed here: silently treating the
+	// entry as external-only would drop it from restore/remove/sync.
+	if err := l.CheckExts(); err != nil {
 		return nil, err
 	}
 	lf := lockfile.New()
