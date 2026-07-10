@@ -652,6 +652,9 @@ type InstallResult struct {
 // Install materializes every declared skill, additively and idempotently,
 // updating the lockfile only when resolved content changes (FR-022).
 func (a *App) Install(ctx context.Context, req InstallRequest) (InstallResult, error) {
+	if err := a.maybeMigrate(ctx, req.Root); err != nil {
+		return InstallResult{}, err
+	}
 	if req.Frozen {
 		return a.installFrozen(ctx, req)
 	}

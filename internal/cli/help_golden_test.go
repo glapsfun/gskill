@@ -37,6 +37,7 @@ var helpPages = []struct {
 	{"project-verify", []string{"project", "verify"}},
 	{"project-check", []string{"project", "check"}},
 	{"project-diff", []string{"project", "diff"}},
+	{"migrate-lockfile", []string{"migrate", "lockfile"}},
 
 	{"source-list", []string{"source", "list"}},
 	{"source-inspect", []string{"source", "inspect"}},

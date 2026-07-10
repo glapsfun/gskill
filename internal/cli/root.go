@@ -60,6 +60,7 @@ type rootCLI struct {
 	Diff   diffCmd   `cmd:"" hidden:"" group:"project" help:"Show manifest/lock/disk differences."`
 
 	Project projectCmd `cmd:"" group:"project" help:"Manage this project's manifest, lockfile, and installed state."`
+	Migrate migrateCmd `cmd:"" group:"project" help:"One-way format migrations (gskill.lock -> skills-lock.json)."`
 
 	Source     sourceCmd     `cmd:"" group:"more" help:"Inspect a skill source (list/inspect/check) without installing."`
 	Cache      cacheCmd      `cmd:"" group:"more" help:"Manage the content cache."`

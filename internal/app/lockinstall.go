@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -70,6 +71,14 @@ type InstallFromLockResult struct {
 func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (InstallFromLockResult, error) {
 	p := openProject(req.Root)
 	var res InstallFromLockResult
+
+	if !req.Frozen && !req.DryRun {
+		legacyWasPresent := fileExists(filepath.Join(req.Root, LockName))
+		if err := a.maybeMigrate(ctx, req.Root); err != nil {
+			return res, err
+		}
+		res.Migrated = legacyWasPresent
+	}
 
 	l, err := a.loadSharedLock(p)
 	if err != nil {
@@ -341,7 +350,9 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 	if err != nil {
 		return fail(err)
 	}
-	if compat != e.ComputedHash && (!req.Force || req.Frozen) {
+	// An empty recorded hash (a freshly migrated gskill.lock entry) has
+	// nothing to verify against; the hash is recorded after this install.
+	if e.ComputedHash != "" && compat != e.ComputedHash && (!req.Force || req.Frozen) {
 		return fail(errs.WithHint(
 			fmt.Errorf("%w: computedHash mismatch: lock records %s, source content is %s",
 				errs.ErrIntegrity, e.ComputedHash, compat),

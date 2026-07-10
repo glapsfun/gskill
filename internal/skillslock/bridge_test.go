@@ -72,7 +72,7 @@ func assertCore(t *testing.T, e skillslock.Entry) {
 	if e.Source != "vercel-labs/agent-skills" {
 		t.Errorf("Source = %q, want owner/repo shorthand", e.Source)
 	}
-	if e.SourceType != "github" {
+	if e.SourceType != srcTypeGitHub {
 		t.Errorf("SourceType = %q", e.SourceType)
 	}
 	if e.SkillPath != "skills/deploy-to-vercel/SKILL.md" {
@@ -154,7 +154,7 @@ func TestBridgeMinimalEntry(t *testing.T) {
 		ComputedHash: "03e0eaaa9bf13ba1e7ffa387f5893de6f324c0868c627001f179395a8feaa7c9",
 	}
 	ls := skillslock.ToLegacy("deploy-to-vercel", e)
-	if ls.Source.Type != "github" {
+	if ls.Source.Type != srcTypeGitHub {
 		t.Errorf("Source.Type = %q", ls.Source.Type)
 	}
 	if ls.Source.Owner != "vercel-labs" || ls.Source.Repo != "agent-skills" {

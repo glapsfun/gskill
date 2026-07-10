@@ -156,6 +156,16 @@ Install all declared skills (additive, idempotent).
 List installed skills and their status.
 
 
+## `migrate`
+
+One-way format migrations (gskill.lock -> skills-lock.json).
+
+
+## `migrate lockfile`
+
+Convert a legacy gskill.lock into skills-lock.json (backs up the original).
+
+
 ## `onboard`
 
 Guided skill installation without a predefined source.

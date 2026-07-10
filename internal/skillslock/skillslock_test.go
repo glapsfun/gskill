@@ -60,7 +60,7 @@ func TestUnmarshalMinimalV1(t *testing.T) {
 	if e.Source != "vercel-labs/agent-skills" {
 		t.Errorf("Source = %q", e.Source)
 	}
-	if e.SourceType != "github" {
+	if e.SourceType != srcTypeGitHub {
 		t.Errorf("SourceType = %q", e.SourceType)
 	}
 	if e.SkillPath != "skills/deploy-to-vercel/SKILL.md" {
@@ -197,3 +197,6 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 		t.Errorf("entries after round trip = %d, want %d", got, want)
 	}
 }
+
+// srcTypeGitHub is the shared sourceType asserted across the package's tests.
+const srcTypeGitHub = "github"
