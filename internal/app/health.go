@@ -6,10 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/glapsfun/gskill/internal/skillslock"
+
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
-	"github.com/glapsfun/gskill/internal/lockfile"
 )
 
 // TargetState classifies one agent target's health relative to the locked state.
@@ -99,7 +100,7 @@ func (h SkillHealth) IntegrityFault() bool {
 // name. When verifyHash is set, store content is re-hashed against the lockfile
 // (the integrity check); otherwise only presence is checked (the cheap path used
 // by reconcile to decide what to skip).
-func (a *App) evaluateHealth(p *project, lf *lockfile.Lockfile, verifyHash bool) ([]SkillHealth, error) {
+func (a *App) evaluateHealth(p *project, lf *skillslock.State, verifyHash bool) ([]SkillHealth, error) {
 	storeRoot, err := filepath.Abs(p.store.Root())
 	if err != nil {
 		return nil, fmt.Errorf("resolve store root: %w", err)
@@ -117,7 +118,7 @@ func (a *App) evaluateHealth(p *project, lf *lockfile.Lockfile, verifyHash bool)
 }
 
 // evaluateSkill computes the health of a single locked skill.
-func (a *App) evaluateSkill(p *project, name string, locked lockfile.LockedSkill, storeRoot string, verifyHash bool) (SkillHealth, error) {
+func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, storeRoot string, verifyHash bool) (SkillHealth, error) {
 	hash := locked.Resolved.ContentHash
 	storePath := p.store.Path(hash)
 	h := SkillHealth{
@@ -191,7 +192,7 @@ func (a *App) agentTargetDir(p *project, id, name, recorded string, global bool)
 
 // activePathOf returns the recorded active path, or the conventional one when the
 // lock entry predates the active layer (legacy migration target).
-func activePathOf(locked lockfile.LockedSkill, name string) string {
+func activePathOf(locked skillslock.Record, name string) string {
 	if locked.Installation.ActivePath != "" {
 		return locked.Installation.ActivePath
 	}

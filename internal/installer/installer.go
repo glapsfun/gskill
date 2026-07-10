@@ -322,7 +322,7 @@ func (i *Installer) guardForeignTarget(req Request, dest, storePath string) erro
 	}
 	return errs.WithHint(
 		fmt.Errorf("%w: destination %s already exists and is not managed by gskill",
-			errs.ErrInvalidManifest, dest),
+			errs.ErrInvalidLock, dest),
 		"remove it, or re-run with --force to overwrite")
 }
 

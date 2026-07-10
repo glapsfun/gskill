@@ -30,19 +30,13 @@ type LockWizardSkill struct {
 type LockWizardPhases struct {
 	Agents  func(context.Context) ([]app.AgentChoice, error)
 	Execute func(context.Context, []string) (app.InstallFromLockResult, error)
-	// Reconcile receives the user's conflict choice ("lock" or "manifest",
-	// FR-023) before Execute runs. Only called when Conflicts is non-empty.
-	Reconcile func(choice string)
 }
 
 // LockWizardConfig configures a lock-install wizard run.
 type LockWizardConfig struct {
 	LockPath string
 	Skills   []LockWizardSkill
-	// Conflicts are manifest/lock disagreement lines (FR-023); when non-empty
-	// the flow opens with a which-side-wins step.
-	Conflicts []string
-	Phases    LockWizardPhases
+	Phases   LockWizardPhases
 }
 
 // LockWizardOutcome is what a finished flow reports back to the CLI.
@@ -77,7 +71,6 @@ type lockStep int
 
 const (
 	lockStepAgents lockStep = iota
-	lockStepConflict
 	lockStepPreview
 	lockStepProgress
 	lockStepSummary
@@ -90,8 +83,6 @@ func (s lockStep) String() string {
 	switch s {
 	case lockStepAgents:
 		return "agents"
-	case lockStepConflict:
-		return "conflict"
 	case lockStepPreview:
 		return "preview"
 	case lockStepProgress:
@@ -140,11 +131,7 @@ type lockWizardModel struct {
 }
 
 func newLockWizardModel(ctx context.Context, cfg LockWizardConfig) lockWizardModel {
-	step := lockStepAgents
-	if len(cfg.Conflicts) > 0 {
-		step = lockStepConflict
-	}
-	return lockWizardModel{ctx: ctx, cfg: cfg, st: DefaultTheme(), step: step, agentsLoading: true}
+	return lockWizardModel{ctx: ctx, cfg: cfg, st: DefaultTheme(), step: lockStepAgents, agentsLoading: true}
 }
 
 // Init kicks off agent detection.
@@ -246,8 +233,6 @@ func (m *lockWizardModel) buildForm() {
 func (m lockWizardModel) onKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := key.String()
 	switch m.step {
-	case lockStepConflict:
-		return m.onConflictKey(k)
 	case lockStepAgents:
 		if k == "q" || k == keyCtrlC {
 			m.cancelled = true
@@ -274,33 +259,6 @@ func (m lockWizardModel) onKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // installation is not interruptible from the view
 	case lockStepSummary, lockStepNoAgents, lockStepError:
 		return m, tea.Quit
-	}
-	return m, nil
-}
-
-// onConflictKey handles the which-side-wins step (FR-023).
-func (m lockWizardModel) onConflictKey(k string) (tea.Model, tea.Cmd) {
-	switch k {
-	case "l":
-		return m.resolveConflict(app.ReconcileLock)
-	case "m":
-		return m.resolveConflict(app.ReconcileManifest)
-	case "q", "n", keyEsc, keyCtrlC:
-		m.cancelled = true
-		return m, tea.Quit
-	}
-	return m, nil
-}
-
-// resolveConflict records the which-side-wins choice (FR-023) and moves on to
-// agent selection.
-func (m lockWizardModel) resolveConflict(choice string) (tea.Model, tea.Cmd) {
-	if m.cfg.Phases.Reconcile != nil {
-		m.cfg.Phases.Reconcile(choice)
-	}
-	m.step = lockStepAgents
-	if m.form == nil && len(m.choices) > 0 {
-		m.buildForm()
 	}
 	return m, nil
 }
@@ -338,8 +296,6 @@ func (m lockWizardModel) View() string {
 	switch m.step {
 	case lockStepAgents:
 		return m.viewAgents()
-	case lockStepConflict:
-		return m.viewConflict()
 	case lockStepPreview:
 		return m.viewPreview()
 	case lockStepProgress:
@@ -410,21 +366,6 @@ func (m lockWizardModel) viewSummary() string {
 		b.WriteString("\n" + Sanitize(errText(m.execErr)) + "\n")
 	}
 	b.WriteString(m.hintLine("press any key to exit"))
-	return b.String()
-}
-
-// viewConflict shows the manifest/lock differences and asks which side wins
-// (FR-023). Nothing has been written when this step is on screen.
-func (m lockWizardModel) viewConflict() string {
-	var b strings.Builder
-	b.WriteString(m.header("gskill.toml and skills-lock.json disagree"))
-	for _, line := range m.cfg.Conflicts {
-		b.WriteString("  ! " + Sanitize(line) + "\n")
-	}
-	b.WriteString("\nWhich side should win? (nothing has been changed yet)\n")
-	b.WriteString("  l — use skills-lock.json (rewrite the manifest declarations)\n")
-	b.WriteString("  m — use gskill.toml (rewrite the lock entries)\n")
-	b.WriteString(m.hintLine("l lock wins · m manifest wins · q cancel"))
 	return b.String()
 }
 

@@ -120,10 +120,10 @@ func TestRenderFindStyled_Table(t *testing.T) {
 func TestRenderDiffStyled_Table(t *testing.T) {
 	t.Parallel()
 	got := renderDiffStyled([]app.DiffEntry{
-		{Name: "a", InManifest: true, InLock: true, Status: "installed"},
-		{Name: "b", InManifest: true, InLock: false, Status: "missing"},
+		{Name: "a", Status: "installed"},
+		{Name: "b", Status: "missing"},
 	})
-	for _, want := range []string{"NAME", "MANIFEST", "LOCK", "STATUS", "✓", "—", "●", "✗"} {
+	for _, want := range []string{"NAME", "STATUS", "●", "✗"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("styled diff missing %q:\n%s", want, got)
 		}

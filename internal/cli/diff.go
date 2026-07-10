@@ -29,9 +29,9 @@ func (diffCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoo
 	rows := make([]map[string]any, 0, len(entries))
 	var b strings.Builder
 	for _, e := range entries {
-		_, _ = fmt.Fprintf(&b, "%-24s manifest=%-5v lock=%-5v %s\n", e.Name, e.InManifest, e.InLock, e.Status)
+		_, _ = fmt.Fprintf(&b, "%-24s %s\n", e.Name, e.Status)
 		rows = append(rows, map[string]any{
-			"name": e.Name, "in_manifest": e.InManifest, "in_lock": e.InLock, "status": e.Status,
+			"name": e.Name, "status": e.Status,
 		})
 	}
 	human := strings.TrimRight(b.String(), "\n")

@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/glapsfun/gskill/internal/skillslock"
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/installer"
-	"github.com/glapsfun/gskill/internal/lockfile"
-	"github.com/glapsfun/gskill/internal/manifest"
 )
 
 // SyncRequest describes a `sync` invocation.
@@ -39,30 +38,24 @@ type SyncResult struct {
 	UpToDate   bool
 }
 
-// Sync reconciles the filesystem to the manifest's desired state across the
-// three layers (store → active → agent). It installs declared-but-missing
-// skills, creates declared-but-missing agent targets, and skips skills whose
-// store, active entry, and agent targets already match — never re-resolving or
-// re-downloading unchanged content (FR-010..FR-015). With Prune it removes agent
-// targets and active entries the manifest no longer declares; without Prune it
-// reports such orphans instead of deleting them (FR-013).
+// Sync reconciles the filesystem to the lock's declared state across the
+// three layers (store → active → agent). It restores declared-but-missing
+// installs and skips skills whose store, active entry, and agent targets
+// already match — never re-resolving or re-downloading unchanged content
+// (FR-010..FR-015). With Prune it removes managed agent targets and active
+// entries the lock no longer declares; without Prune it reports such orphans
+// instead of deleting them (FR-013).
 func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
-	if err := a.maybeMigrate(ctx, req.Root); err != nil {
-		return SyncResult{}, err
-	}
 	p := openProject(req.Root)
-	if !p.manifestExists() {
-		return SyncResult{}, errNoManifest()
+	if !fileExists(p.lockPath) {
+		// Without this gate a missing lock reads as "nothing declared" and
+		// --prune would wipe every managed install.
+		return SyncResult{}, errNoLock()
 	}
-	m, err := manifest.Load(p.manifestPath)
-	if err != nil {
-		return SyncResult{}, err
-	}
-
 	var out SyncResult
-	err = a.withLock(ctx, p, func() error {
+	err := a.withLock(ctx, p, func() error {
 		var rErr error
-		out, rErr = a.reconcile(ctx, p, m, req)
+		out, rErr = a.reconcile(ctx, p, req)
 		return rErr
 	})
 	if err != nil {
@@ -71,155 +64,97 @@ func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
 	return out, nil
 }
 
-// reconcile performs the manifest-to-disk reconciliation under the project lock,
+// reconcile performs the lock-to-disk reconciliation under the project lock,
 // returning the per-skill outcome plus prune/orphan results.
-func (a *App) reconcile(ctx context.Context, p *project, m *manifest.Manifest, req SyncRequest) (SyncResult, error) {
+func (a *App) reconcile(ctx context.Context, p *project, req SyncRequest) (SyncResult, error) {
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return SyncResult{}, err
 	}
-	desired, err := a.desiredAgentSets(ctx, p, m)
-	if err != nil {
-		return SyncResult{}, err
-	}
 
-	out, lockChanged, manifestChanged, err := a.reconcileSkills(ctx, p, lf, m, desired, req)
+	out, lockChanged, err := a.reconcileSkills(ctx, p, lf, req)
 	if err != nil {
 		return SyncResult{}, err
 	}
 
 	if req.Prune {
-		pruned, pErr := a.pruneToDesired(p, lf, m, desired)
+		pruned, pErr := a.pruneToDesired(p, lf)
 		if pErr != nil {
 			return SyncResult{}, pErr
 		}
 		out.Pruned = pruned
-		lockChanged = lockChanged || len(pruned) > 0
 	} else {
-		out.Orphans = findOrphans(lf, m, desired)
+		orphans, oErr := a.findOrphans(p, lf)
+		if oErr != nil {
+			return SyncResult{}, oErr
+		}
+		out.Orphans = orphans
 	}
 
-	out.UpToDate = !lockChanged && !manifestChanged && noChanges(out.Reconciled)
+	out.UpToDate = !lockChanged && noChanges(out.Reconciled) && len(out.Pruned) == 0
 	if lockChanged {
 		if err := saveLock(p.lockPath, lf); err != nil {
 			return SyncResult{}, err
 		}
 	}
-	if manifestChanged {
-		if err := manifest.Save(p.manifestPath, m); err != nil {
-			return SyncResult{}, err
-		}
-	}
 	return out, nil
 }
 
-// reconcileSkills reconciles every declared skill, returning the outcomes and
-// whether the lockfile and/or manifest changed (the manifest changes when an
-// always-present field is backfilled — 008 FR-009).
-func (a *App) reconcileSkills(ctx context.Context, p *project, lf *lockfile.Lockfile, m *manifest.Manifest, desired map[string]map[string]bool, req SyncRequest) (SyncResult, bool, bool, error) {
+// reconcileSkills reconciles every locked skill, returning the outcomes and
+// whether the lock changed.
+func (a *App) reconcileSkills(ctx context.Context, p *project, lf *skillslock.State, req SyncRequest) (SyncResult, bool, error) {
 	var out SyncResult
 	lockChanged := false
-	manifestChanged := false
-	names := sortedKeys(m.Skills)
+	names := sortedKeys(lf.Skills)
 	for k, name := range names {
 		sctx := stampSkill(ctx, name, k+1, len(names))
-		change, lc, mc, rErr := a.reconcileSkill(sctx, p, lf, m, name, desired[name], req)
+		change, lc, rErr := a.reconcileSkill(sctx, p, lf, name, req)
 		if rErr != nil {
-			return SyncResult{}, false, false, rErr
+			return SyncResult{}, false, rErr
 		}
 		out.Reconciled = append(out.Reconciled, change)
 		lockChanged = lockChanged || lc
-		manifestChanged = manifestChanged || mc
 	}
-	return out, lockChanged, manifestChanged, nil
+	return out, lockChanged, nil
 }
 
-// desiredAgentSets resolves, per declared skill, the set of target agent IDs
-// (explicit, defaults, or detected) the manifest asks for.
-func (a *App) desiredAgentSets(ctx context.Context, p *project, m *manifest.Manifest) (map[string]map[string]bool, error) {
-	out := make(map[string]map[string]bool, len(m.Skills))
-	for name, ms := range m.Skills {
-		agents, err := a.targetAgents(ctx, p.root, ms.Agents, m.Defaults.Agents)
-		if err != nil {
-			return nil, err
-		}
-		set := make(map[string]bool, len(agents))
-		for _, ag := range agents {
-			set[ag.ID()] = true
-		}
-		out[name] = set
-	}
-	return out, nil
-}
-
-// reconcileSkill brings one declared skill into the desired state. When the
-// declaration is unchanged and the chain already matches, it makes no changes;
-// otherwise it reconciles from the lockfile (no re-resolution) or re-resolves
-// when the declaration itself changed. It also backfills the always-present
-// manifest fields (008 FR-009), mutating m.Skills[name] in place and reporting
-// whether the lockfile and/or manifest changed.
-func (a *App) reconcileSkill(ctx context.Context, p *project, lf *lockfile.Lockfile, m *manifest.Manifest, name string, want map[string]bool, req SyncRequest) (SyncChange, bool, bool, error) {
-	ms := m.Skills[name]
-	hasDefaultsAgents := len(m.Defaults.Agents) > 0
-	desiredAgents, err := a.agentsByID(sortedSetKeys(want))
+// reconcileSkill brings one locked skill into its declared state: the entry's
+// recorded agents, mode, and revision. When the chain already matches it makes
+// no changes; otherwise it re-materializes from the lock (no re-resolution).
+func (a *App) reconcileSkill(ctx context.Context, p *project, lf *skillslock.State, name string, req SyncRequest) (SyncChange, bool, error) {
+	locked := lf.Skills[name]
+	desiredAgents, err := a.agentsByID(locked.Installation.Agents)
 	if err != nil {
-		return SyncChange{}, false, false, err
+		return SyncChange{}, false, err
 	}
 	desiredIDs := agentIDs(desiredAgents)
-	locked, hasLock := lf.Skills[name]
 
-	if hasLock && declarationUnchanged(ms, locked) {
-		// Migrate a legacy/incomplete manifest to the pinned form using the
-		// locked resolution — no re-resolve — keeping the lock's requested in
-		// step so the next run stays idempotent (008 FR-009). Record the agent set
-		// the run actually materializes (desiredIDs), not the stale locked set, so
-		// a newly-detected agent is not later treated as an orphan (008 finding 2).
-		backfilled := backfillPins(ms, revFromLock(locked.Resolved), desiredIDs, hasDefaultsAgents)
-		manifestChanged := !reflect.DeepEqual(backfilled, ms)
-		lockChanged := false
-		if manifestChanged {
-			m.Skills[name] = backfilled
-			locked.Requested = requestedFromSkill(backfilled)
-			lf.Skills[name] = locked
-			lockChanged = true
-		}
-		needed, nErr := a.reconcileNeeded(p, name, locked, desiredIDs)
-		if nErr != nil {
-			return SyncChange{}, false, false, nErr
-		}
-		if !needed {
-			return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash, Changed: manifestChanged}, lockChanged, manifestChanged, nil
-		}
-		added := subtract(desiredIDs, locked.Installation.Agents)
-		result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req, false)
-		if rErr != nil {
-			return SyncChange{}, false, false, rErr
-		}
-		applyInstallation(&locked, result)
+	lockChanged := false
+	if rq := backfillRequested(locked.Requested, revFromLock(locked.Resolved)); rq != locked.Requested {
+		locked.Requested = rq
 		lf.Skills[name] = locked
-		return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash, Changed: true, AgentsAdded: added}, true, manifestChanged, nil
+		lockChanged = true
 	}
 
-	before := lf.Skills[name].Installation.Agents
-	// Install for the full desired agent set (explicit + [defaults] agents +
-	// detected), passing it as the default so installOne does not fall back to
-	// detection-only and silently drop a [defaults] agents entry on first sync.
-	change, newMS, iErr := a.installOne(ctx, p, lf, name, ms, InstallRequest{Root: p.root, Offline: req.Offline}, desiredIDs, hasDefaultsAgents)
-	if iErr != nil {
-		return SyncChange{}, false, false, iErr
+	needed, nErr := a.reconcileNeeded(p, name, locked, desiredIDs)
+	if nErr != nil {
+		return SyncChange{}, false, nErr
 	}
-	manifestChanged := false
-	if change.ManifestChanged {
-		m.Skills[name] = newMS
-		manifestChanged = true
+	if !needed {
+		return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash}, lockChanged, nil
 	}
-	added := subtract(desiredIDs, before)
-	return SyncChange{Name: name, ContentHash: change.ContentHash, Changed: true, AgentsAdded: added}, true, manifestChanged, nil
+	result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req, false)
+	if rErr != nil {
+		return SyncChange{}, false, rErr
+	}
+	applyInstallation(&locked, result)
+	lf.Skills[name] = locked
+	return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash, Changed: true}, true, nil
 }
 
 // reconcileNeeded reports whether the chain for the desired agents is anything
 // other than fully healthy (cheap, no hashing).
-func (a *App) reconcileNeeded(p *project, name string, locked lockfile.LockedSkill, desiredIDs []string) (bool, error) {
+func (a *App) reconcileNeeded(p *project, name string, locked skillslock.Record, desiredIDs []string) (bool, error) {
 	storeRoot, err := filepath.Abs(p.store.Root())
 	if err != nil {
 		return true, fmt.Errorf("resolve store root: %w", err)
@@ -233,12 +168,39 @@ func (a *App) reconcileNeeded(p *project, name string, locked lockfile.LockedSki
 	return !h.Healthy(), nil
 }
 
+// frozenRequest builds an installer request that reproduces a locked skill
+// exactly: locked source, revision, scope, mode, and expected content hash.
+func (a *App) frozenRequest(p *project, name string, locked skillslock.Record, req InstallRequest) (installer.Request, error) {
+	agents, err := a.agentsByID(locked.Installation.Agents)
+	if err != nil {
+		return installer.Request{}, err
+	}
+
+	ref := refFromLock(locked.Source)
+	rev := revFromLock(locked.Resolved)
+
+	home, _ := os.UserHomeDir()
+	return installer.Request{
+		Ref:               ref,
+		Revision:          rev,
+		Name:              name,
+		Path:              ref.Path,
+		Agents:            agents,
+		Scope:             installer.Scope(locked.Installation.Scope),
+		ModePref:          locked.Installation.Mode,
+		ProjectRoot:       p.root,
+		Home:              home,
+		Offline:           req.Offline,
+		ExpectContentHash: locked.Resolved.ContentHash,
+	}, nil
+}
+
 // reconcileFromLock re-materializes a skill for the desired agents using the
 // locked revision and content hash, without re-resolving. preserveForeign
 // makes the installer fail closed on unowned destinations — set by the
 // agent-add path (adding an agent must never clobber a user's content, spec
 // 011 FR-016), left false by sync/repair whose contract is restoring drift.
-func (a *App) reconcileFromLock(ctx context.Context, p *project, name string, locked lockfile.LockedSkill, desiredAgents []agent.Agent, req SyncRequest, preserveForeign bool) (installer.Result, error) {
+func (a *App) reconcileFromLock(ctx context.Context, p *project, name string, locked skillslock.Record, desiredAgents []agent.Agent, req SyncRequest, preserveForeign bool) (installer.Result, error) {
 	ireq, err := a.frozenRequest(p, name, locked, InstallRequest{Root: p.root, Offline: req.Offline})
 	if err != nil {
 		return installer.Result{}, err
@@ -251,7 +213,7 @@ func (a *App) reconcileFromLock(ctx context.Context, p *project, name string, lo
 
 // applyInstallation copies an install result's placement facts onto a locked
 // entry, preserving its resolution and provenance.
-func applyInstallation(locked *lockfile.LockedSkill, result installer.Result) {
+func applyInstallation(locked *skillslock.Record, result installer.Result) {
 	locked.Installation.Mode = string(result.Mode)
 	locked.Installation.Agents = result.Agents
 	locked.Installation.ActivePath = result.ActivePath
@@ -269,169 +231,86 @@ func noChanges(changes []SyncChange) bool {
 	return true
 }
 
-// sortedSetKeys returns the keys of a string set in sorted order.
-func sortedSetKeys(set map[string]bool) []string {
-	out := make([]string, 0, len(set))
-	for k := range set {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// pruneToDesired removes agent targets and active entries the manifest no longer
-// declares: undesired agents on still-declared skills, skills dropped from the
-// manifest entirely, and any managed orphans hand-created in agent dirs. It
-// updates the lockfile to match and GCs unreferenced store content.
-func (a *App) pruneToDesired(p *project, lf *lockfile.Lockfile, m *manifest.Manifest, desired map[string]map[string]bool) ([]string, error) {
-	var pruned []string
-
-	// Undesired agents on still-declared skills (directed removal).
-	for _, name := range sortedKeys(m.Skills) {
-		locked, ok := lf.Skills[name]
-		if !ok {
-			continue
-		}
-		dropped, labels, err := a.pruneSkillAgents(p, name, &locked, desired[name])
-		if err != nil {
-			return nil, err
-		}
-		if len(dropped) > 0 {
-			lf.Skills[name] = locked
-			pruned = append(pruned, labels...)
-		}
-	}
-
-	// Skills removed from the manifest entirely (directed removal).
-	for _, name := range sortedKeys(lf.Skills) {
-		if _, ok := m.Skills[name]; ok {
-			continue
-		}
-		dropped, err := a.dropSkill(p, lf.Skills[name], name)
-		if err != nil {
-			return nil, err
-		}
-		delete(lf.Skills, name)
-		pruned = append(pruned, dropped...)
-	}
-
-	// Managed orphans hand-created in agent dirs, plus orphan active entries.
-	desiredSkills := manifestSkillSet(m)
-	scanned, err := a.pruneAgentTargets(p, desiredSkills, a.managedRoots(p))
+// pruneToDesired removes managed installs the lock no longer declares —
+// skills without an entry, and agents dropped from a still-declared entry's
+// gskill.agents. Foreign content and external-only entries are never touched.
+// It then GCs unreferenced store content, protecting content still reachable
+// through an external entry's active link.
+func (a *App) pruneToDesired(p *project, lf *skillslock.State) ([]string, error) {
+	external, err := declaredExternalNames(p.lockPath, lf)
 	if err != nil {
 		return nil, err
 	}
-	pruned = append(pruned, scanned...)
-	activePruned, err := pruneActiveOrphans(p, desiredSkills)
+	pruned, err := a.sweepOrphans(p, lf, external, true)
 	if err != nil {
 		return nil, err
 	}
-	pruned = append(pruned, activePruned...)
 
-	if _, err := p.store.GC(referencedHashes(lf)); err != nil {
+	refs := referencedHashes(lf)
+	if err := a.keepExternalActiveContent(p, external, refs); err != nil {
+		return nil, err
+	}
+	if _, err := p.store.GC(refs); err != nil {
 		return nil, err
 	}
 	return pruned, nil
 }
 
-// pruneSkillAgents removes the recorded targets for agents not in want, updating
-// the locked entry in place. It returns the removed agent IDs and the labels to
-// report.
-func (a *App) pruneSkillAgents(p *project, name string, locked *lockfile.LockedSkill, want map[string]bool) (dropped, labels []string, err error) {
-	scope := locked.Installation.Scope
-	var keep []string
-	for _, id := range locked.Installation.Agents {
-		if want[id] {
-			keep = append(keep, id)
-			continue
-		}
-		if target, ok := locked.Installation.Targets[id]; ok {
-			deleted, rmErr := a.removeSafeTarget(p, scope, id, name, target)
-			if rmErr != nil {
-				return nil, nil, fmt.Errorf("prune %s target: %w", id, rmErr)
-			}
-			if deleted {
-				labels = append(labels, id+":"+name)
-			}
-		}
-		delete(locked.Installation.Targets, id)
-		delete(locked.Installation.Modes, id)
-		dropped = append(dropped, id)
-	}
-	if len(dropped) > 0 {
-		locked.Installation.Agents = keep
-	}
-	return dropped, labels, nil
-}
-
-// dropSkill removes every recorded target (confined) and the active entry for a
-// skill that is no longer declared.
-func (a *App) dropSkill(p *project, locked lockfile.LockedSkill, name string) ([]string, error) {
-	scope := locked.Installation.Scope
-	var dropped []string
-	for _, id := range sortedKeys(locked.Installation.Targets) {
-		deleted, rmErr := a.removeSafeTarget(p, scope, id, name, locked.Installation.Targets[id])
-		if rmErr != nil {
-			return nil, fmt.Errorf("remove %s target: %w", id, rmErr)
-		}
-		if deleted {
-			dropped = append(dropped, id+":"+name)
-		}
-	}
-	if err := active.Remove(p.root, name); err != nil {
+// findOrphans reports what pruneToDesired would remove, without removing
+// anything.
+func (a *App) findOrphans(p *project, lf *skillslock.State) ([]string, error) {
+	external, err := declaredExternalNames(p.lockPath, lf)
+	if err != nil {
 		return nil, err
 	}
-	dropped = append(dropped, active.Rel(name))
-	sort.Strings(dropped)
-	return dropped, nil
+	return a.sweepOrphans(p, lf, external, false)
 }
 
-// findOrphans reports the agent targets and active entries that would be pruned
-// (skills no longer declared, or undesired agents on declared skills) without
-// removing anything.
-func findOrphans(lf *lockfile.Lockfile, m *manifest.Manifest, desired map[string]map[string]bool) []string {
-	var orphans []string
-	for _, name := range sortedKeys(lf.Skills) {
-		locked := lf.Skills[name]
-		if _, ok := m.Skills[name]; !ok {
-			for id := range locked.Installation.Targets {
-				orphans = append(orphans, id+":"+name)
-			}
-			orphans = append(orphans, active.Rel(name))
-			continue
-		}
-		want := desired[name]
-		for _, id := range locked.Installation.Agents {
-			if !want[id] {
-				orphans = append(orphans, id+":"+name)
-			}
+// declaredExternalNames returns the shared lock's external-only entry names —
+// declared in the file but carrying no gskill block. gskill must never prune
+// their installs: the entry still declares the skill even though another tool
+// manages it.
+func declaredExternalNames(lockPath string, lf *skillslock.State) (map[string]bool, error) {
+	out := map[string]bool{}
+	if !fileExists(lockPath) {
+		return out, nil
+	}
+	l, err := skillslock.Load(lockPath)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range l.Names() {
+		if _, managed := lf.Skills[name]; !managed {
+			out[name] = true
 		}
 	}
-	sort.Strings(orphans)
-	return orphans
+	return out, nil
 }
 
-// managedRoots returns the absolute roots a gskill-managed target may link into.
-func (a *App) managedRoots(p *project) []string {
-	storeRoot, _ := filepath.Abs(p.store.Root())
-	activeRoot, _ := filepath.Abs(active.Dir(p.root))
-	return []string{activeRoot, storeRoot}
-}
-
-// manifestSkillSet returns the set of declared skill names.
-func manifestSkillSet(m *manifest.Manifest) map[string]bool {
-	set := make(map[string]bool, len(m.Skills))
-	for name := range m.Skills {
-		set[name] = true
+// sweepOrphans scans agent directories and the active layer for gskill-managed
+// installs the lock no longer declares: skills with no entry, and agents no
+// longer in a still-declared entry's recorded set. External-only entries are
+// skipped entirely; foreign (non-symlink-managed) content is never touched.
+// With remove=true the orphans are deleted, otherwise only reported.
+func (a *App) sweepOrphans(p *project, lf *skillslock.State, external map[string]bool, remove bool) ([]string, error) {
+	found, err := a.sweepAgentOrphans(p, lf, external, remove)
+	if err != nil {
+		return nil, err
 	}
-	return set
+	activeFound, err := sweepActiveOrphans(p, lf, external, remove)
+	if err != nil {
+		return nil, err
+	}
+	found = append(found, activeFound...)
+	sort.Strings(found)
+	return found, nil
 }
 
-// pruneAgentTargets removes gskill-managed agent targets (symlinks into the
-// active layer or, for legacy installs, the store) that the lockfile no longer
-// references, leaving foreign paths intact.
-func (a *App) pruneAgentTargets(p *project, locked map[string]bool, managedRoots []string) ([]string, error) {
-	var pruned []string
+// sweepAgentOrphans scans every agent directory for managed symlinks whose
+// (skill, agent) pair the lock no longer declares.
+func (a *App) sweepAgentOrphans(p *project, lf *skillslock.State, external map[string]bool, remove bool) ([]string, error) {
+	roots := a.managedRoots(p)
+	var found []string
 	for _, ag := range a.agents.All() {
 		container := ag.ProjectSkillDir(p.root)
 		entries, err := os.ReadDir(container)
@@ -442,44 +321,91 @@ func (a *App) pruneAgentTargets(p *project, locked map[string]bool, managedRoots
 			return nil, fmt.Errorf("read %s skills: %w", ag.ID(), err)
 		}
 		for _, entry := range entries {
-			if locked[entry.Name()] {
+			name := entry.Name()
+			if external[name] {
 				continue
 			}
-			target := filepath.Join(container, entry.Name())
-			managed, mErr := managedBySymlink(target, managedRoots...)
+			if locked, ok := lf.Skills[name]; ok && contains(locked.Installation.Agents, ag.ID()) {
+				continue
+			}
+			target := filepath.Join(container, name)
+			managed, mErr := managedBySymlink(target, roots...)
 			if mErr != nil {
-				return nil, fmt.Errorf("inspect %s/%s: %w", ag.ID(), entry.Name(), mErr)
+				return nil, fmt.Errorf("inspect %s/%s: %w", ag.ID(), name, mErr)
 			}
 			if !managed {
 				continue
 			}
-			if rmErr := os.Remove(target); rmErr != nil {
-				return nil, fmt.Errorf("prune %s/%s: %w", ag.ID(), entry.Name(), rmErr)
+			if remove {
+				if rmErr := os.Remove(target); rmErr != nil {
+					return nil, fmt.Errorf("prune %s/%s: %w", ag.ID(), name, rmErr)
+				}
 			}
-			pruned = append(pruned, ag.ID()+":"+entry.Name())
+			found = append(found, ag.ID()+":"+name)
 		}
 	}
-	return pruned, nil
+	return found, nil
 }
 
-// pruneActiveOrphans removes active-layer entries the lockfile no longer
-// references.
-func pruneActiveOrphans(p *project, locked map[string]bool) ([]string, error) {
+// sweepActiveOrphans scans the active layer for entries of skills the lock no
+// longer declares.
+func sweepActiveOrphans(p *project, lf *skillslock.State, external map[string]bool, remove bool) ([]string, error) {
 	names, err := active.List(p.root)
 	if err != nil {
 		return nil, err
 	}
-	var pruned []string
+	var found []string
 	for _, name := range names {
-		if locked[name] {
+		if external[name] {
 			continue
 		}
-		if rmErr := active.Remove(p.root, name); rmErr != nil {
-			return nil, rmErr
+		if _, ok := lf.Skills[name]; ok {
+			continue
 		}
-		pruned = append(pruned, active.Rel(name))
+		if remove {
+			if rmErr := active.Remove(p.root, name); rmErr != nil {
+				return nil, rmErr
+			}
+		}
+		found = append(found, active.Rel(name))
 	}
-	return pruned, nil
+	return found, nil
+}
+
+// keepExternalActiveContent adds to refs the store content still reachable
+// through an external-only entry's active symlink: gskill has no record for
+// such entries, so the link itself is the reference that must survive GC.
+func (a *App) keepExternalActiveContent(p *project, external, refs map[string]bool) error {
+	if len(external) == 0 {
+		return nil
+	}
+	storeRoot, err := filepath.Abs(p.store.Root())
+	if err != nil {
+		return err
+	}
+	for name := range external {
+		target, err := os.Readlink(active.Path(p.root, name))
+		if err != nil {
+			continue // absent or not a symlink: nothing in the store to protect
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(active.Dir(p.root), target)
+		}
+		rel, err := filepath.Rel(storeRoot, filepath.Clean(target))
+		if err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		// "sha256/hex" on disk ↔ "sha256:hex" content key.
+		refs[strings.Replace(filepath.ToSlash(rel), "/", ":", 1)] = true
+	}
+	return nil
+}
+
+// managedRoots returns the absolute roots a gskill-managed target may link into.
+func (a *App) managedRoots(p *project) []string {
+	storeRoot, _ := filepath.Abs(p.store.Root())
+	activeRoot, _ := filepath.Abs(active.Dir(p.root))
+	return []string{activeRoot, storeRoot}
 }
 
 // managedBySymlink reports whether path is a symlink that resolves into one of

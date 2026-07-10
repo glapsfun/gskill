@@ -29,7 +29,6 @@ var aliasTable = []aliasMapping{
 	{Old: "tui", Canonical: "dashboard", Kind: aliasKindCommand, Mechanism: aliasMechKong},
 	{Old: "sync", Canonical: "project sync", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 	{Old: "repair", Canonical: "project repair", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
-	{Old: "lock", Canonical: "project lock", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 	{Old: "verify", Canonical: "project verify", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 	{Old: "check", Canonical: "project check", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 	{Old: "diff", Canonical: "project diff", Kind: aliasKindCommand, Mechanism: aliasMechHidden},

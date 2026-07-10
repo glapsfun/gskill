@@ -7,23 +7,21 @@ type DriftStatus string
 
 // Drift statuses (FR-016).
 const (
-	DriftInstalled            DriftStatus = "installed"
-	DriftMissing              DriftStatus = "missing"
-	DriftModified             DriftStatus = "modified"
-	DriftOutdated             DriftStatus = "outdated"
-	DriftOrphaned             DriftStatus = "orphaned"
-	DriftPartiallyInstalled   DriftStatus = "partially-installed"
-	DriftSourceUnavailable    DriftStatus = "source-unavailable"
-	DriftChecksumMismatch     DriftStatus = "checksum-mismatch"
-	DriftManifestLockMismatch DriftStatus = "manifest-lock-mismatch"
+	DriftInstalled          DriftStatus = "installed"
+	DriftMissing            DriftStatus = "missing"
+	DriftModified           DriftStatus = "modified"
+	DriftOutdated           DriftStatus = "outdated"
+	DriftOrphaned           DriftStatus = "orphaned"
+	DriftPartiallyInstalled DriftStatus = "partially-installed"
+	DriftSourceUnavailable  DriftStatus = "source-unavailable"
+	DriftChecksumMismatch   DriftStatus = "checksum-mismatch"
 )
 
 // Valid reports whether s is a recognized drift status.
 func (s DriftStatus) Valid() bool {
 	switch s {
 	case DriftInstalled, DriftMissing, DriftModified, DriftOutdated, DriftOrphaned,
-		DriftPartiallyInstalled, DriftSourceUnavailable, DriftChecksumMismatch,
-		DriftManifestLockMismatch:
+		DriftPartiallyInstalled, DriftSourceUnavailable, DriftChecksumMismatch:
 		return true
 	default:
 		return false

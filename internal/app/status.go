@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-
-	"github.com/glapsfun/gskill/internal/manifest"
 )
 
 // AgentStatus reports one agent target's mode and health for a skill.
@@ -31,15 +29,10 @@ type StatusReport struct {
 
 // Status reports the installed skills, their target agents, install modes, and
 // per-target health (FR-021). It is read-only and always succeeds on a readable
-// project (exit 0), so it composes in scripts; use `check` for a non-zero exit on
-// drift. An unreadable manifest is a hard error (exit 3).
+// project (exit 0), so it composes in scripts; use `check` for a non-zero exit
+// on drift.
 func (a *App) Status(_ context.Context, root string) (StatusReport, error) {
 	p := openProject(root)
-	if p.manifestExists() {
-		if _, err := manifest.Load(p.manifestPath); err != nil {
-			return StatusReport{}, err
-		}
-	}
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return StatusReport{}, err

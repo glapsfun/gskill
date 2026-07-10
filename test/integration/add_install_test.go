@@ -8,92 +8,73 @@ import (
 	"testing"
 )
 
-// section returns the lines of the named TOML table (e.g. "[skills.demo]") up to
-// the next table header, for asserting on a single skill entry.
-func section(toml, header string) string {
-	idx := strings.Index(toml, header)
-	if idx < 0 {
-		return ""
+// lockEntryGskill decodes one skill's namespaced gskill block from the shared
+// lock as a generic map, for asserting on recorded metadata.
+func lockEntryGskill(t *testing.T, proj, skill string) map[string]any {
+	t.Helper()
+	var doc struct {
+		Skills map[string]map[string]json.RawMessage `json:"skills"`
 	}
-	rest := toml[idx+len(header):]
-	if end := strings.Index(rest, "\n["); end >= 0 {
-		return rest[:end]
+	if err := json.Unmarshal(readFile(t, filepath.Join(proj, "skills-lock.json")), &doc); err != nil {
+		t.Fatalf("parse lock: %v", err)
 	}
-	return rest
+	raw, ok := doc.Skills[skill]["gskill"]
+	if !ok {
+		t.Fatalf("skill %q has no gskill block", skill)
+	}
+	var ext map[string]any
+	if err := json.Unmarshal(raw, &ext); err != nil {
+		t.Fatalf("parse gskill block: %v", err)
+	}
+	return ext
+}
+
+// lockAgents returns a skill's recorded agents from the lock.
+func lockAgents(t *testing.T, proj, skill string) []string {
+	t.Helper()
+	ext := lockEntryGskill(t, proj, skill)
+	rawAgents, _ := ext["agents"].([]any)
+	agents := make([]string, 0, len(rawAgents))
+	for _, a := range rawAgents {
+		if s, ok := a.(string); ok {
+			agents = append(agents, s)
+		}
+	}
+	return agents
 }
 
 // TestAdd_RecordsAgentSet verifies that a bare `add` (no --agent) records the
-// resolved default agent in the manifest, and that adding a second agent unions
-// the set (008 FR-001/FR-002).
+// resolved default agent in the lock's gskill block, and that adding a second
+// agent unions the set (008 FR-001/FR-002).
 func TestAdd_RecordsAgentSet(t *testing.T) {
 	t.Parallel()
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0", "v1.2.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init exit %d: %s", code, stderr)
-	}
-
 	// Bare add: no --agent, no --version. The default agent (claude) is applied
-	// and MUST be recorded in the manifest.
+	// and MUST be recorded in the lock.
 	if _, stderr, code := runGskill(t, proj, "add", repo); code != 0 {
 		t.Fatalf("add exit %d: %s", code, stderr)
 	}
-	manifestBytes := readFile(t, filepath.Join(proj, "gskill.toml"))
-	demo := section(string(manifestBytes), "[skills.demo]")
-	if !strings.Contains(demo, "agents = ['claude']") {
-		t.Errorf("manifest demo entry missing agents = ['claude']:\n%s", demo)
+	if got := lockAgents(t, proj, "demo"); len(got) != 1 || got[0] != "claude" {
+		t.Errorf("recorded agents = %v, want [claude]", got)
 	}
 
-	// Add the same skill for a second agent: the manifest unions the set.
+	// Add the same skill for a second agent: the lock unions the set.
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "codex"); code != 0 {
 		t.Fatalf("add codex exit %d: %s", code, stderr)
 	}
-	manifestBytes = readFile(t, filepath.Join(proj, "gskill.toml"))
-	demo = section(string(manifestBytes), "[skills.demo]")
-	if !strings.Contains(demo, "agents = ['claude', 'codex']") {
-		t.Errorf("manifest demo entry missing unioned agents:\n%s", demo)
-	}
-}
-
-// TestSync_RespectsDefaultsAgentsBlock verifies that when a [defaults] agents
-// block is present and a skill inherits from it, sync does NOT freeze the
-// resolved agent set into the per-skill entry (it keeps inheriting), while still
-// backfilling the version pin (008 FR-003).
-func TestSync_RespectsDefaultsAgentsBlock(t *testing.T) {
-	t.Parallel()
-
-	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
-	proj := newProject(t)
-
-	manifest := "schema_version = 1\n\n[defaults]\nagents = ['claude', 'codex']\n\n" +
-		"[skills.demo]\nsource = '" + repo + "'\npath = 'demo'\n"
-	if err := os.WriteFile(filepath.Join(proj, "gskill.toml"), []byte(manifest), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
-		t.Fatalf("sync exit %d: %s", code, stderr)
-	}
-
-	got := string(readFile(t, filepath.Join(proj, "gskill.toml")))
-	// "agents" appears only once — in [defaults], not under [skills.demo].
-	if n := strings.Count(got, "agents"); n != 1 {
-		t.Errorf("expected agents only in [defaults] (count 1), got %d:\n%s", n, got)
-	}
-	// Both agents still materialized from the defaults block.
-	for _, agentDir := range []string{".claude", ".codex"} {
-		if _, err := os.Stat(filepath.Join(proj, agentDir, "skills", "demo")); err != nil {
-			t.Errorf("skill not installed for %s: %v", agentDir, err)
-		}
+	got := lockAgents(t, proj, "demo")
+	if len(got) != 2 || got[0] != "claude" || got[1] != "codex" {
+		t.Errorf("recorded agents = %v, want [claude codex]", got)
 	}
 }
 
 // TestAdd_RecordsVersionPin verifies that a bare `add` records the resolved
-// version in the manifest field matching its ref-kind, that explicit input is
-// preserved, and that a local (unversioned) source records no pin but keeps its
-// agent set (008 FR-004/FR-005/FR-006).
+// tracking intent matching its ref-kind, that explicit input is preserved,
+// and that a local (unversioned) source records no pin but keeps its agent
+// set (008 FR-004/FR-005/FR-006).
 func TestAdd_RecordsVersionPin(t *testing.T) {
 	t.Parallel()
 
@@ -102,12 +83,13 @@ func TestAdd_RecordsVersionPin(t *testing.T) {
 		tags       []string
 		local      bool     // add a local non-git dir instead of a git repo
 		extraArgs  []string // additional `add` flags
-		wantPin    string   // a manifest line that must be present ("" = none)
-		wantNoPins bool     // assert no version/ref/commit at all
+		wantKey    string   // gskill.state key that must be present ("" = none)
+		wantVal    string
+		wantNoPins bool // assert no requested version/ref/commit at all
 	}{
-		{name: "semver tag fills caret version", tags: []string{"v1.0.0", "v1.2.0"}, wantPin: "version = '^1.2.0'"},
-		{name: "tagless fills mutable ref", tags: nil, wantPin: "ref = 'HEAD'"},
-		{name: "explicit version preserved", tags: []string{"v1.0.0"}, extraArgs: []string{"--version", "^1.0.0"}, wantPin: "version = '^1.0.0'"},
+		{name: "semver tag fills caret version", tags: []string{"v1.0.0", "v1.2.0"}, wantKey: "requestedVersion", wantVal: "^1.2.0"},
+		{name: "tagless fills mutable ref", tags: nil, wantKey: "requestedRef", wantVal: "HEAD"},
+		{name: "explicit version preserved", tags: []string{"v1.0.0"}, extraArgs: []string{"--version", "^1.0.0"}, wantKey: "requestedVersion", wantVal: "^1.0.0"},
 		{name: "local source has no pin", local: true, wantNoPins: true},
 	}
 
@@ -116,10 +98,6 @@ func TestAdd_RecordsVersionPin(t *testing.T) {
 			t.Parallel()
 
 			proj := newProject(t)
-			if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-				t.Fatalf("init exit %d: %s", code, stderr)
-			}
-
 			var src string
 			if tt.local {
 				src = localSkillDir(t, "demo")
@@ -131,20 +109,21 @@ func TestAdd_RecordsVersionPin(t *testing.T) {
 				t.Fatalf("add exit %d: %s", code, stderr)
 			}
 
-			demo := section(string(readFile(t, filepath.Join(proj, "gskill.toml"))), "[skills.demo]")
+			ext := lockEntryGskill(t, proj, "demo")
+			state, _ := ext["state"].(map[string]any)
 			if tt.wantNoPins {
-				for _, k := range []string{"version =", "ref =", "commit ="} {
-					if strings.Contains(demo, k) {
-						t.Errorf("local source unexpectedly recorded %q:\n%s", k, demo)
+				for _, k := range []string{"requestedVersion", "requestedRef", "requestedCommit"} {
+					if v, ok := state[k]; ok && v != "" {
+						t.Errorf("local source unexpectedly recorded %s=%v", k, v)
 					}
 				}
-				if !strings.Contains(demo, "agents = ['claude']") {
-					t.Errorf("local source missing agent set:\n%s", demo)
+				if got := lockAgents(t, proj, "demo"); len(got) != 1 || got[0] != "claude" {
+					t.Errorf("local source agents = %v, want [claude]", got)
 				}
 				return
 			}
-			if !strings.Contains(demo, tt.wantPin) {
-				t.Errorf("manifest demo entry missing %q:\n%s", tt.wantPin, demo)
+			if got, _ := state[tt.wantKey].(string); got != tt.wantVal {
+				t.Errorf("gskill.state.%s = %q, want %q", tt.wantKey, got, tt.wantVal)
 			}
 		})
 	}
@@ -168,19 +147,13 @@ func TestInitAddInstall_RoundTripAndIdempotent(t *testing.T) {
 		t.Errorf("add stdout = %q, want skill name", stdout)
 	}
 
-	// Skill files appear in the agent skill dir.
+	// Skill files appear in the agent skill dir; no manifest is ever written.
 	installed := filepath.Join(proj, ".claude", "skills", "demo", "SKILL.md")
 	if _, err := os.Stat(installed); err != nil {
 		t.Errorf("skill not installed at %s: %v", installed, err)
 	}
-
-	// Manifest records intent; lockfile records resolved reality.
-	manifestBytes, err := os.ReadFile(filepath.Join(proj, "gskill.toml")) //nolint:gosec // test-controlled path
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(manifestBytes), "[skills.demo]") {
-		t.Errorf("manifest missing skill entry:\n%s", manifestBytes)
+	if _, err := os.Stat(filepath.Join(proj, "gskill.toml")); !os.IsNotExist(err) {
+		t.Error("add created a gskill.toml")
 	}
 
 	lockBytes, err := os.ReadFile(filepath.Join(proj, "skills-lock.json")) //nolint:gosec // test-controlled path

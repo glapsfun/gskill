@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/integrity"
-	"github.com/glapsfun/gskill/internal/lockfile"
 )
 
 // ExtState carries the residual gskill install state that has no place in the
@@ -51,11 +50,10 @@ type ExtState struct {
 	Trust string `json:"trust,omitempty"`
 }
 
-// FromLegacy maps a legacy gskill.lock record into a shared-format entry:
-// core fields stay npx-skills-compatible, everything gskill-specific goes
-// under the namespaced extension. ComputedHash is left empty — it is not
-// derivable from the legacy record and is filled when content is hashed.
-func FromLegacy(ls lockfile.LockedSkill) Entry {
+// FromRecord maps an in-memory record into a shared-format entry: core fields
+// stay npx-skills-compatible, everything gskill-specific goes under the
+// namespaced extension.
+func FromRecord(ls Record) Entry {
 	src := ls.Source.Original
 	if ls.Source.Type == "github" && ls.Source.Owner != "" && ls.Source.Repo != "" {
 		src = ls.Source.Owner + "/" + ls.Source.Repo
@@ -121,10 +119,10 @@ func FromLegacy(ls lockfile.LockedSkill) Entry {
 	}
 }
 
-// ToLegacy reconstructs the in-memory legacy record from a shared-format
+// ToRecord reconstructs the in-memory record from a shared-format
 // entry. name is the map key, used as the display-name fallback for entries
 // that never carried gskill state (external-only entries).
-func ToLegacy(name string, e Entry) lockfile.LockedSkill {
+func ToRecord(name string, e Entry) Record {
 	ext := e.Ext
 	if ext == nil {
 		ext = &Ext{}
@@ -160,8 +158,8 @@ func ToLegacy(name string, e Entry) lockfile.LockedSkill {
 		srcType = e.SourceType
 	}
 
-	return lockfile.LockedSkill{
-		Source: lockfile.Source{
+	return Record{
+		Source: Source{
 			Type:     srcType,
 			Original: original,
 			URL:      ext.SourceURL,
@@ -169,10 +167,10 @@ func ToLegacy(name string, e Entry) lockfile.LockedSkill {
 			Repo:     repo,
 			Path:     srcPath,
 		},
-		Requested: lockfile.Requested{
+		Requested: Requested{
 			Version: st.RequestedVersion, Ref: st.RequestedRef, Commit: st.RequestedCommit,
 		},
-		Resolved: lockfile.Resolved{
+		Resolved: Resolved{
 			Version:       ext.Version,
 			RefKind:       st.RefKind,
 			Tag:           st.Tag,
@@ -185,19 +183,19 @@ func ToLegacy(name string, e Entry) lockfile.LockedSkill {
 			LocalPathHash: st.LocalPathHash,
 			CompatHash:    e.ComputedHash,
 		},
-		Metadata: lockfile.Metadata{
+		Metadata: Metadata{
 			Name: metaName, Description: st.MetaDescription,
 			Version: st.MetaVersion, License: st.MetaLicense,
 		},
-		Requires: lockfile.Requires{
+		Requires: Requires{
 			Skills: st.RequiresSkills, Commands: st.RequiresCommands,
 			Environment: st.RequiresEnvironment, MCP: st.RequiresMCP,
 		},
-		Installation: lockfile.Installation{
+		Installation: Installation{
 			Scope: ext.Scope, Mode: ext.InstallMode, Agents: ext.Agents,
 			ActivePath: st.ActivePath, Targets: st.Targets, Modes: st.Modes,
 		},
-		Provenance: lockfile.Provenance{
+		Provenance: Provenance{
 			FetchedAt: ext.InstalledAt, UpdatedAt: ext.UpdatedAt, Trust: st.Trust,
 		},
 	}

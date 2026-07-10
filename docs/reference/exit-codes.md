@@ -9,7 +9,7 @@ Every `gskill` command exits with one of these codes. Scripts and CI can branch 
 | 0 | success |
 | 1 | generic or unexpected error |
 | 2 | usage error (bad flags or arguments) |
-| 3 | invalid manifest |
+| 3 | invalid or missing skills-lock.json |
 | 4 | lockfile mismatch (`--frozen-lockfile` would change) |
 | 5 | source unavailable or network failure |
 | 6 | integrity failure (checksum mismatch) |

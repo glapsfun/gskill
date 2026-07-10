@@ -13,7 +13,6 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/integrity"
-	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -111,7 +110,7 @@ func jsonStr(s string) string {
 // assertProjectScaffold checks auto-init results (FR-019).
 func assertProjectScaffold(t *testing.T, root string) {
 	t.Helper()
-	for _, f := range []string{"gskill.toml", ".gskill", ".gitignore"} {
+	for _, f := range []string{".gskill", ".gitignore"} {
 		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
 			t.Errorf("%s missing after auto-init: %v", f, err)
 		}
@@ -196,218 +195,6 @@ func TestInstallFromLock_LockOnlyDirectory(t *testing.T) {
 	assertLockEnriched(t, root, map[string]string{"alpha": ha, "beta": hb})
 }
 
-// TestInstallFromLock_NeverOverwritesCorruptManifest (T017/FR-020): an
-// existing gskill.toml is never overwritten without confirmation.
-func TestInstallFromLock_NeverOverwritesCorruptManifest(t *testing.T) {
-	t.Parallel()
-	repo, ha, hb := lockRepo(t)
-	root := t.TempDir()
-	writeLockOnly(t, root, repo, ha, hb)
-	garbage := []byte("not toml [[[")
-	if err := os.WriteFile(filepath.Join(root, "gskill.toml"), garbage, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := runLockInstall(t, root); err == nil {
-		t.Fatal("InstallFromLock should refuse on an unreadable existing manifest")
-	}
-	after, _ := os.ReadFile(filepath.Join(root, "gskill.toml")) //nolint:gosec // test-controlled temp path
-	if string(after) != string(garbage) {
-		t.Errorf("existing gskill.toml was modified: %q", after)
-	}
-}
-
-// TestInstallFromLock_ManifestGeneration (T018/FR-021, research R7): manifest
-// generated from the lock; defaults record the selected agents.
-func TestInstallFromLock_ManifestGeneration(t *testing.T) {
-	t.Parallel()
-	repo, ha, hb := lockRepo(t)
-	root := t.TempDir()
-	writeLockOnly(t, root, repo, ha, hb)
-
-	if _, err := runLockInstall(t, root); err != nil {
-		t.Fatalf("InstallFromLock: %v", err)
-	}
-	m, err := manifest.Load(filepath.Join(root, "gskill.toml"))
-	if err != nil {
-		t.Fatalf("load generated manifest: %v", err)
-	}
-	for _, name := range []string{"alpha", "beta"} {
-		ms, ok := m.Skills[name]
-		if !ok {
-			t.Fatalf("manifest missing %s", name)
-		}
-		if ms.Source != repo {
-			t.Errorf("%s source = %q, want %q", name, ms.Source, repo)
-		}
-		if ms.Path != "skills/"+name {
-			t.Errorf("%s path = %q, want dir of skillPath", name, ms.Path)
-		}
-	}
-	if len(m.Defaults.Agents) != 1 || m.Defaults.Agents[0] != testAgent {
-		t.Errorf("Defaults.Agents = %v, want selected agents", m.Defaults.Agents)
-	}
-}
-
-// TestInstallFromLock_ExistingManifestPreserved (T018): declared skills and
-// settings survive; only missing skills are appended. (Agreeing declarations —
-// disagreement is FR-023 conflict territory, tested separately.)
-func TestInstallFromLock_ExistingManifestPreserved(t *testing.T) {
-	t.Parallel()
-	repo, ha, hb := lockRepo(t)
-	root := t.TempDir()
-	writeLockOnly(t, root, repo, ha, hb)
-
-	pre := manifest.New()
-	pre.Defaults.InstallMode = "copy"
-	pre.Defaults.Agents = []string{"codex"}
-	pre.Skills[skillAlpha] = manifest.Skill{Source: repo, Path: "skills/alpha"}
-	pre.Skills["manifest-only"] = manifest.Skill{Source: "github.com/acme/custom", Path: "skills/extra"}
-	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := runLockInstall(t, root); err != nil {
-		t.Fatalf("InstallFromLock: %v", err)
-	}
-	m, err := manifest.Load(filepath.Join(root, "gskill.toml"))
-	if err != nil {
-		t.Fatalf("reload manifest: %v", err)
-	}
-	if m.Defaults.InstallMode != "copy" {
-		t.Errorf("Defaults.InstallMode = %q, want preserved copy", m.Defaults.InstallMode)
-	}
-	if got := m.Skills["manifest-only"].Source; got != "github.com/acme/custom" {
-		t.Errorf("manifest-only declaration rewritten to %q", got)
-	}
-	if _, ok := m.Skills["beta"]; !ok {
-		t.Error("missing skill beta was not appended")
-	}
-}
-
-// ---- FR-023: manifest/lock disagreement --------------------------------------
-
-// conflictingProject builds a lock-only project plus a manifest whose alpha
-// declaration contradicts the lock (different source).
-func conflictingProject(t *testing.T) (root, repo string) {
-	t.Helper()
-	var ha, hb string
-	repo, ha, hb = lockRepo(t)
-	root = t.TempDir()
-	writeLockOnly(t, root, repo, ha, hb)
-	pre := manifest.New()
-	pre.Skills[skillAlpha] = manifest.Skill{Source: "github.com/acme/elsewhere", Path: "skills/alpha"}
-	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
-		t.Fatal(err)
-	}
-	return root, repo
-}
-
-// TestInstallFromLock_DisagreementFailsClosed (FR-023): both files exist and
-// disagree → show the differences, exit with the lock-mismatch code, and
-// rewrite neither file.
-func TestInstallFromLock_DisagreementFailsClosed(t *testing.T) {
-	t.Parallel()
-	root, _ := conflictingProject(t)
-	lockBefore, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
-	manifestBefore, _ := os.ReadFile(filepath.Join(root, "gskill.toml"))   //nolint:gosec // test-controlled temp path
-
-	_, err := runLockInstall(t, root)
-	if !errors.Is(err, errs.ErrLockMismatch) {
-		t.Fatalf("err = %v, want ErrLockMismatch (exit 4)", err)
-	}
-	for _, want := range []string{skillAlpha, "acme/elsewhere", "source"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q should show the difference (%q)", err, want)
-		}
-	}
-	lockAfter, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
-	manifestAfter, _ := os.ReadFile(filepath.Join(root, "gskill.toml"))   //nolint:gosec // test-controlled temp path
-	if string(lockBefore) != string(lockAfter) {
-		t.Error("conflict run modified the lock")
-	}
-	if string(manifestBefore) != string(manifestAfter) {
-		t.Error("conflict run modified the manifest")
-	}
-	if _, statErr := os.Stat(filepath.Join(root, "."+testAgent, "skills", skillAlpha)); statErr == nil {
-		t.Error("skills were installed despite the unresolved conflict")
-	}
-}
-
-// TestInstallFromLock_PreferLock (FR-023): the explicit lock-wins option
-// rewrites the manifest declaration from the lock and proceeds.
-func TestInstallFromLock_PreferLock(t *testing.T) {
-	t.Parallel()
-	root, repo := conflictingProject(t)
-
-	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
-		Root: root, Agents: []string{testAgent}, Reconcile: app.ReconcileLock,
-	})
-	if err != nil {
-		t.Fatalf("InstallFromLock --prefer-lock: %v", err)
-	}
-	if !res.Changed {
-		t.Error("Changed = false")
-	}
-	m, err := manifest.Load(filepath.Join(root, "gskill.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := m.Skills[skillAlpha].Source; got != repo {
-		t.Errorf("manifest alpha source = %q, want lock-derived %q", got, repo)
-	}
-	assertAgentTargets(t, root, skillAlpha, "beta")
-}
-
-// TestInstallFromLock_PreferManifest (FR-023): the explicit manifest-wins
-// option rewrites the lock entry's core identity from the declaration; stale
-// verification facts are re-recorded by the install.
-func TestInstallFromLock_PreferManifest(t *testing.T) {
-	t.Parallel()
-	repo, ha, hb := lockRepo(t)
-	root := t.TempDir()
-	writeLockOnly(t, root, repo, ha, hb)
-	// Conflict on path: the manifest says alpha lives at skills/beta.
-	pre := manifest.New()
-	pre.Skills[skillAlpha] = manifest.Skill{Source: repo, Path: "skills/beta"}
-	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
-		Root: root, Agents: []string{testAgent}, Reconcile: app.ReconcileManifest,
-	})
-	if err != nil {
-		t.Fatalf("InstallFromLock --prefer-manifest: %v", err)
-	}
-	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	e, _ := l.Entry(skillAlpha)
-	if e.SkillPath != "skills/beta/SKILL.md" {
-		t.Errorf("lock skillPath = %q, want manifest-derived skills/beta/SKILL.md", e.SkillPath)
-	}
-	if e.ComputedHash != hb {
-		t.Errorf("computedHash = %q, want re-recorded %q for the new content", e.ComputedHash, hb)
-	}
-}
-
-// TestInstallFromLock_FrozenConflictAlwaysFails (FR-018/FR-023): under frozen
-// a disagreement is drift — reconciliation writes are forbidden.
-func TestInstallFromLock_FrozenConflictAlwaysFails(t *testing.T) {
-	t.Parallel()
-	root, _ := conflictingProject(t)
-	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
-		Root: root, Agents: []string{testAgent}, Frozen: true, Reconcile: app.ReconcileLock,
-	})
-	if !errors.Is(err, errs.ErrLockMismatch) {
-		t.Fatalf("err = %v, want ErrLockMismatch under frozen", err)
-	}
-}
-
-// assertPartialOutcome checks the mixed result: alpha installed and recorded,
-// beta failed closed with nothing activated.
 func assertPartialOutcome(t *testing.T, root string, res app.InstallFromLockResult) {
 	t.Helper()
 	byName := map[string]app.LockSkillResult{}
@@ -532,31 +319,6 @@ func TestInstallFromLock_NoAgentsAnywhere(t *testing.T) {
 	}
 }
 
-// TestInstallFromLock_RecordedDefaultAgents: manifest defaults satisfy the
-// agent requirement without flags (restore path, US5 groundwork).
-func TestInstallFromLock_RecordedDefaultAgents(t *testing.T) {
-	t.Parallel()
-	repo, ha, hb := lockRepo(t)
-	root := t.TempDir()
-	writeLockOnly(t, root, repo, ha, hb)
-	pre := manifest.New()
-	pre.Defaults.Agents = []string{testAgent}
-	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{Root: root})
-	if err != nil {
-		t.Fatalf("InstallFromLock: %v", err)
-	}
-	if len(res.Agents) != 1 || res.Agents[0] != testAgent {
-		t.Errorf("Agents = %v, want recorded default", res.Agents)
-	}
-	assertAgentTargets(t, root, "alpha", "beta")
-}
-
-// TestInstallFromLock_UnknownAgent: a clear unsupported-agent failure (exit 9
-// at the CLI), listing nothing half-installed.
 func TestInstallFromLock_UnknownAgent(t *testing.T) {
 	t.Parallel()
 	repo, ha, hb := lockRepo(t)
@@ -581,6 +343,14 @@ func TestInstallFromLock_FrozenNeverWritesLock(t *testing.T) {
 	repo, ha, hb := lockRepo(t)
 	root := t.TempDir()
 	writeLockOnly(t, root, repo, ha, hb)
+	// Enrich first: frozen refuses raw entries (it cannot write the gskill
+	// block), so the frozen restore runs against an enriched lock.
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatalf("enrich install: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "."+testAgent)); err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
 	if err != nil {
 		t.Fatal(err)
@@ -611,12 +381,32 @@ func TestInstallFromLock_FrozenNeverWritesLock(t *testing.T) {
 // aborts that skill and never rewrites the lock — even with Force set.
 func TestInstallFromLock_FrozenFailsClosedOnMismatch(t *testing.T) {
 	t.Parallel()
-	repo, ha, _ := lockRepo(t)
+	repo, ha, hb := lockRepo(t)
 	root := t.TempDir()
-	writeLockOnly(t, root, repo, ha, strings.Repeat("0", 64))
-	before, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	writeLockOnly(t, root, repo, ha, hb)
+	// Enrich first (frozen refuses raw entries), then corrupt beta's recorded
+	// hash and remove its target so the frozen run must re-verify it.
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatalf("enrich install: %v", err)
+	}
+	lockPath := filepath.Join(root, skillslock.FileName)
+	enriched, err := os.ReadFile(lockPath) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := strings.Replace(string(enriched), hb, strings.Repeat("0", 64), 1)
+	if tampered == string(enriched) {
+		t.Fatal("failed to tamper beta's computedHash")
+	}
+	if err := os.WriteFile(lockPath, []byte(tampered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "."+testAgent, "skills", "beta")); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(lockPath) //nolint:gosec // test-controlled temp path
 
-	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+	_, err = lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
 		Root:   root,
 		Agents: []string{testAgent},
 		Frozen: true,
@@ -625,7 +415,7 @@ func TestInstallFromLock_FrozenFailsClosedOnMismatch(t *testing.T) {
 	if !errors.Is(err, errs.ErrPartialInstall) && !errors.Is(err, errs.ErrIntegrity) {
 		t.Fatalf("err = %v, want integrity/partial failure", err)
 	}
-	after, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	after, _ := os.ReadFile(lockPath) //nolint:gosec // test-controlled temp path
 	if string(before) != string(after) {
 		t.Errorf("frozen failure modified the lock")
 	}
@@ -919,4 +709,94 @@ func simulateExternalUpdate(t *testing.T, repo, root string) (newHash string) {
 		t.Fatal(err)
 	}
 	return newHash
+}
+
+// TestInstallAgentUnionPersists: --agent on an enriched lock is a union — the
+// new agent is added to each skill's persisted gskill.agents and existing
+// agents keep their installs (nothing is uninstalled by an install).
+func TestInstallAgentUnionPersists(t *testing.T) {
+	t.Parallel()
+	repo, _, _ := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, mustCompat(t, repo, "alpha"), mustCompat(t, repo, "beta"))
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatalf("enrich install: %v", err)
+	}
+
+	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{"codex"},
+	})
+	if err != nil {
+		t.Fatalf("union install: %v", err)
+	}
+	_ = res
+	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		e, _ := l.Entry(name)
+		if e.Ext == nil || len(e.Ext.Agents) != 2 || e.Ext.Agents[0] != testAgent || e.Ext.Agents[1] != "codex" {
+			t.Errorf("%s agents = %+v, want [claude codex]", name, e.Ext)
+		}
+		for _, marker := range []string{"." + testAgent, ".codex"} {
+			if _, statErr := os.Stat(filepath.Join(root, marker, "skills", name)); statErr != nil {
+				t.Errorf("%s target for %s missing: %v", name, marker, statErr)
+			}
+		}
+	}
+}
+
+// mustCompat hashes one skill dir of the fixture repo.
+func mustCompat(t *testing.T, repo, name string) string {
+	t.Helper()
+	h, err := integrity.CompatHash(filepath.Join(repo, "skills", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// TestInstallFromLock_UnmanagedSameNameFailsWithoutForce (§13): hand-written
+// content already sitting at an agent target is never silently replaced; the
+// skill fails closed until --force approves the overwrite.
+func TestInstallFromLock_UnmanagedSameNameFailsWithoutForce(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+
+	foreign := filepath.Join(root, "."+testAgent, "skills", "alpha")
+	if err := os.MkdirAll(foreign, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("---\nname: alpha\ndescription: hand-written\n---\n# mine\n")
+	if err := os.WriteFile(filepath.Join(foreign, "SKILL.md"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := runLockInstall(t, root)
+	if err == nil {
+		t.Fatal("install over unmanaged same-name content succeeded, want fail-closed")
+	}
+	for _, s := range res.Skills {
+		if s.Name == "alpha" && s.Status != app.LockSkillFailed {
+			t.Errorf("alpha status = %q, want failed", s.Status)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(foreign, "SKILL.md")) //nolint:gosec // test-controlled temp path
+	if err != nil || string(got) != string(body) {
+		t.Fatalf("unmanaged content changed: %v %q", err, got)
+	}
+
+	// --force approves the replacement.
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent}, Force: true,
+	}); err != nil {
+		t.Fatalf("forced install: %v", err)
+	}
+	got, err = os.ReadFile(filepath.Join(foreign, "SKILL.md")) //nolint:gosec // test-controlled temp path
+	if err != nil || string(got) == string(body) {
+		t.Fatal("forced install did not replace the unmanaged content")
+	}
 }

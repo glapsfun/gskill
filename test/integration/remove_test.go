@@ -25,10 +25,6 @@ func TestRemove_ClearsManifestLockAgentDirsAndGCsStore(t *testing.T) {
 		t.Fatalf("remove: %s", stderr)
 	}
 
-	// Manifest no longer declares it.
-	if m := string(readFile(t, filepath.Join(proj, "gskill.toml"))); strings.Contains(m, "demo") {
-		t.Errorf("manifest still references demo:\n%s", m)
-	}
 	// Lockfile no longer locks it.
 	if l := string(readFile(t, filepath.Join(proj, "skills-lock.json"))); strings.Contains(l, "demo") {
 		t.Errorf("lockfile still references demo:\n%s", l)

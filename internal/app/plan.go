@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/glapsfun/gskill/internal/skillslock"
+
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
@@ -17,8 +19,7 @@ import (
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
-	"github.com/glapsfun/gskill/internal/lockfile"
-	"github.com/glapsfun/gskill/internal/manifest"
+
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
 )
@@ -178,7 +179,7 @@ func (p InstallPlan) Lines(versionLabel string) []PlanLine {
 		{Kind: PlanLineMeta, Text: "Agents:  " + strings.Join(p.AgentIDs, ", ")},
 	}
 	if p.InitProject {
-		lines = append(lines, PlanLine{Kind: PlanLineInit, Text: ManifestName + " will be created (new project)"})
+		lines = append(lines, PlanLine{Kind: PlanLineInit, Text: "local gskill state will be initialized (new project)"})
 	}
 
 	byAgent := map[string][]PlannedAction{}
@@ -252,28 +253,18 @@ func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents [
 	}
 	selected := plan.Selected
 
-	m := manifest.New()
-	lf := lockfile.New()
-	if p.manifestExists() {
-		loaded, err := manifest.Load(p.manifestPath)
-		if err != nil {
-			return InstallPlan{}, err
-		}
-		m = loaded
-		lfLoaded, lockErr := loadOrNewLock(p.lockPath)
-		if lockErr != nil {
-			// A corrupt lockfile is drift, and drift is an error — planning
-			// against an empty lock would silently flip conflicts into merges
-			// (constitution II; review finding).
-			return InstallPlan{}, fmt.Errorf("load lockfile: %w", lockErr)
-		}
-		lf = lfLoaded
-	} else {
+	// A corrupt lockfile is drift, and drift is an error — planning against an
+	// empty lock would silently flip conflicts into merges (constitution II).
+	lf, lockErr := loadOrNewLock(p.lockPath)
+	if lockErr != nil {
+		return InstallPlan{}, fmt.Errorf("load lockfile: %w", lockErr)
+	}
+	if !fileExists(filepath.Join(p.root, stateDirName)) {
 		plan.InitProject = true
 	}
 
 	if agents == nil {
-		resolved, err := a.targetAgents(ctx, req.Root, req.AgentIDs, m.Defaults.Agents)
+		resolved, err := a.targetAgents(ctx, req.Root, req.AgentIDs, nil)
 		if err != nil {
 			return InstallPlan{}, err
 		}
@@ -291,7 +282,7 @@ func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents [
 		return InstallPlan{}, fmt.Errorf("resolve home directory for a global install: %w", homeErr)
 	}
 
-	if err := a.planSelectedActions(&plan, req, p, m, lf, selected, reqIDs, home, global); err != nil {
+	if err := a.planSelectedActions(&plan, req, p, lf, selected, reqIDs, home, global); err != nil {
 		return InstallPlan{}, err
 	}
 	return plan, nil
@@ -299,7 +290,7 @@ func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents [
 
 // planSelectedActions runs per-skill conflict detection and action planning
 // over the selected skills, appending actions and conflicts to the plan.
-func (a *App) planSelectedActions(plan *InstallPlan, req PlanRequest, p *project, m *manifest.Manifest, lf *lockfile.Lockfile, selected []discovery.DiscoveredSkill, reqIDs []string, home string, global bool) error {
+func (a *App) planSelectedActions(plan *InstallPlan, req PlanRequest, p *project, lf *skillslock.State, selected []discovery.DiscoveredSkill, reqIDs []string, home string, global bool) error {
 	addReq := AddRequest{
 		Root: req.Root, Source: req.Source,
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
@@ -309,8 +300,12 @@ func (a *App) planSelectedActions(plan *InstallPlan, req PlanRequest, p *project
 	if cfgDir, cfgErr := config.Dir(); cfgErr == nil {
 		roots = append(roots, cfgDir)
 	}
+	external, extErr := declaredExternalNames(p.lockPath, lf)
+	if extErr != nil {
+		return extErr
+	}
 	for _, s := range selected {
-		ap, planErr := a.planAdd(m, lf, s.ID, addReq, reqIDs)
+		ap, planErr := a.planAdd(lf, external, s.ID, addReq, reqIDs)
 		if planErr != nil {
 			var ce *ConflictError
 			if errors.As(planErr, &ce) {
@@ -321,7 +316,7 @@ func (a *App) planSelectedActions(plan *InstallPlan, req PlanRequest, p *project
 			}
 			return planErr
 		}
-		_, declared := m.Skills[s.ID]
+		_, declared := lf.Skills[s.ID]
 		priorHash := ""
 		if locked, ok := lf.Skills[s.ID]; ok {
 			priorHash = locked.Resolved.ContentHash
@@ -383,7 +378,7 @@ func remapSelected(selected []discovery.DiscoveredSkill, scan discovery.Result, 
 		}
 		if match == nil {
 			return nil, fmt.Errorf("%w: skill %q does not exist at the selected version %s",
-				errs.ErrInvalidManifest, want.ID, RevisionLabel(rev))
+				errs.ErrInvalidLock, want.ID, RevisionLabel(rev))
 		}
 		out = append(out, *match)
 	}
@@ -465,7 +460,7 @@ func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.Discover
 func overwriteConflict(skill, dest string) PlanConflict {
 	err := &ConflictError{Skill: skill, Kind: ConflictFileOverwrite, err: fmt.Errorf(
 		"%w: destination %s already exists and is not managed by gskill; remove it, or re-run with --force to overwrite",
-		errs.ErrInvalidManifest, dest)}
+		errs.ErrInvalidLock, dest)}
 	return PlanConflict{Skill: skill, Kind: ConflictFileOverwrite, Detail: err.Error(), Err: err}
 }
 

@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/glapsfun/gskill/internal/skillslock"
+
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/integrity"
-	"github.com/glapsfun/gskill/internal/lockfile"
-	"github.com/glapsfun/gskill/internal/manifest"
 )
 
 // ListedSkill is one row of `gskill list`.
@@ -21,25 +21,24 @@ type ListedSkill struct {
 	Agents  []string
 }
 
-// List returns every declared/locked skill with its drift status.
+// List returns every locked skill with its drift status.
 func (a *App) List(_ context.Context, root string) ([]ListedSkill, error) {
 	p := openProject(root)
-	m, lf, err := loadManifestAndLock(p)
+	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return nil, err
 	}
 
 	var out []ListedSkill
-	for _, name := range unionKeys(m.Skills, lf.Skills) {
-		ls := ListedSkill{Name: name, Status: string(classifySkill(root, name, m, lf))}
-		if locked, ok := lf.Skills[name]; ok {
-			ls.Source = locked.Source.Original
-			ls.Version = displayVersion(locked.Resolved)
-			ls.Agents = locked.Installation.Agents
-		} else {
-			ls.Source = m.Skills[name].Source
-		}
-		out = append(out, ls)
+	for _, name := range sortedKeys(lf.Skills) {
+		locked := lf.Skills[name]
+		out = append(out, ListedSkill{
+			Name:    name,
+			Status:  string(classifySkill(root, name, lf)),
+			Source:  locked.Source.Original,
+			Version: displayVersion(locked.Resolved),
+			Agents:  locked.Installation.Agents,
+		})
 	}
 	return out, nil
 }
@@ -53,7 +52,7 @@ type SkillInfo struct {
 	ContentHash string
 	Description string
 	License     string
-	Requires    lockfile.Requires
+	Requires    skillslock.Requires
 	Agents      []string
 	Targets     map[string]string
 }
@@ -83,31 +82,25 @@ func (a *App) Info(_ context.Context, root, name string) (SkillInfo, error) {
 	}, nil
 }
 
-// DiffEntry reports how a skill differs across manifest, lock, and disk.
+// DiffEntry reports how a locked skill differs from disk.
 type DiffEntry struct {
-	Name       string
-	InManifest bool
-	InLock     bool
-	Status     string
+	Name   string
+	Status string
 }
 
-// Diff reports manifest/lock/disk differences per skill.
+// Diff reports lock/disk drift per skill.
 func (a *App) Diff(_ context.Context, root string) ([]DiffEntry, error) {
 	p := openProject(root)
-	m, lf, err := loadManifestAndLock(p)
+	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return nil, err
 	}
 
 	var out []DiffEntry
-	for _, name := range unionKeys(m.Skills, lf.Skills) {
-		_, inM := m.Skills[name]
-		_, inL := lf.Skills[name]
+	for _, name := range sortedKeys(lf.Skills) {
 		out = append(out, DiffEntry{
-			Name:       name,
-			InManifest: inM,
-			InLock:     inL,
-			Status:     string(classifySkill(root, name, m, lf)),
+			Name:   name,
+			Status: string(classifySkill(root, name, lf)),
 		})
 	}
 	return out, nil
@@ -134,25 +127,8 @@ func (a *App) SkillMarkdown(_ context.Context, root, name string) (string, error
 	return "", fmt.Errorf("%w: no readable SKILL.md for %q", errs.ErrUsage, name)
 }
 
-// loadManifestAndLock loads both, tolerating a missing manifest.
-func loadManifestAndLock(p *project) (*manifest.Manifest, *lockfile.Lockfile, error) {
-	m := manifest.New()
-	if p.manifestExists() {
-		loaded, err := manifest.Load(p.manifestPath)
-		if err != nil {
-			return nil, nil, err
-		}
-		m = loaded
-	}
-	lf, err := loadOrNewLock(p.lockPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	return m, lf, nil
-}
-
 // displayVersion picks the most meaningful version label for a resolution.
-func displayVersion(r lockfile.Resolved) string {
+func displayVersion(r skillslock.Resolved) string {
 	switch {
 	case r.Version != "":
 		return r.Version

@@ -8,7 +8,6 @@ import (
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
-	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
 )
@@ -106,13 +105,7 @@ func (a *App) DiscoverSource(ctx context.Context, req DiscoverRequest) (Discover
 	}
 
 	p := openProject(req.Root)
-	mode := req.Mode
-	if p.manifestExists() {
-		if m, mErr := manifest.Load(p.manifestPath); mErr == nil {
-			mode = modeOr(req.Mode, m.Defaults.InstallMode)
-		}
-	}
-	ireq := a.installRequest(req.Root, ref, rev, nil, req.Scope, mode)
+	ireq := a.installRequest(req.Root, ref, rev, nil, req.Scope, req.Mode)
 	inst := a.installerForScope(p, string(ireq.Scope))
 	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{
 		MaxDepth: req.MaxDepth, Include: req.Include, Exclude: req.Exclude,
@@ -189,16 +182,10 @@ func (a *App) ListVersions(ctx context.Context, root, src string, offline bool) 
 
 // AgentChoices returns the wizard's agent step data: every registered agent,
 // which ones are detected for this project, and — preselected — the exact set a
-// non-guided add would target (explicit-free resolution: manifest defaults,
-// then detection, then the default agent), per FR-014.
+// non-guided add would target (explicit-free resolution: lock-declared
+// agents, then detection, then the default agent), per FR-014.
 func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, error) {
-	var defaults []string
-	p := openProject(root)
-	if p.manifestExists() {
-		if m, err := manifest.Load(p.manifestPath); err == nil {
-			defaults = m.Defaults.Agents
-		}
-	}
+	defaults := lockDeclaredAgents(openProject(root))
 
 	// One registry-wide detection pass serves both the "detected" markers and
 	// the preselection (defaults → detected → the default agent), mirroring
@@ -272,18 +259,11 @@ func (a *App) QualifiesLocalAgentAdd(_ context.Context, root string, req AddRequ
 		return false
 	}
 	p := openProject(root)
-	if !p.manifestExists() {
-		return false
-	}
-	m, err := manifest.Load(p.manifestPath)
-	if err != nil {
-		return false
-	}
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return false
 	}
-	_, ok := localAgentAddTargets(m, lf, req)
+	_, ok := localAgentAddTargets(lf, req)
 	return ok
 }
 
@@ -296,7 +276,7 @@ func (a *App) SelectByFlags(disc DiscoverResult, selectors []string, all bool, p
 
 // ExecutePlan performs a previously computed InstallPlan: optional project
 // initialization (FR-023), then the staged, checksum-verified, rollback-on-
-// failure install and the atomic manifest+lockfile commit — the exact pipeline
+// failure install and the atomic lock commit — the exact pipeline
 // non-guided adds use. It refuses a conflicted plan outright (defense in depth;
 // the wizard's approval step already blocks on conflicts, FR-016/FR-017).
 // progress, when non-nil, receives per-skill events.
@@ -306,7 +286,7 @@ func (a *App) ExecutePlan(ctx context.Context, plan InstallPlan, progress func(P
 		if c.Err != nil {
 			return AddResult{}, c.Err
 		}
-		return AddResult{}, fmt.Errorf("%w: %s", errs.ErrInvalidManifest, c.Detail)
+		return AddResult{}, fmt.Errorf("%w: %s", errs.ErrInvalidLock, c.Detail)
 	}
 	if len(plan.Selected) == 0 {
 		return AddResult{}, fmt.Errorf("%w: no skill selected", errs.ErrUsage)
@@ -314,16 +294,9 @@ func (a *App) ExecutePlan(ctx context.Context, plan InstallPlan, progress func(P
 
 	p := openProject(plan.Root)
 	if plan.InitProject {
-		if _, err := a.Init(ctx, plan.Root); err != nil {
+		if _, err := a.Init(ctx, plan.Root, false); err != nil {
 			return AddResult{}, err
 		}
-	}
-	if !p.manifestExists() {
-		return AddResult{}, errNoManifest()
-	}
-	m, err := manifest.Load(p.manifestPath)
-	if err != nil {
-		return AddResult{}, err
 	}
 	agents, err := a.agentsByID(plan.AgentIDs)
 	if err != nil {
@@ -341,7 +314,28 @@ func (a *App) ExecutePlan(ctx context.Context, plan InstallPlan, progress func(P
 		Scope:   plan.Scope,
 		Mode:    plan.Mode,
 	}
-	ireq := a.installRequest(plan.Root, plan.SourceRef, plan.Revision, agents, plan.Scope, modeOr(plan.Mode, m.Defaults.InstallMode))
+	ireq := a.installRequest(plan.Root, plan.SourceRef, plan.Revision, agents, plan.Scope, plan.Mode)
 	inst := a.installerForScope(p, string(ireq.Scope))
-	return a.installSelected(ctx, p, m, req, plan.SourceRef, plan.Revision, ireq, inst, plan.Selected, plan.Warnings, progress)
+	return a.installSelected(ctx, p, req, plan.SourceRef, plan.Revision, ireq, inst, plan.Selected, plan.Warnings, progress)
+}
+
+// lockDeclaredAgents returns the union of agents the lock's managed entries
+// declare, preselecting them in the wizard (lock-metadata priority of agent
+// selection).
+func lockDeclaredAgents(p *project) []string {
+	lf, err := loadOrNewLock(p.lockPath)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, locked := range lf.Skills {
+		for _, id := range locked.Installation.Agents {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	return out
 }

@@ -197,7 +197,7 @@ func TestInstallPlan_LinesCoverEveryPlanElement(t *testing.T) {
 	joined := strings.Join(texts, "\n")
 	for _, want := range []string{
 		"Source:  example/repo", "Version: v1.2.3", "Agents:  claude, codex",
-		"will be created", "claude:", "codex:",
+		"will be initialized", "claude:", "codex:",
 		"alpha → /d/codex/alpha", "create /d/codex/alpha/SKILL.md",
 		"floating branch", "beta collides",
 	} {
@@ -306,12 +306,10 @@ func TestPlanInstall_CopyModeReonboardIsUpdateNotConflict(t *testing.T) {
 	if _, err := a.Add(ctx, app.AddRequest{Root: root, Source: src, Mode: "copy"}); err != nil {
 		t.Fatalf("seed Add: %v", err)
 	}
-	for _, f := range []string{"gskill.toml", "skills-lock.json"} {
-		if err := os.Remove(filepath.Join(root, f)); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.Remove(filepath.Join(root, "skills-lock.json")); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := a.Init(ctx, root); err != nil {
+	if _, err := a.Init(ctx, root, false); err != nil {
 		t.Fatal(err)
 	}
 

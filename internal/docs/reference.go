@@ -174,7 +174,7 @@ func RenderExitCodes() string {
 		{errs.CodeOK, "success"},
 		{errs.CodeGeneric, "generic or unexpected error"},
 		{errs.CodeUsage, "usage error (bad flags or arguments)"},
-		{errs.CodeInvalidManifest, "invalid manifest"},
+		{errs.CodeInvalidLock, "invalid or missing skills-lock.json"},
 		{errs.CodeLockMismatch, "lockfile mismatch (`--frozen-lockfile` would change)"},
 		{errs.CodeSourceUnavailable, "source unavailable or network failure"},
 		{errs.CodeIntegrity, "integrity failure (checksum mismatch)"},

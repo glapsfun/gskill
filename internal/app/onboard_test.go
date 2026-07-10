@@ -21,7 +21,6 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
-	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/store"
 )
 
@@ -255,8 +254,8 @@ func TestExecutePlan_RefusesConflictedPlan(t *testing.T) {
 	if err == nil {
 		t.Fatal("ExecutePlan accepted a conflicted plan")
 	}
-	if !errors.Is(err, errs.ErrInvalidManifest) {
-		t.Errorf("err = %v, want errs.ErrInvalidManifest (same category as non-guided add)", err)
+	if !errors.Is(err, errs.ErrInvalidLock) {
+		t.Errorf("err = %v, want errs.ErrInvalidLock (same category as non-guided add)", err)
 	}
 }
 
@@ -287,7 +286,7 @@ func TestExecutePlan_InitsFreshProjectAndInstalls(t *testing.T) {
 	if len(res.Installed) != 1 || res.Installed[0].Name != "alpha" {
 		t.Fatalf("Installed = %+v, want alpha", res.Installed)
 	}
-	for _, f := range []string{"gskill.toml", "skills-lock.json"} {
+	for _, f := range []string{"skills-lock.json", ".gskill"} {
 		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
 			t.Errorf("%s missing after ExecutePlan on a fresh dir: %v", f, err)
 		}
@@ -1007,25 +1006,6 @@ func TestPlanInstall_CorruptLockfileFailsClosed(t *testing.T) {
 }
 
 // ---- Review round 2, Phase 5: AgentChoices error fidelity ---------------------------
-
-func TestAgentChoices_UnknownDefaultSaysUnknownAgent(t *testing.T) {
-	t.Parallel()
-
-	root := projectWithAgent(t)
-	m := manifest.New()
-	m.Defaults.Agents = []string{"cursur"} // typo in gskill.toml defaults
-	if err := manifest.Save(filepath.Join(root, "gskill.toml"), m); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := onboardApp().AgentChoices(context.Background(), root)
-	if err == nil {
-		t.Fatal("unknown default agent accepted")
-	}
-	if !strings.Contains(err.Error(), `unknown agent "cursur"`) {
-		t.Errorf("error = %v, want the manifest-defaults wording, not lockfile wording", err)
-	}
-}
 
 func TestAgentChoices_EmptyResolutionFailsActionably(t *testing.T) {
 	t.Parallel()

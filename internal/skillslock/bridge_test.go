@@ -5,15 +5,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
 // fullLegacy is a fully populated legacy record exercising every mapped field
 // (data-model migration table).
-func fullLegacy() lockfile.LockedSkill {
-	return lockfile.LockedSkill{
-		Source: lockfile.Source{
+func fullLegacy() skillslock.Record {
+	return skillslock.Record{
+		Source: skillslock.Source{
 			Type:     "github",
 			Original: "vercel-labs/agent-skills",
 			URL:      "https://github.com/vercel-labs/agent-skills.git",
@@ -21,8 +20,8 @@ func fullLegacy() lockfile.LockedSkill {
 			Repo:     "agent-skills",
 			Path:     "skills/deploy-to-vercel",
 		},
-		Requested: lockfile.Requested{Version: "^1.0.0", Ref: "main", Commit: "req-commit"},
-		Resolved: lockfile.Resolved{
+		Requested: skillslock.Requested{Version: "^1.0.0", Ref: "main", Commit: "req-commit"},
+		Resolved: skillslock.Resolved{
 			Version:       "1.2.0",
 			RefKind:       "tag",
 			Tag:           "v1.2.0",
@@ -34,16 +33,16 @@ func fullLegacy() lockfile.LockedSkill {
 			MutableRef:    true,
 			LocalPathHash: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
 		},
-		Metadata: lockfile.Metadata{
+		Metadata: skillslock.Metadata{
 			Name: "deploy-to-vercel", Description: "Deploys", Version: "1.2.0", License: "MIT",
 		},
-		Requires: lockfile.Requires{
+		Requires: skillslock.Requires{
 			Skills:      []string{"other-skill"},
 			Commands:    []string{"vercel"},
 			Environment: []string{"VERCEL_TOKEN"},
 			MCP:         []string{"vercel-mcp"},
 		},
-		Installation: lockfile.Installation{
+		Installation: skillslock.Installation{
 			Scope:      "project",
 			Mode:       "symlink",
 			Agents:     []string{"claude", "codex"},
@@ -54,7 +53,7 @@ func fullLegacy() lockfile.LockedSkill {
 			},
 			Modes: map[string]string{"claude": "symlink", "codex": "copy"},
 		},
-		Provenance: lockfile.Provenance{
+		Provenance: skillslock.Provenance{
 			FetchedAt: "2026-07-10T12:00:00Z", UpdatedAt: "2026-07-10T12:30:00Z", Trust: "checksum-ok",
 		},
 	}
@@ -62,7 +61,7 @@ func fullLegacy() lockfile.LockedSkill {
 
 func TestFromLegacyCoreFields(t *testing.T) {
 	t.Parallel()
-	e := skillslock.FromLegacy(fullLegacy())
+	e := skillslock.FromRecord(fullLegacy())
 	assertCore(t, e)
 	assertExt(t, e)
 }
@@ -111,7 +110,7 @@ func assertExt(t *testing.T, e skillslock.Entry) {
 func TestBridgeRoundTripInMemory(t *testing.T) {
 	t.Parallel()
 	want := fullLegacy()
-	got := skillslock.ToLegacy("deploy-to-vercel", skillslock.FromLegacy(want))
+	got := skillslock.ToRecord("deploy-to-vercel", skillslock.FromRecord(want))
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("round trip mismatch:\n got %+v\nwant %+v", got, want)
 	}
@@ -123,7 +122,7 @@ func TestBridgeRoundTripThroughJSON(t *testing.T) {
 	t.Parallel()
 	want := fullLegacy()
 	l := skillslock.New()
-	l.SetEntry("deploy-to-vercel", skillslock.FromLegacy(want))
+	l.SetEntry("deploy-to-vercel", skillslock.FromRecord(want))
 
 	data, err := skillslock.Marshal(l)
 	if err != nil {
@@ -137,7 +136,7 @@ func TestBridgeRoundTripThroughJSON(t *testing.T) {
 	if !ok {
 		t.Fatal("entry lost")
 	}
-	got := skillslock.ToLegacy("deploy-to-vercel", e)
+	got := skillslock.ToRecord("deploy-to-vercel", e)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("JSON round trip mismatch:\n got %+v\nwant %+v", got, want)
 	}
@@ -153,7 +152,7 @@ func TestBridgeMinimalEntry(t *testing.T) {
 		SkillPath:    "skills/deploy-to-vercel/SKILL.md",
 		ComputedHash: "03e0eaaa9bf13ba1e7ffa387f5893de6f324c0868c627001f179395a8feaa7c9",
 	}
-	ls := skillslock.ToLegacy("deploy-to-vercel", e)
+	ls := skillslock.ToRecord("deploy-to-vercel", e)
 	if ls.Source.Type != srcTypeGitHub {
 		t.Errorf("Source.Type = %q", ls.Source.Type)
 	}
@@ -168,22 +167,22 @@ func TestBridgeMinimalEntry(t *testing.T) {
 // TestBridgeLocalSource: non-github types survive via state, not owner/repo.
 func TestBridgeLocalSource(t *testing.T) {
 	t.Parallel()
-	ls := lockfile.LockedSkill{
-		Source: lockfile.Source{Type: "local", Original: "../skills-repo", Path: "my-skill"},
-		Resolved: lockfile.Resolved{
+	ls := skillslock.Record{
+		Source: skillslock.Source{Type: "local", Original: "../skills-repo", Path: "my-skill"},
+		Resolved: skillslock.Resolved{
 			RefKind:     "local",
 			ContentHash: "sha256:4444444444444444444444444444444444444444444444444444444444444444",
 		},
-		Metadata: lockfile.Metadata{Name: "my-skill", Description: "Local"},
+		Metadata: skillslock.Metadata{Name: "my-skill", Description: "Local"},
 	}
-	e := skillslock.FromLegacy(ls)
+	e := skillslock.FromRecord(ls)
 	if e.Source != "../skills-repo" {
 		t.Errorf("Source = %q, want original for non-github", e.Source)
 	}
 	if e.SourceType != "local" {
 		t.Errorf("SourceType = %q", e.SourceType)
 	}
-	got := skillslock.ToLegacy("my-skill", e)
+	got := skillslock.ToRecord("my-skill", e)
 	if !reflect.DeepEqual(got, ls) {
 		t.Errorf("local round trip mismatch:\n got %+v\nwant %+v", got, ls)
 	}

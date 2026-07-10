@@ -131,7 +131,11 @@ Show details for one skill.
 
 ## `init`
 
-Scaffold a gskill project (manifest, state dir, gitignore).
+Initialize local gskill state (.gskill, .agents/skills, gitignore).
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--lock` | bool | Also create an empty skills-lock.json. |
 
 
 ## `install`
@@ -144,28 +148,14 @@ Install all declared skills (additive, idempotent).
 | `--copy` | bool | Copy instead of symlinking (deprecated alias for --install-mode copy). |
 | `--force` | bool | Accept changed upstream content: reinstall and rewrite the recorded computedHash. |
 | `--frozen-lockfile` | bool | Restore exactly from the lockfile; never modify it. |
-| `--global` | bool | Install into the user-global location. |
 | `--install-mode` | string | How skills are placed into agent directories. |
 | `--no-init` | bool | Never auto-initialize the project; fail instead. |
-| `--prefer-lock` | bool | On a gskill.toml/skills-lock.json disagreement, the lock wins (manifest declarations are rewritten). |
-| `--prefer-manifest` | bool | On a gskill.toml/skills-lock.json disagreement, the manifest wins (lock entries are rewritten). |
-| `--project` | bool | Install into the project (default). |
-| `--update-lockfile` | bool | Allow the lockfile to be rewritten. |
+| `--prune` | bool | Remove managed installs whose lock entries are gone. |
 
 
 ## `list`
 
 List installed skills and their status.
-
-
-## `migrate`
-
-One-way format migrations (gskill.lock -> skills-lock.json).
-
-
-## `migrate lockfile`
-
-Convert a legacy gskill.lock into skills-lock.json (backs up the original).
 
 
 ## `onboard`
@@ -184,7 +174,7 @@ Show skills with newer versions available.
 
 ## `project`
 
-Manage this project's manifest, lockfile, and installed state.
+Manage this project's lockfile and installed state.
 
 
 ## `project check`
@@ -198,12 +188,7 @@ Report fast drift status.
 
 ## `project diff`
 
-Show manifest/lock/disk differences.
-
-
-## `project lock`
-
-Recompute the lockfile from the manifest.
+Show lock/disk differences.
 
 
 ## `project repair`
@@ -213,11 +198,11 @@ Re-materialize broken installs and clean up staging.
 
 ## `project sync`
 
-Reconcile disk to the manifest's desired state (--prune removes orphans).
+Reconcile disk to the lock's declared state (--prune removes managed orphans).
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--prune` | bool | Remove agent targets and active entries the manifest no longer declares. |
+| `--prune` | bool | Remove managed agent targets and active entries the lock no longer declares. |
 
 
 ## `project verify`

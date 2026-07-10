@@ -1,115 +1,11 @@
 package integration_test
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// TestInstall_BackfillsIncompleteManifest covers 008 FR-009: a hand-authored
-// manifest with only source+path is brought to the always-present form (version
-// pin + agent set) by `install`, and a re-run is byte-identical (idempotent).
-func TestInstall_BackfillsIncompleteManifest(t *testing.T) {
-	t.Parallel()
-
-	repo := gitRepo(t, validSkill("demo"), "v1.0.0", "v1.2.0")
-	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
-	body := "schema_version = 1\n\n[skills.demo]\nsource = \"" + repo + "\"\npath = \"demo\"\n"
-	if err := os.WriteFile(filepath.Join(proj, "gskill.toml"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
-		t.Fatalf("install: %s", stderr)
-	}
-	demo := section(string(readFile(t, filepath.Join(proj, "gskill.toml"))), "[skills.demo]")
-	if !strings.Contains(demo, "version = '^1.2.0'") {
-		t.Errorf("install did not backfill version pin:\n%s", demo)
-	}
-	if !strings.Contains(demo, "agents = ['claude']") {
-		t.Errorf("install did not backfill agent set:\n%s", demo)
-	}
-
-	// Idempotent: a second install changes neither file.
-	tomlBefore := readFile(t, filepath.Join(proj, "gskill.toml"))
-	lockBefore := readFile(t, filepath.Join(proj, "skills-lock.json"))
-	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
-		t.Fatalf("second install: %s", stderr)
-	}
-	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.toml")), tomlBefore) {
-		t.Error("manifest rewritten on idempotent re-install")
-	}
-	if !bytes.Equal(readFile(t, filepath.Join(proj, "skills-lock.json")), lockBefore) {
-		t.Error("lockfile rewritten on idempotent re-install")
-	}
-}
-
-// TestSync_BackfillsLegacyManifestFromLock covers 008 FR-009 for the t1-style
-// case: a complete lock but an incomplete manifest (no version) is migrated to
-// the pinned form by sync using the LOCKED resolution (no re-resolve), and a
-// second sync is a byte-identical no-op.
-func TestSync_BackfillsLegacyManifestFromLock(t *testing.T) {
-	t.Parallel()
-
-	repo := gitRepo(t, validSkill("demo"), "v1.0.0", "v1.2.0")
-	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
-	// Bare add writes a complete lock; then strip the manifest back to source+path
-	// to simulate a manifest produced by a pre-008 build.
-	if _, stderr, code := runGskill(t, proj, "add", repo); code != 0 {
-		t.Fatalf("add: %s", stderr)
-	}
-	body := "schema_version = 1\n\n[skills.demo]\nsource = \"" + repo + "\"\npath = \"demo\"\n"
-	if err := os.WriteFile(filepath.Join(proj, "gskill.toml"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
-		t.Fatalf("migrating sync: %s", stderr)
-	}
-	demo := section(string(readFile(t, filepath.Join(proj, "gskill.toml"))), "[skills.demo]")
-	if !strings.Contains(demo, "version = '^1.2.0'") || !strings.Contains(demo, "agents = ['claude']") {
-		t.Errorf("sync did not migrate legacy manifest:\n%s", demo)
-	}
-
-	// Second sync is a byte-identical no-op.
-	tomlBefore := readFile(t, filepath.Join(proj, "gskill.toml"))
-	lockBefore := readFile(t, filepath.Join(proj, "skills-lock.json"))
-	stdout, stderr, code := runGskill(t, proj, "--json", "sync")
-	if code != 0 {
-		t.Fatalf("second sync: %s", stderr)
-	}
-	if !strings.Contains(stdout, `"up_to_date": true`) {
-		t.Errorf("second sync not up to date:\n%s", stdout)
-	}
-	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.toml")), tomlBefore) {
-		t.Error("manifest rewritten on idempotent re-sync")
-	}
-	if !bytes.Equal(readFile(t, filepath.Join(proj, "skills-lock.json")), lockBefore) {
-		t.Error("lockfile rewritten on idempotent re-sync")
-	}
-}
-
-// writeManifest writes a gskill.toml declaring one skill from source for the
-// given agents.
-func writeManifest(t *testing.T, proj, source string, agents ...string) {
-	t.Helper()
-	quoted := make([]string, len(agents))
-	for i, a := range agents {
-		quoted[i] = `"` + a + `"`
-	}
-	body := "schema_version = 1\n\n[skills.demo]\nsource = \"" + source + "\"\nversion = \"^1.0.0\"\nagents = [" + strings.Join(quoted, ", ") + "]\n"
-	if err := os.WriteFile(filepath.Join(proj, "gskill.toml"), []byte(body), 0o600); err != nil {
-		t.Fatalf("write manifest: %v", err)
-	}
-}
 
 // dirMTime returns the modification time snapshot of a path for change detection.
 func dirMTime(t *testing.T, path string) int64 {
@@ -121,18 +17,24 @@ func dirMTime(t *testing.T, path string) int64 {
 	return info.ModTime().UnixNano()
 }
 
-// TestSyncReconcile_ManifestDrivenInstall covers US2 scenario 1: a manifest
-// declaring a skill for two agents, reconciled from an empty project.
-func TestSyncReconcile_ManifestDrivenInstall(t *testing.T) {
+// TestSyncReconcile_LockDrivenRestore covers US2 scenario 1: a lock declaring
+// a skill for two agents is fully re-materialized by sync after the installed
+// state is wiped.
+func TestSyncReconcile_LockDrivenRestore(t *testing.T) {
 	t.Parallel()
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude,codex"); code != 0 {
+		t.Fatalf("add: %s", stderr)
 	}
-	writeManifest(t, proj, repo, "claude", "codex")
 
+	// Wipe the materialized state; the committed lock must restore it.
+	for _, d := range []string{".claude", ".codex", ".agents"} {
+		if err := os.RemoveAll(filepath.Join(proj, d)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
 		t.Fatalf("sync: %s", stderr)
 	}
@@ -141,7 +43,7 @@ func TestSyncReconcile_ManifestDrivenInstall(t *testing.T) {
 	requireResolvesActive(t, proj, ".codex", "demo")
 	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 	if !strings.Contains(lock, ".agents/skills/demo") {
-		t.Errorf("lockfile missing active_path:\n%s", lock)
+		t.Errorf("lockfile missing active path:\n%s", lock)
 	}
 }
 
@@ -152,10 +54,9 @@ func TestSyncReconcile_Idempotent(t *testing.T) {
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude"); code != 0 {
+		t.Fatalf("add: %s", stderr)
 	}
-	writeManifest(t, proj, repo, "claude")
 	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
 		t.Fatalf("first sync: %s", stderr)
 	}
@@ -176,57 +77,51 @@ func TestSyncReconcile_Idempotent(t *testing.T) {
 }
 
 // TestSyncReconcile_AddAgentOnlyMissingTarget covers US2 scenario 2 / SC-003:
-// adding an agent to the manifest and re-syncing creates only the new target.
+// adding an agent to an installed skill creates only the new target.
 func TestSyncReconcile_AddAgentOnlyMissingTarget(t *testing.T) {
 	t.Parallel()
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
-	writeManifest(t, proj, repo, "claude")
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
-		t.Fatalf("first sync: %s", stderr)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude"); code != 0 {
+		t.Fatalf("add: %s", stderr)
 	}
 	claudeTarget := filepath.Join(proj, ".claude", "skills", "demo")
 	claudeBefore := dirMTime(t, claudeTarget)
 
-	// Declare codex as well and re-sync.
-	writeManifest(t, proj, repo, "claude", "codex")
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
-		t.Fatalf("second sync: %s", stderr)
+	// Declare codex as well via a pure agent-add (no re-resolve).
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--skill", "demo", "--agent", "codex"); code != 0 {
+		t.Fatalf("agent add: %s", stderr)
 	}
 	requireCounts(t, proj, 1, 1) // no duplicate store/active
 	requireResolvesActive(t, proj, ".codex", "demo")
 	if after := dirMTime(t, claudeTarget); after != claudeBefore {
 		t.Errorf("existing claude target was rewritten when only codex was added")
 	}
+	// The lock records the union.
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
+	if !strings.Contains(lock, `"claude"`) || !strings.Contains(lock, `"codex"`) {
+		t.Errorf("lock does not record both agents:\n%s", lock)
+	}
 }
 
-// TestSyncReconcile_PruneRemovesUndesiredAgent covers US2 scenario 3 / SC-008:
-// removing an agent from the manifest and syncing with --prune removes only that
-// agent's target, keeping the active entry and other agents.
-func TestSyncReconcile_PruneRemovesUndesiredAgent(t *testing.T) {
+// TestSyncReconcile_UnlinkRemovesAgentTarget covers US2 scenario 3 / SC-008:
+// unlinking one agent removes only that agent's target, keeping the active
+// entry and other agents.
+func TestSyncReconcile_UnlinkRemovesAgentTarget(t *testing.T) {
 	t.Parallel()
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
-	writeManifest(t, proj, repo, "claude", "codex")
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
-		t.Fatalf("sync: %s", stderr)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude,codex"); code != 0 {
+		t.Fatalf("add: %s", stderr)
 	}
 
-	// Drop codex and prune.
-	writeManifest(t, proj, repo, "claude")
-	if _, stderr, code := runGskill(t, proj, "sync", "--prune"); code != 0 {
-		t.Fatalf("sync --prune: %s", stderr)
+	if _, stderr, code := runGskill(t, proj, "unlink", "demo", "--agent", "codex"); code != 0 {
+		t.Fatalf("unlink: %s", stderr)
 	}
 	if _, err := os.Lstat(filepath.Join(proj, ".codex", "skills", "demo")); !os.IsNotExist(err) {
-		t.Errorf("codex target not pruned (err=%v)", err)
+		t.Errorf("codex target not removed (err=%v)", err)
 	}
 	requireResolvesActive(t, proj, ".claude", "demo") // kept
 	if n := countActiveEntries(t, proj); n != 1 {
@@ -241,12 +136,8 @@ func TestSyncReconcile_LegacyMigration(t *testing.T) {
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
-	writeManifest(t, proj, repo, "claude")
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
-		t.Fatalf("sync: %s", stderr)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude"); code != 0 {
+		t.Fatalf("add: %s", stderr)
 	}
 
 	// Simulate a pre-active-layer install: point the claude target straight at

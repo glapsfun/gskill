@@ -4,12 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sort"
+
+	"github.com/glapsfun/gskill/internal/skillslock"
 
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/integrity"
-	"github.com/glapsfun/gskill/internal/lockfile"
-	"github.com/glapsfun/gskill/internal/manifest"
 )
 
 // SkillVerify is one skill's integrity-verification outcome.
@@ -52,7 +51,7 @@ func (a *App) Verify(_ context.Context, root string) (VerifyReport, error) {
 }
 
 // verifySkill checks every agent target of one locked skill.
-func verifySkill(root, name string, locked lockfile.LockedSkill) SkillVerify {
+func verifySkill(root, name string, locked skillslock.Record) SkillVerify {
 	expected := locked.Resolved.ContentHash
 	sv := SkillVerify{Name: name, OK: true, Expected: expected, Issue: "ok"}
 
@@ -88,14 +87,6 @@ type CheckReport struct {
 // corrupt store fails closed with exit 6 regardless of the flag (FR-018).
 func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckReport, error) {
 	p := openProject(root)
-	m := manifest.New()
-	if p.manifestExists() {
-		loaded, err := manifest.Load(p.manifestPath)
-		if err != nil {
-			return CheckReport{}, err
-		}
-		m = loaded
-	}
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return CheckReport{}, err
@@ -108,8 +99,8 @@ func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckRepo
 
 	var report CheckReport
 	integrityFault := false
-	for _, name := range unionKeys(m.Skills, lf.Skills) {
-		status := chainStatus(p.root, name, m, lf, health[name])
+	for _, name := range sortedKeys(lf.Skills) {
+		status := chainStatus(p.root, name, lf, health[name])
 		report.Skills = append(report.Skills, SkillCheck{Name: name, Status: string(status)})
 		if status != integrity.DriftInstalled {
 			report.HasDrift = true
@@ -125,11 +116,11 @@ func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckRepo
 	return report, nil
 }
 
-// chainStatus classifies a skill from manifest/lock metadata, then downgrades a
+// chainStatus classifies a skill from lock metadata, then downgrades a
 // metadata-clean skill to drift when its three-hop chain is broken (e.g. a
 // dangling active link the lstat presence check cannot see).
-func chainStatus(root, name string, m *manifest.Manifest, lf *lockfile.Lockfile, h SkillHealth) integrity.DriftStatus {
-	status := classifySkill(root, name, m, lf)
+func chainStatus(root, name string, lf *skillslock.State, h SkillHealth) integrity.DriftStatus {
+	status := classifySkill(root, name, lf)
 	if status == integrity.DriftInstalled && h.Name != "" && !h.Healthy() {
 		return integrity.DriftModified
 	}
@@ -139,7 +130,7 @@ func chainStatus(root, name string, m *manifest.Manifest, lf *lockfile.Lockfile,
 // healthByName evaluates the chain health of every locked skill, keyed by name.
 // It hash-verifies content so check fails closed (exit 6) on a tampered store or
 // a corrupt copy target, not just on structural drift.
-func (a *App) healthByName(p *project, lf *lockfile.Lockfile) (map[string]SkillHealth, error) {
+func (a *App) healthByName(p *project, lf *skillslock.State) (map[string]SkillHealth, error) {
 	healths, err := a.evaluateHealth(p, lf, true)
 	if err != nil {
 		return nil, err
@@ -151,14 +142,12 @@ func (a *App) healthByName(p *project, lf *lockfile.Lockfile) (map[string]SkillH
 	return out, nil
 }
 
-// classifySkill builds a SkillState from manifest/lock/fs and classifies it.
-func classifySkill(root, name string, m *manifest.Manifest, lf *lockfile.Lockfile) integrity.DriftStatus {
-	ms, inManifest := m.Skills[name]
+// classifySkill builds a SkillState from lock/fs and classifies it.
+func classifySkill(root, name string, lf *skillslock.State) integrity.DriftStatus {
 	locked, inLock := lf.Skills[name]
 
-	state := integrity.SkillState{InManifest: inManifest, InLock: inLock, SourceAvailable: true}
+	state := integrity.SkillState{InLock: inLock, SourceAvailable: true}
 	if inLock {
-		state.SourceChanged = inManifest && locked.Source.Original != ms.Source
 		state.TargetsTotal = len(locked.Installation.Targets)
 		for _, target := range locked.Installation.Targets {
 			if _, err := os.Lstat(resolveTarget(root, target)); err == nil {
@@ -175,21 +164,4 @@ func resolveTarget(root, target string) string {
 		return target
 	}
 	return filepath.Join(root, target)
-}
-
-// unionKeys returns the sorted union of two maps' keys.
-func unionKeys[A, B any](a map[string]A, b map[string]B) []string {
-	seen := make(map[string]struct{}, len(a)+len(b))
-	for k := range a {
-		seen[k] = struct{}{}
-	}
-	for k := range b {
-		seen[k] = struct{}{}
-	}
-	keys := make([]string, 0, len(seen))
-	for k := range seen {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

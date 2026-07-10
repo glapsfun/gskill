@@ -18,7 +18,7 @@ func projectWithLock(t *testing.T, lockJSON string) string {
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "gskill.lock"), []byte(lockJSON), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "skills-lock.json"), []byte(lockJSON), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root
@@ -31,7 +31,7 @@ func newDoctorApp() *app.App {
 func TestDoctor_ReportsGitAndDetectedAgents(t *testing.T) {
 	t.Parallel()
 
-	root := projectWithLock(t, `{"lockfile_version":1,"skills":{}}`)
+	root := projectWithLock(t, `{"version":1,"skills":{}}`)
 	report, err := newDoctorApp().Doctor(context.Background(), root)
 	if err != nil {
 		t.Fatalf("Doctor: %v", err)
@@ -51,13 +51,12 @@ func TestDoctor_ReportsGitAndDetectedAgents(t *testing.T) {
 func TestDoctor_WarnsOnUnmetRequirements(t *testing.T) {
 	t.Parallel()
 
-	lock := `{"lockfile_version":1,"skills":{"demo":{` +
-		`"source":{"type":"git","original":"x/y"},"requested":{},` +
-		`"resolved":{"ref_kind":"semver","content_hash":"sha256:x","mutable_ref":false},` +
-		`"metadata":{"name":"demo","description":"d"},` +
-		`"requires":{"commands":["definitely-not-a-real-binary-zzz"],"environment":["GSKILL_DEFINITELY_UNSET_ZZZ"],"skills":[],"mcp":["some-server"]},` +
-		`"installation":{"scope":"project","mode":"symlink","agents":["claude"],"targets":{}},` +
-		`"provenance":{"trust":"checksum-ok"}}}}`
+	lock := `{"version":1,"skills":{"demo":{` +
+		`"source":"x/y","sourceType":"git","skillPath":"SKILL.md","computedHash":"abc",` +
+		`"gskill":{"agents":["claude"],"installMode":"symlink","scope":"project","storeHash":"sha256:x",` +
+		`"state":{"metaName":"demo","metaDescription":"d",` +
+		`"requiresCommands":["definitely-not-a-real-binary-zzz"],` +
+		`"requiresEnvironment":["GSKILL_DEFINITELY_UNSET_ZZZ"],"requiresMcp":["some-server"]}}}}}`
 	root := projectWithLock(t, lock)
 
 	report, err := newDoctorApp().Doctor(context.Background(), root)
@@ -75,13 +74,11 @@ func TestDoctor_WarnsOnUnmetRequirements(t *testing.T) {
 func TestDoctor_RequirementsAreSurfacedNeverInstalled(t *testing.T) {
 	t.Parallel()
 
-	lock := `{"lockfile_version":1,"skills":{"demo":{` +
-		`"source":{"type":"git","original":"x/y"},"requested":{},` +
-		`"resolved":{"ref_kind":"semver","content_hash":"sha256:x","mutable_ref":false},` +
-		`"metadata":{"name":"demo","description":"d"},` +
-		`"requires":{"commands":["kubectl"],"environment":[],"skills":[],"mcp":["github-mcp"]},` +
-		`"installation":{"scope":"project","mode":"symlink","agents":["claude"],"targets":{}},` +
-		`"provenance":{"trust":"checksum-ok"}}}}`
+	lock := `{"version":1,"skills":{"demo":{` +
+		`"source":"x/y","sourceType":"git","skillPath":"SKILL.md","computedHash":"abc",` +
+		`"gskill":{"agents":["claude"],"installMode":"symlink","scope":"project","storeHash":"sha256:x",` +
+		`"state":{"metaName":"demo","metaDescription":"d",` +
+		`"requiresCommands":["kubectl"],"requiresMcp":["github-mcp"]}}}}}`
 	root := projectWithLock(t, lock)
 
 	report, err := newDoctorApp().Doctor(context.Background(), root)

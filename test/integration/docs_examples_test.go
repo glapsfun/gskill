@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -98,8 +97,7 @@ func TestDocsExamples_VerifyDetectsTampering(t *testing.T) {
 }
 
 // TestDocsExamples_FrozenLockfile backs docs/how-to/reproduce-with-frozen-lockfile.md:
-// a matching lock restores cleanly (exit 0); a manifest that disagrees with the
-// lock fails closed (exit 4) and modifies no agent directory.
+// a matching lock restores cleanly (exit 0) after a simulated clean checkout.
 func TestDocsExamples_FrozenLockfile(t *testing.T) {
 	t.Parallel()
 
@@ -122,16 +120,6 @@ func TestDocsExamples_FrozenLockfile(t *testing.T) {
 	}
 	if _, stderr, code := runGskill(t, proj, "install", "--frozen-lockfile"); code != 0 {
 		t.Fatalf("frozen restore exit: %s", stderr)
-	}
-
-	// Now make the manifest disagree with the lock → frozen install fails (exit 4).
-	manifestPath := filepath.Join(proj, "gskill.toml")
-	manifest := strings.Replace(string(readFile(t, manifestPath)), "^1.0.0", "^9.0.0", 1)
-	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, code := runGskill(t, proj, "install", "--frozen-lockfile"); code != 4 {
-		t.Errorf("frozen mismatch exit = %d, want 4 (lockfile mismatch)", code)
 	}
 }
 

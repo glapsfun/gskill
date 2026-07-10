@@ -26,7 +26,7 @@ func TestInit_GitignoresStoreAndActiveLayer(t *testing.T) {
 	root := t.TempDir()
 	a := app.New(app.Options{})
 
-	if _, err := a.Init(context.Background(), root); err != nil {
+	if _, err := a.Init(context.Background(), root, false); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
@@ -47,7 +47,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	root := t.TempDir()
 	a := app.New(app.Options{})
 
-	if _, err := a.Init(context.Background(), root); err != nil {
+	if _, err := a.Init(context.Background(), root, false); err != nil {
 		t.Fatalf("first Init: %v", err)
 	}
 	first, err := os.ReadFile(filepath.Join(root, ".gitignore")) //nolint:gosec // test reads a file in its own temp dir
@@ -55,7 +55,7 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 		t.Fatalf("read .gitignore: %v", err)
 	}
 
-	if _, err := a.Init(context.Background(), root); err != nil {
+	if _, err := a.Init(context.Background(), root, false); err != nil {
 		t.Fatalf("second Init: %v", err)
 	}
 	second, err := os.ReadFile(filepath.Join(root, ".gitignore")) //nolint:gosec // test reads a file in its own temp dir

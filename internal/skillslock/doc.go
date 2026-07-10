@@ -9,7 +9,6 @@
 // repurposes the shared core fields (source, sourceType, skillPath,
 // computedHash).
 //
-// It also hosts the one-way migration from the legacy gskill.lock format
-// (parsed read-only via internal/lockfile) and the in-memory bridge between
-// legacy lockfile.LockedSkill records and shared-format entries.
+// It also hosts the in-memory working model (State/Record) commands operate
+// on, and the bridge between records and shared-format entries.
 package skillslock

@@ -115,7 +115,7 @@ func create(dest, storePath, name string) (string, error) {
 // foreignErr reports a non-gskill-managed occupant of an active entry.
 func foreignErr(name, dest, target string) error {
 	return fmt.Errorf("%w: active entry %s for skill %q is foreign (resolves to %s); remove it and retry",
-		errs.ErrInvalidManifest, dest, name, target)
+		errs.ErrInvalidLock, dest, name, target)
 }
 
 // underRoot reports whether path is root or lives beneath it.

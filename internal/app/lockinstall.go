@@ -14,39 +14,29 @@ import (
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
-	"github.com/glapsfun/gskill/internal/lockfile"
-	"github.com/glapsfun/gskill/internal/manifest"
+
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/skillslock"
 	"github.com/glapsfun/gskill/internal/source"
 )
 
-// InstallFromLockRequest describes a lock-file-first install (spec 012 US1/US2):
-// restore every skill declared in skills-lock.json for the selected agents.
+// InstallFromLockRequest describes an install (spec 012 US1/US2): restore
+// every skill declared in skills-lock.json for its declared agents, unioned
+// with any explicit --agent override.
 type InstallFromLockRequest struct {
 	Root        string
-	Agents      []string // agent IDs; empty falls back to manifest defaults
-	InstallMode string   // auto | symlink | copy ("" = manifest default)
+	Agents      []string // explicit agent IDs; unioned into each entry's declared set
+	InstallMode string   // auto | symlink | copy ("" = per-entry gskill.installMode)
 	NoInit      bool     // refuse instead of auto-initializing
 	Force       bool     // accept changed upstream content, rewrite computedHash
 	DryRun      bool     // report the plan, write nothing
 	Offline     bool     // restore from local store/cache only
 	Frozen      bool     // never modify the lock file; fail closed on drift
-	// Reconcile resolves a manifest/lock disagreement (FR-023): ReconcileLock
-	// rewrites the manifest declaration from the lock, ReconcileManifest
-	// rewrites the lock entry's core identity from the declaration. Empty
-	// fails closed with the lock-mismatch code when the two disagree.
-	Reconcile string
+	Prune       bool     // afterwards, remove managed installs the lock no longer declares
 }
 
 // sourceTypeGitHub is the shared lock's GitHub sourceType value.
 const sourceTypeGitHub = "github"
-
-// Reconciliation choices for manifest/lock disagreements (FR-023).
-const (
-	ReconcileLock     = "lock"
-	ReconcileManifest = "manifest"
-)
 
 // Lock-install per-skill statuses (contracts/cli-install-migrate.md).
 const (
@@ -68,88 +58,124 @@ type LockSkillResult struct {
 
 // InstallFromLockResult is the run summary.
 type InstallFromLockResult struct {
-	Initialized       bool
-	Migrated          bool
-	ManifestGenerated bool
-	Agents            []string
-	Skills            []LockSkillResult
-	Changed           bool
+	Initialized bool
+	Agents      []string
+	Skills      []LockSkillResult
+	Pruned      []string
+	Changed     bool
 }
 
-// InstallFromLock implements the lock-file-first install pipeline: locate and
-// validate skills-lock.json, auto-initialize the project (FR-019/FR-020),
-// generate or merge the manifest (FR-021), then per entry resolve, verify the
-// npx-compatible computedHash before activation, install for every selected
-// agent, and record the namespaced gskill metadata (FR-016). Failures are
+// InstallFromLock implements the install pipeline: locate and validate
+// skills-lock.json, auto-initialize local state (FR-019/FR-020), then per
+// entry resolve, verify the npx-compatible computedHash before activation,
+// install for the entry's declared agents (unioned with any --agent
+// override), and record the namespaced gskill metadata (FR-016). Failures are
 // isolated per skill: verified successes stay installed and recorded
 // (FR-016a).
 func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (InstallFromLockResult, error) {
 	p := openProject(req.Root)
 	var res InstallFromLockResult
 
-	if !req.Frozen && !req.DryRun {
-		legacyWasPresent := fileExists(filepath.Join(req.Root, LockName))
-		if err := a.maybeMigrate(ctx, req.Root); err != nil {
-			return res, err
-		}
-		res.Migrated = legacyWasPresent
-	}
-
 	l, err := a.loadSharedLock(p)
 	if err != nil {
 		return res, err
 	}
 
-	m, initialized, err := a.ensureProject(ctx, p, req)
+	initialized, err := a.ensureLocalState(ctx, p, req)
 	if err != nil {
 		return res, err
 	}
 	res.Initialized = initialized
 
-	if err := a.reconcileManifestLock(p, m, l, req); err != nil {
+	if err := checkFrozenAgents(l, req); err != nil {
 		return res, err
 	}
-
-	ids := req.Agents
-	if len(ids) == 0 {
-		ids = m.Defaults.Agents
-	}
-	if len(ids) == 0 {
-		return res, errs.WithHint(
-			fmt.Errorf("%w: no target agents selected", errs.ErrUsage),
-			"pass --agent <id>[,<id>...] or record defaults.agents in gskill.toml")
-	}
-	agents, err := a.agentsByID(ids)
-	if err != nil {
-		return res, err
-	}
-	res.Agents = ids
-
-	res.ManifestGenerated, err = a.mergeManifestFromLock(p, m, l, ids, req.DryRun)
-	if err != nil {
-		return res, err
-	}
+	res.Agents = runAgents(l, req.Agents)
 
 	installErr := a.withLock(ctx, p, func() error {
-		return a.installAllLockEntries(ctx, p, m, l, agents, req, &res)
+		lf, err := a.installAllLockEntries(ctx, p, l, req, &res)
+		if err != nil {
+			return err
+		}
+		if req.Prune && !req.DryRun && !req.Frozen {
+			pruned, pErr := a.pruneToDesired(p, lf)
+			if pErr != nil {
+				return pErr
+			}
+			res.Pruned = pruned
+			res.Changed = res.Changed || len(pruned) > 0
+		}
+		return nil
 	})
 	return res, installErr
+}
+
+// entryAgents returns an entry's declared gskill agents (nil for raw entries).
+func entryAgents(e skillslock.Entry) []string {
+	if e.Ext == nil {
+		return nil
+	}
+	return e.Ext.Agents
+}
+
+// runAgents reports the run's overall agent set: the explicit override plus
+// every declared per-entry agent.
+func runAgents(l *skillslock.Lock, explicit []string) []string {
+	out := append([]string(nil), explicit...)
+	seen := make(map[string]bool, len(out))
+	for _, id := range out {
+		seen[id] = true
+	}
+	for _, name := range l.Names() {
+		e, _ := l.Entry(name)
+		for _, id := range entryAgents(e) {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+// checkFrozenAgents rejects an explicit --agent override that contradicts the
+// locked metadata under --frozen-lockfile: the flags demand a state the lock
+// does not declare, so the whole run fails before anything is touched.
+// Per-entry agent problems (raw entries, empty declared sets) are handled with
+// per-skill failure isolation in installOneLockEntry instead.
+func checkFrozenAgents(l *skillslock.Lock, req InstallFromLockRequest) error {
+	if !req.Frozen || len(req.Agents) == 0 {
+		return nil
+	}
+	for _, name := range sortedLockNames(l) {
+		e, _ := l.Entry(name)
+		if e.Ext == nil {
+			continue // reported per-skill during the run
+		}
+		if extra := subtract(req.Agents, entryAgents(e)); len(extra) > 0 {
+			return fmt.Errorf("%w: --agent %s conflicts with skill %q's locked agents (%s) under --frozen-lockfile",
+				errs.ErrLockMismatch, strings.Join(extra, ","), name, strings.Join(entryAgents(e), ","))
+		}
+	}
+	return nil
 }
 
 // installAllLockEntries runs the per-entry pipeline over every lock entry,
 // aggregating per-skill outcomes into partial-failure semantics (FR-016a):
 // mixed results return ErrPartialInstall, total failure returns the first
 // cause, and successes are persisted either way.
-func (a *App) installAllLockEntries(ctx context.Context, p *project, m *manifest.Manifest, l *skillslock.Lock, agents []agent.Agent, req InstallFromLockRequest, res *InstallFromLockResult) error {
+func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslock.Lock, req InstallFromLockRequest, res *InstallFromLockResult) (*skillslock.State, error) {
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var failures, healthy int
 	var firstErr error
-	for _, name := range sortedLockNames(l) {
+	names := sortedLockNames(l)
+	for k, name := range names {
 		e, _ := l.Entry(name)
-		r := a.installLockEntry(ctx, p, m, lf, name, e, agents, req)
+		sctx := stampSkill(ctx, name, k+1, len(names))
+		r := a.installOneLockEntry(sctx, p, lf, name, e, req)
 		res.Skills = append(res.Skills, r)
 		switch {
 		case r.Err != nil:
@@ -166,17 +192,17 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, m *manifest
 	}
 	if !req.DryRun && !req.Frozen {
 		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
-			return saveErr
+			return nil, saveErr
 		}
 	}
 	switch {
 	case failures > 0 && healthy > 0:
-		return fmt.Errorf("%w: %d of %d skills failed",
+		return lf, fmt.Errorf("%w: %d of %d skills failed",
 			errs.ErrPartialInstall, failures, failures+healthy)
 	case failures > 0:
-		return firstErr
+		return lf, firstErr
 	default:
-		return nil
+		return lf, nil
 	}
 }
 
@@ -220,216 +246,39 @@ func (a *App) PreviewLock(root string) (LockPreview, bool, error) {
 func (a *App) loadSharedLock(p *project) (*skillslock.Lock, error) {
 	if _, err := os.Stat(p.lockPath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, errs.WithHint(
-				fmt.Errorf("%w: no %s found", errs.ErrInvalidManifest, skillslock.FileName),
-				"run 'gskill add <source>' to install a first skill, or clone a project that commits one")
+			return nil, errNoLock()
 		}
 		return nil, fmt.Errorf("stat %s: %w", skillslock.FileName, err)
 	}
 	l, err := skillslock.Load(p.lockPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errs.ErrInvalidManifest, err)
+		return nil, fmt.Errorf("%w: %w", errs.ErrInvalidLock, err)
 	}
 	if err := l.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %w", errs.ErrInvalidManifest, err)
+		return nil, fmt.Errorf("%w: %w", errs.ErrInvalidLock, err)
 	}
 	return l, nil
 }
 
-// ensureProject auto-initializes a missing project structure (FR-019) without
-// ever overwriting existing files (FR-020: Init only creates what is absent,
-// and an unreadable existing manifest aborts untouched).
-func (a *App) ensureProject(ctx context.Context, p *project, req InstallFromLockRequest) (*manifest.Manifest, bool, error) {
-	initialized := false
-	if !p.manifestExists() {
-		if req.NoInit {
-			return nil, false, errs.WithHint(
-				fmt.Errorf("%w: project is not initialized and --no-init is set", errs.ErrInvalidManifest),
-				"drop --no-init or run 'gskill init' first")
-		}
-		if req.DryRun {
-			return manifest.New(), true, nil
-		}
-		if _, err := a.Init(ctx, req.Root); err != nil {
-			return nil, false, err
-		}
-		initialized = true
+// ensureLocalState auto-initializes missing local runtime state (FR-019).
+// Init only creates what is absent, so nothing existing is overwritten
+// (FR-020).
+func (a *App) ensureLocalState(ctx context.Context, p *project, req InstallFromLockRequest) (bool, error) {
+	if fileExists(filepath.Join(p.root, stateDirName)) {
+		return false, nil
 	}
-	m, err := manifest.Load(p.manifestPath)
-	if err != nil {
-		return nil, false, fmt.Errorf("existing %s is unreadable (refusing to overwrite): %w", ManifestName, err)
+	if req.NoInit {
+		return false, errs.WithHint(
+			fmt.Errorf("%w: project is not initialized and --no-init is set", errs.ErrInvalidLock),
+			"drop --no-init or run 'gskill init' first")
 	}
-	return m, initialized, nil
-}
-
-// lockConflict is one manifest/lock disagreement (FR-023).
-type lockConflict struct {
-	name, field, manifestVal, lockVal string
-}
-
-// manifestLockConflicts compares every skill declared in both files. A
-// manifest field left empty is an unconstrained declaration, never a
-// conflict; manifest-only and lock-only skills are additive, not conflicts.
-func manifestLockConflicts(m *manifest.Manifest, l *skillslock.Lock) []lockConflict {
-	var out []lockConflict
-	for _, name := range l.Names() {
-		ms, ok := m.Skills[name]
-		if !ok {
-			continue
-		}
-		e, _ := l.Entry(name)
-		if ms.Source != "" && ms.Source != manifestSourceForEntry(e) && ms.Source != e.Source {
-			out = append(out, lockConflict{name, "source", ms.Source, manifestSourceForEntry(e)})
-		}
-		if ms.Path != "" && ms.Path != skillDirOf(e.SkillPath) {
-			out = append(out, lockConflict{name, "path", ms.Path, skillDirOf(e.SkillPath)})
-		}
-		if ms.Ref != "" && e.Ref != "" && ms.Ref != e.Ref {
-			out = append(out, lockConflict{name, "ref", ms.Ref, e.Ref})
-		}
+	if req.DryRun {
+		return true, nil
 	}
-	return out
-}
-
-// LockManifestConflicts reports the manifest/lock disagreements of a project
-// as human-readable diff lines (empty = the two agree). The interactive flow
-// uses it to decide whether to ask which side wins (FR-023).
-func (a *App) LockManifestConflicts(root string) ([]string, error) {
-	p := openProject(root)
-	if !p.manifestExists() || !fileExists(p.lockPath) {
-		return nil, nil
+	if _, err := a.Init(ctx, req.Root, false); err != nil {
+		return false, err
 	}
-	m, err := manifest.Load(p.manifestPath)
-	if err != nil {
-		return nil, err
-	}
-	l, err := skillslock.Load(p.lockPath)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errs.ErrInvalidManifest, err)
-	}
-	return conflictLines(manifestLockConflicts(m, l)), nil
-}
-
-// conflictLines renders conflicts for diagnostics and the TUI.
-func conflictLines(conflicts []lockConflict) []string {
-	lines := make([]string, 0, len(conflicts))
-	for _, c := range conflicts {
-		lines = append(lines, fmt.Sprintf("skill %q: %s: %s says %q, %s says %q",
-			c.name, c.field, ManifestName, c.manifestVal, skillslock.FileName, c.lockVal))
-	}
-	return lines
-}
-
-// reconcileManifestLock enforces FR-023: when gskill.toml and skills-lock.json
-// disagree, neither file is silently rewritten. Without an explicit choice the
-// run fails with the lock-mismatch code and the differences; ReconcileLock
-// rewrites the manifest declarations from the lock, ReconcileManifest rewrites
-// the lock entries' core identity from the declarations. Frozen runs never
-// reconcile — a disagreement is drift.
-func (a *App) reconcileManifestLock(p *project, m *manifest.Manifest, l *skillslock.Lock, req InstallFromLockRequest) error {
-	conflicts := manifestLockConflicts(m, l)
-	if len(conflicts) == 0 {
-		return nil
-	}
-	diff := strings.Join(conflictLines(conflicts), "; ")
-	if req.Frozen || req.Reconcile == "" {
-		return errs.WithHint(
-			fmt.Errorf("%w: %s and %s disagree: %s", errs.ErrLockMismatch, ManifestName, skillslock.FileName, diff),
-			"re-run with --prefer-lock or --prefer-manifest to pick a side (neither file was changed)")
-	}
-
-	switch req.Reconcile {
-	case ReconcileLock:
-		for _, c := range conflicts {
-			e, _ := l.Entry(c.name)
-			ms := m.Skills[c.name]
-			ms.Source = manifestSourceForEntry(e)
-			ms.Path = skillDirOf(e.SkillPath)
-			ms.Ref = e.Ref
-			m.Skills[c.name] = ms
-		}
-		if req.DryRun {
-			return nil
-		}
-		return manifest.Save(p.manifestPath, m)
-	case ReconcileManifest:
-		seen := map[string]bool{}
-		for _, c := range conflicts {
-			if seen[c.name] {
-				continue
-			}
-			seen[c.name] = true
-			l.ReplaceEntryCore(c.name, entryFromDeclaration(m.Skills[c.name]))
-		}
-		if req.DryRun {
-			return nil
-		}
-		return skillslock.Save(p.lockPath, l)
-	default:
-		return fmt.Errorf("%w: unknown reconciliation %q (want %q or %q)",
-			errs.ErrUsage, req.Reconcile, ReconcileLock, ReconcileManifest)
-	}
-}
-
-// entryFromDeclaration maps a manifest declaration onto shared-lock core
-// fields (the inverse of manifestSourceForEntry / skillDirOf).
-func entryFromDeclaration(ms manifest.Skill) skillslock.Entry {
-	src, srcType := ms.Source, "local"
-	if rest, ok := strings.CutPrefix(ms.Source, "github.com/"); ok {
-		src, srcType = rest, sourceTypeGitHub
-	} else if ref, err := source.Parse(ms.Source); err == nil &&
-		ref.Type == source.TypeGit && ref.Owner != "" && ref.Repo != "" {
-		src, srcType = ref.Owner+"/"+ref.Repo, sourceTypeGitHub
-	}
-	skillPath := integrity.SkillFileName
-	if ms.Path != "" {
-		skillPath = path.Join(ms.Path, integrity.SkillFileName)
-	}
-	return skillslock.Entry{Source: src, Ref: ms.Ref, SourceType: srcType, SkillPath: skillPath}
-}
-
-// mergeManifestFromLock appends manifest declarations for lock entries the
-// manifest does not know, and records the selected agents as project defaults
-// when none are set. Existing declarations and settings are never rewritten
-// (FR-021, research R7).
-func (a *App) mergeManifestFromLock(p *project, m *manifest.Manifest, l *skillslock.Lock, agentIDs []string, dryRun bool) (bool, error) {
-	changed := false
-	if m.Skills == nil {
-		m.Skills = map[string]manifest.Skill{}
-	}
-	for _, name := range l.Names() {
-		if _, ok := m.Skills[name]; ok {
-			continue
-		}
-		e, _ := l.Entry(name)
-		m.Skills[name] = manifest.Skill{
-			Source: manifestSourceForEntry(e),
-			Path:   skillDirOf(e.SkillPath),
-			Ref:    e.Ref,
-		}
-		changed = true
-	}
-	if len(m.Defaults.Agents) == 0 {
-		m.Defaults.Agents = agentIDs
-		changed = true
-	}
-	if changed && !dryRun {
-		if err := manifest.Save(p.manifestPath, m); err != nil {
-			return false, err
-		}
-	}
-	return changed, nil
-}
-
-// manifestSourceForEntry maps a lock entry's source to the manifest's source
-// notation: github shorthand gains the host prefix, everything else passes
-// through (research R7).
-func manifestSourceForEntry(e skillslock.Entry) string {
-	if e.SourceType == sourceTypeGitHub && !strings.Contains(e.Source, "://") &&
-		!strings.HasPrefix(e.Source, "github.com/") {
-		return "github.com/" + e.Source
-	}
-	return e.Source
+	return true, nil
 }
 
 // skillDirOf returns the skill directory recorded by skillPath ("" for a
@@ -452,14 +301,14 @@ func sortedLockNames(l *skillslock.Lock) []string {
 }
 
 // lockEntrySourceTypes are the sourceType values this build installs from.
-var lockEntrySourceTypes = map[string]bool{sourceTypeGitHub: true, "local": true}
+var lockEntrySourceTypes = map[string]bool{sourceTypeGitHub: true, "git": true, "local": true}
 
 // installLockEntry restores one lock entry: resolve, verify the compatible
 // computedHash against the fetched content BEFORE any activation (fail closed,
 // FR-018a), install for the selected agents, and stage the lock record. All
 // failures are reported on the result, never returned, so one bad skill cannot
 // take down its siblings (FR-016a).
-func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Manifest, lf *lockfile.Lockfile, name string, e skillslock.Entry, agents []agent.Agent, req InstallFromLockRequest) LockSkillResult {
+func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest) LockSkillResult {
 	r := LockSkillResult{Name: name, Source: e.Source, ComputedHash: e.ComputedHash, Status: LockSkillFailed}
 	fail := func(err error) LockSkillResult {
 		r.Err = fmt.Errorf("skill %q: %w", name, err)
@@ -467,8 +316,13 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 	}
 
 	if !lockEntrySourceTypes[e.SourceType] {
-		return fail(fmt.Errorf("%w: unsupported sourceType %q (supported: github, local)",
-			errs.ErrInvalidManifest, e.SourceType))
+		return fail(fmt.Errorf("%w: unsupported sourceType %q (supported: github, git, local)",
+			errs.ErrInvalidLock, e.SourceType))
+	}
+
+	agents, done := a.lockEntryTargets(&r, e, req)
+	if done {
+		return r
 	}
 
 	// Idempotency fast path (FR-017): recorded state matches the lock and the
@@ -478,7 +332,7 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 		return r2
 	}
 
-	staged, err := a.stageAndVerifyLockEntry(ctx, p, m, lf, name, e, req)
+	staged, err := a.stageAndVerifyLockEntry(ctx, p, lf, name, e, req)
 	if err != nil {
 		return fail(err)
 	}
@@ -490,12 +344,26 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 	}
 
 	staged.ireq.Agents = agents
-	result, err := a.installerFor(p).Install(ctx, staged.ireq)
+	// Never silently replace content gskill does not own (§13): the previously
+	// recorded hash marks managed copy-mode installs as gskill's own; anything
+	// else fails closed until --force approves the overwrite.
+	staged.ireq.PreserveForeign = !req.Force
+	if prior, ok := lf.Skills[name]; ok {
+		staged.ireq.PriorContentHash = prior.Resolved.ContentHash
+	}
+	if req.Frozen && e.Ext != nil && e.Ext.StoreHash != "" {
+		// Frozen means restore exactly: even when the entry carries no
+		// computedHash to verify (legal for enriched entries), the recorded
+		// store hash must still match what gets activated.
+		staged.ireq.ExpectContentHash = e.Ext.StoreHash
+	}
+	result, err := a.installerForScope(p, string(staged.ireq.Scope)).Install(ctx, staged.ireq)
 	if err != nil {
 		return fail(err)
 	}
 
-	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result, m.Skills[name])
+	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result,
+		requestedForEntry(lf, name, e, staged.rev))
 	if err != nil {
 		return fail(err)
 	}
@@ -506,6 +374,62 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 	r.Status = LockSkillInstalled
 	r.Err = nil
 	return r
+}
+
+// lockEntryTargets resolves the agents one entry installs for — the declared
+// gskill.agents unioned with the explicit override (an explicit --agent is
+// additive; nothing is ever uninstalled by an install). done=true means the
+// entry's processing ends here: r already carries the per-skill outcome
+// (frozen raw entry, agentless managed skip, raw entry with no selection, or
+// an unknown agent).
+func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req InstallFromLockRequest) ([]agent.Agent, bool) {
+	fail := func(err error) ([]agent.Agent, bool) {
+		r.Status = LockSkillFailed
+		r.Err = fmt.Errorf("skill %q: %w", r.Name, err)
+		return nil, true
+	}
+	if req.Frozen && e.Ext == nil {
+		return fail(errs.WithHint(
+			fmt.Errorf("%w: entry has no gskill metadata; --frozen-lockfile cannot enrich the lock",
+				errs.ErrLockMismatch),
+			"run 'gskill install' without --frozen-lockfile once to record it"))
+	}
+	ids := unionStrings(entryAgents(e), req.Agents)
+	if len(ids) == 0 {
+		if e.Ext != nil {
+			// Managed but declared for no agents (e.g. every agent was
+			// unlinked without --prune): nothing to materialize.
+			r.Status = LockSkillUpToDate
+			r.Err = nil
+			return nil, true
+		}
+		return fail(errs.WithHint(
+			fmt.Errorf("%w: no target agents selected", errs.ErrUsage),
+			"pass --agent <id>[,<id>...] (the lock entry declares none)"))
+	}
+	agents, err := a.agentsByID(ids)
+	if err != nil {
+		return fail(err)
+	}
+	return agents, false
+}
+
+// requestedForEntry derives the tracking intent to record for one installed
+// entry: the prior record's intent when it is still consistent with the core
+// ref (an external core-ref edit overrides gskill's stale intent), else the
+// entry's declared ref, backfilled uniformly from the resolved revision so a
+// later update follows what was installed instead of floating.
+func requestedForEntry(lf *skillslock.State, name string, e skillslock.Entry, rev resolver.Revision) skillslock.Requested {
+	rq := skillslock.Requested{Ref: e.Ref}
+	if prior, ok := lf.Skills[name]; ok {
+		rq = prior.Requested
+		if e.Ref != "" && e.Ref != prior.Requested.Ref {
+			rq = skillslock.Requested{Ref: e.Ref}
+		}
+	} else if rq.Ref == "" && e.Ext != nil {
+		rq.Ref = e.Ext.Ref
+	}
+	return backfillRequested(rq, rev)
 }
 
 // stagedLockEntry is a resolved, materialized, hash-verified entry ready to
@@ -522,18 +446,22 @@ type stagedLockEntry struct {
 // pin usually means an external tool updated the entry (new computedHash,
 // stale gskill pins): the source is re-resolved once and re-verified before
 // failing, so gskill fetches the update instead of demanding --force against
-// its own stale pin. An empty recorded hash (a freshly migrated gskill.lock
-// entry) has nothing to verify against; it is recorded after the install.
-func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, m *manifest.Manifest, lf *lockfile.Lockfile, name string, e skillslock.Entry, req InstallFromLockRequest) (stagedLockEntry, error) {
+// its own stale pin. An empty recorded hash (an entry never hashed) has
+// nothing to verify against; it is recorded after the install.
+func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest) (stagedLockEntry, error) {
 	ref, rev, pinned, err := a.resolveLockEntry(ctx, lf, name, e)
 	if err != nil {
 		return stagedLockEntry{}, err
 	}
 	skillDir := skillDirOf(e.SkillPath)
-	inst := a.installerFor(p)
-	mode := modeOr(req.InstallMode, m.Defaults.InstallMode)
+	extMode, extScope := "", ""
+	if e.Ext != nil {
+		extMode, extScope = e.Ext.InstallMode, e.Ext.Scope
+	}
+	inst := a.installerForScope(p, extScope)
+	mode := modeOr(req.InstallMode, extMode)
 
-	ireq, compat, err := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, ref, rev)
+	ireq, compat, err := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, extScope, ref, rev)
 	if err != nil {
 		return stagedLockEntry{}, err
 	}
@@ -541,10 +469,16 @@ func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, m *manife
 	if e.ComputedHash == "" || compat == e.ComputedHash {
 		return staged, nil
 	}
+	return a.retryOrRejectMismatch(ctx, inst, req, name, skillDir, mode, extScope, e, staged, pinned)
+}
 
+// retryOrRejectMismatch handles a computedHash mismatch on the recorded pin:
+// re-resolve once (an external tool may have updated the entry), then fail
+// closed unless --force accepts the changed content.
+func (a *App) retryOrRejectMismatch(ctx context.Context, inst *installer.Installer, req InstallFromLockRequest, name, skillDir, mode, scope string, e skillslock.Entry, staged stagedLockEntry, pinned bool) (stagedLockEntry, error) {
 	if pinned && !req.Frozen && !req.Offline {
 		if ref2, rev2, rErr := a.freshResolveLockEntry(ctx, e, false); rErr == nil {
-			if ireq2, compat2, sErr := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, ref2, rev2); sErr == nil && compat2 == e.ComputedHash {
+			if ireq2, compat2, sErr := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, scope, ref2, rev2); sErr == nil && compat2 == e.ComputedHash {
 				return stagedLockEntry{ref: ref2, rev: rev2, ireq: ireq2, compat: compat2}, nil
 			}
 		}
@@ -561,9 +495,9 @@ func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, m *manife
 // stageLockEntry materializes a revision (no activation), locates the skill at
 // skillDir, and computes its shared computedHash. The returned request is
 // ready for Install once agents are attached.
-func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req InstallFromLockRequest, name, skillDir, mode string, ref source.Ref, rev resolver.Revision) (installer.Request, string, error) {
+func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req InstallFromLockRequest, name, skillDir, mode, scope string, ref source.Ref, rev resolver.Revision) (installer.Request, string, error) {
 	ref.Path = skillDir
-	ireq := a.installRequest(req.Root, ref, rev, nil, "", mode)
+	ireq := a.installRequest(req.Root, ref, rev, nil, scope, mode)
 	ireq.Name = name
 	ireq.Offline = req.Offline
 
@@ -574,7 +508,7 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 	found, ok := skillAtRepoPath(scan, skillDir)
 	if !ok {
 		return installer.Request{}, "", fmt.Errorf("%w: skillPath %q not found in source %s",
-			errs.ErrInvalidManifest, path.Join(skillDir, integrity.SkillFileName), ref.Original)
+			errs.ErrInvalidLock, path.Join(skillDir, integrity.SkillFileName), ref.Original)
 	}
 	compat, err := integrity.CompatHash(found.Dir)
 	if err != nil {
@@ -589,7 +523,7 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 // fetch happens. Intact targets short-circuit to up-to-date; missing targets
 // are relinked from the store only (US5). handled=false falls through to the
 // full pipeline.
-func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *lockfile.Lockfile, name string, e skillslock.Entry, agents []agent.Agent, req InstallFromLockRequest) (LockSkillResult, bool) {
+func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, agents []agent.Agent, req InstallFromLockRequest) (LockSkillResult, bool) {
 	prior, ok := lf.Skills[name]
 	if !ok || e.ComputedHash == "" {
 		return LockSkillResult{}, false
@@ -644,7 +578,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *lockfile.Lo
 // tool updated the entry (new computedHash), the stale pin would refetch the
 // OLD revision and --force would then overwrite the external update, so the
 // source is re-resolved instead.
-func (a *App) resolveLockEntry(ctx context.Context, lf *lockfile.Lockfile, name string, e skillslock.Entry) (ref source.Ref, rev resolver.Revision, pinned bool, err error) {
+func (a *App) resolveLockEntry(ctx context.Context, lf *skillslock.State, name string, e skillslock.Entry) (ref source.Ref, rev resolver.Revision, pinned bool, err error) {
 	if prior, ok := lf.Skills[name]; ok && prior.Resolved.Commit != "" {
 		return refFromLock(prior.Source), revFromLock(prior.Resolved), true, nil
 	}

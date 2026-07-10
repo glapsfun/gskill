@@ -8,9 +8,9 @@ import (
 	"github.com/glapsfun/gskill/internal/errs"
 )
 
-// syncCmd reconciles disk to the manifest's desired state.
+// syncCmd reconciles disk to the lock's declared state.
 type syncCmd struct {
-	Prune bool `help:"Remove agent targets and active entries the manifest no longer declares."`
+	Prune bool `help:"Remove managed agent targets and active entries the lock no longer declares."`
 }
 
 // Help returns the detailed help shown by `gskill project sync --help`.
@@ -23,7 +23,7 @@ func (syncCmd) Help() string {
 
 // Run executes `gskill project sync` (alias: `gskill sync`).
 func (c syncCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
-	if c.Prune && !out.Confirm("Prune skills and targets the manifest no longer declares?", g.Yes) {
+	if c.Prune && !out.Confirm("Prune managed skills and targets the lock no longer declares?", g.Yes) {
 		return errs.New(errs.CodeGeneric, "aborted")
 	}
 	ctx, done := out.withFetchProgress(ctx)

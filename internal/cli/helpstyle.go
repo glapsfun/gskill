@@ -22,7 +22,7 @@ import (
 var helpGroupTitles = []kong.Group{
 	{Key: "core", Title: "CORE"},
 	{Key: "inspect", Title: "INSPECT"},
-	{Key: "project", Title: "PROJECT (manifest · lockfile · installed state)"},
+	{Key: "project", Title: "PROJECT (lockfile · installed state)"},
 	{Key: "more", Title: "MORE"},
 }
 

@@ -1148,7 +1148,7 @@ func realWizardFixture(t *testing.T) (root, src string, a *app.App) {
 		}
 	}
 	a = app.New(app.Options{Agents: agent.NewDefaultRegistry(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-	if _, err := a.Init(context.Background(), root); err != nil {
+	if _, err := a.Init(context.Background(), root, false); err != nil {
 		t.Fatal(err)
 	}
 	return root, src, a
@@ -1187,10 +1187,6 @@ func TestWizard_CancelAgainstRealAppWritesNothing(t *testing.T) {
 	t.Parallel()
 
 	root, src, a := realWizardFixture(t)
-	manifestBefore, err := os.ReadFile(filepath.Join(root, "gskill.toml")) //nolint:gosec // test-controlled temp path
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	m := newWizardModel(context.Background(), WizardConfig{
 		Session: Session{Source: src, SourceAnswered: true},
@@ -1203,12 +1199,8 @@ func TestWizard_CancelAgainstRealAppWritesNothing(t *testing.T) {
 	if !m.Outcome().Cancelled {
 		t.Fatal("expected a cancelled outcome")
 	}
-	manifestAfter, err := os.ReadFile(filepath.Join(root, "gskill.toml")) //nolint:gosec // test-controlled temp path
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(manifestBefore) != string(manifestAfter) {
-		t.Error("cancel changed the manifest (SC-002)")
+	if _, err := os.Stat(filepath.Join(root, "gskill.toml")); err == nil {
+		t.Error("cancel left a manifest behind (SC-002)")
 	}
 	if _, err := os.Stat(filepath.Join(root, "skills-lock.json")); err == nil {
 		t.Error("cancel left a lockfile behind (SC-002)")

@@ -48,6 +48,5 @@ requires:                                        # optional — recorded & warne
 
 ## See also
 
-- [`gskill.toml` manifest schema](manifest-schema.md)
 - [Run doctor](../how-to/run-doctor.md) — checks the `requires` block.
 - [Integrity and trust](../explanation/integrity-and-trust.md)

@@ -149,7 +149,7 @@ func (c sourceCheckCmd) Run(ctx context.Context, out *Output, a *app.App) error 
 		return rErr
 	}
 	if report.HasProblems() {
-		return errs.New(errs.CodeInvalidManifest, "source has invalid or duplicate skills")
+		return errs.New(errs.CodeInvalidLock, "source has invalid or duplicate skills")
 	}
 	return nil
 }

@@ -174,19 +174,13 @@ func renderDiffStyled(entries []app.DiffEntry) string {
 		return "No skills declared."
 	}
 	st := tui.DefaultTheme()
-	mark := func(on bool) string {
-		if on {
-			return st.Success.Render("✓")
-		}
-		return st.Hint.Render("—")
-	}
 	rows := make([][]string, 0, len(entries))
 	for _, e := range entries {
 		rows = append(rows, []string{
-			st.Accent.Render(e.Name), mark(e.InManifest), mark(e.InLock), st.StatusCell(e.Status),
+			st.Accent.Render(e.Name), st.StatusCell(e.Status),
 		})
 	}
-	return renderAligned(st, []string{"NAME", "MANIFEST", "LOCK", "STATUS"}, rows)
+	return renderAligned(st, []string{"NAME", "STATUS"}, rows)
 }
 
 // renderConfigListStyled renders `gskill config list` for a TTY.
