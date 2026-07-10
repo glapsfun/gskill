@@ -41,7 +41,6 @@ Authoritative, exhaustive lookup.
 - [Commands](reference/commands.md) — *generated from the CLI*
 - [Exit codes](reference/exit-codes.md) — *generated from the CLI*
 - [Configuration](reference/configuration.md)
-- [`gskill.toml` manifest schema](reference/manifest-schema.md)
 - [`skills-lock.json` lockfile schema](reference/lockfile-schema.md)
 - [`SKILL.md` frontmatter schema](reference/frontmatter-schema.md)
 - [Supported agents](reference/agents.md)

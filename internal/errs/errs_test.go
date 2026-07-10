@@ -33,7 +33,7 @@ func TestExitCode_Sentinels(t *testing.T) {
 		want int
 	}{
 		{"usage", errs.ErrUsage, 2},
-		{"invalid-manifest", errs.ErrInvalidManifest, 3},
+		{"invalid-manifest", errs.ErrInvalidLock, 3},
 		{"lock-mismatch", errs.ErrLockMismatch, 4},
 		{"source-unavailable", errs.ErrSourceUnavailable, 5},
 		{"integrity", errs.ErrIntegrity, 6},

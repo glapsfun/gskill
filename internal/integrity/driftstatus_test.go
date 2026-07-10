@@ -13,7 +13,6 @@ func TestDriftStatus_Valid(t *testing.T) {
 		integrity.DriftInstalled, integrity.DriftMissing, integrity.DriftModified,
 		integrity.DriftOutdated, integrity.DriftOrphaned, integrity.DriftPartiallyInstalled,
 		integrity.DriftSourceUnavailable, integrity.DriftChecksumMismatch,
-		integrity.DriftManifestLockMismatch,
 	}
 	for _, s := range all {
 		if !s.Valid() {

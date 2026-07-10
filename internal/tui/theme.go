@@ -75,7 +75,7 @@ func (t Theme) StatusCell(status string) string {
 	case "modified", "outdated", "partially-installed":
 		return t.Warning.Render("◐ " + status)
 	case "missing", "orphaned", "source-unavailable",
-		"checksum-mismatch", "manifest-lock-mismatch":
+		"checksum-mismatch":
 		return t.Error.Render("✗ " + status)
 	default:
 		return status

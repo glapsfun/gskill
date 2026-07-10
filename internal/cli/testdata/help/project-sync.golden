@@ -1,6 +1,6 @@
 Usage: gskill project sync [flags]
 
-Reconcile disk to the manifest's desired state (--prune removes orphans).
+Reconcile disk to the lock's declared state (--prune removes managed orphans).
 
 Examples:
 
@@ -20,5 +20,5 @@ Flags:
   -v, --verbose           Enable verbose diagnostics.
   -C, --dir=STRING        Run as if gskill started in this directory.
 
-      --prune             Remove agent targets and active entries the manifest
-                          no longer declares.
+      --prune             Remove managed agent targets and active entries the
+                          lock no longer declares.

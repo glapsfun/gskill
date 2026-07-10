@@ -11,16 +11,16 @@ import (
 func TestWithHint_PreservesMessageCodeAndChain(t *testing.T) {
 	t.Parallel()
 
-	cause := fmt.Errorf("%w: no gskill.toml found", errs.ErrInvalidManifest)
+	cause := fmt.Errorf("%w: no gskill.toml found", errs.ErrInvalidLock)
 	hinted := errs.WithHint(cause, "run 'gskill init' to create one")
 
 	if hinted.Error() != cause.Error() {
 		t.Errorf("WithHint changed Error(): got %q, want %q", hinted.Error(), cause.Error())
 	}
 	if got := errs.ExitCode(hinted); got != 3 {
-		t.Errorf("ExitCode(hinted) = %d, want 3 (invalid manifest)", got)
+		t.Errorf("ExitCode(hinted) = %d, want 3 (invalid lock)", got)
 	}
-	if !errors.Is(hinted, errs.ErrInvalidManifest) {
+	if !errors.Is(hinted, errs.ErrInvalidLock) {
 		t.Error("errors.Is lost the sentinel through WithHint")
 	}
 	if got := errs.HintOf(hinted); got != "run 'gskill init' to create one" {

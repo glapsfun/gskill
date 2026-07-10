@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/glapsfun/gskill/internal/skillslock"
+
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/errs"
-	"github.com/glapsfun/gskill/internal/lockfile"
-	"github.com/glapsfun/gskill/internal/manifest"
 )
 
 // UnlinkResult reports the outcome of an unlink.
@@ -21,33 +21,23 @@ type UnlinkResult struct {
 
 // Unlink removes a single agent's access to a skill without affecting other
 // agents (FR-020, SC-008). When the last agent is unlinked, the active entry,
-// store content, and manifest entry are retained unless prune is set, in which
+// store content, and lock entry are retained unless prune is set, in which
 // case the skill is removed entirely and unreferenced store content is GC'd.
 func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune bool) (UnlinkResult, error) {
-	if err := a.maybeMigrate(ctx, root); err != nil {
-		return UnlinkResult{}, err
-	}
 	p := openProject(root)
-	if !p.manifestExists() {
-		return UnlinkResult{}, errNoManifest()
-	}
 	if _, ok := a.agents.Get(agentID); !ok {
 		return UnlinkResult{}, errs.WithHint(
 			fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, agentID),
 			"run 'gskill doctor' to list detected agents")
 	}
-	m, err := manifest.Load(p.manifestPath)
-	if err != nil {
-		return UnlinkResult{}, err
-	}
 
 	out := UnlinkResult{Skill: skill, UnlinkedAgent: agentID}
-	err = a.withLock(ctx, p, func() error {
+	err := a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr
 		}
-		return a.unlinkOne(p, m, lf, skill, agentID, prune, &out)
+		return a.unlinkOne(p, lf, skill, agentID, prune, &out)
 	})
 	if err != nil {
 		return UnlinkResult{}, err
@@ -55,33 +45,23 @@ func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune boo
 	return out, nil
 }
 
-// unlinkOne performs the unlink against loaded manifest and lockfile under lock.
-func (a *App) unlinkOne(p *project, m *manifest.Manifest, lf *lockfile.Lockfile, skill, agentID string, prune bool, out *UnlinkResult) error {
+// unlinkOne performs the unlink against the loaded lock under the project lock.
+func (a *App) unlinkOne(p *project, lf *skillslock.State, skill, agentID string, prune bool, out *UnlinkResult) error {
 	locked, inLock := lf.Skills[skill]
-	ms, inManifest := m.Skills[skill]
-	switch {
-	case !inLock && !inManifest:
+	if !inLock {
 		return errs.WithHint(
-			fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, skill),
+			fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidLock, skill),
 			"run 'gskill list' to see installed skills")
-	case !inLock || !inManifest:
-		// A half-present skill would otherwise have its missing side written back
-		// from a zero value, corrupting the manifest or lockfile.
-		return errs.WithHint(
-			fmt.Errorf("%w: skill %q is out of sync between the manifest and lockfile",
-				errs.ErrLockMismatch, skill),
-			"run 'gskill project sync' (or 'gskill project lock') to reconcile them")
 	}
 
-	current := installedAgentIDs(lf, skill, ms)
+	current := locked.Installation.Agents
 	if !contains(current, agentID) {
 		return errs.WithHint(
-			fmt.Errorf("%w: skill %q is not installed for agent %q", errs.ErrInvalidManifest, skill, agentID),
+			fmt.Errorf("%w: skill %q is not installed for agent %q", errs.ErrInvalidLock, skill, agentID),
 			"run 'gskill status' to see each skill's agents")
 	}
 
-	// Remove the agent's recorded target (confined), then drop it from lock +
-	// manifest.
+	// Remove the agent's recorded target (confined), then drop it from the lock.
 	if target, ok := locked.Installation.Targets[agentID]; ok {
 		if _, rmErr := a.removeSafeTarget(p, locked.Installation.Scope, agentID, skill, target); rmErr != nil {
 			return fmt.Errorf("remove %s target: %w", agentID, rmErr)
@@ -91,38 +71,31 @@ func (a *App) unlinkOne(p *project, m *manifest.Manifest, lf *lockfile.Lockfile,
 	delete(locked.Installation.Modes, agentID)
 	remaining := subtract(current, []string{agentID})
 	locked.Installation.Agents = remaining
-	ms.Agents = remaining
 	out.RemainingAgents = remaining
 
 	if len(remaining) > 0 {
 		lf.Skills[skill] = locked
-		m.Skills[skill] = ms
-		return a.saveUnlink(p, m, lf, false)
+		return a.saveUnlink(p, lf, false)
 	}
 
 	out.Unreferenced = true
 	if !prune {
-		// Retain the active entry, store content, and manifest entry.
+		// Retain the active entry, store content, and lock entry.
 		lf.Skills[skill] = locked
-		m.Skills[skill] = ms
-		return a.saveUnlink(p, m, lf, false)
+		return a.saveUnlink(p, lf, false)
 	}
 
-	// Prune: remove the active entry, manifest + lock entries, and GC the store.
+	// Prune: remove the active entry and lock entry, and GC the store.
 	if rmErr := active.Remove(p.root, skill); rmErr != nil {
 		return rmErr
 	}
 	delete(lf.Skills, skill)
-	delete(m.Skills, skill)
 	out.Pruned = true
-	return a.saveUnlink(p, m, lf, true)
+	return a.saveUnlink(p, lf, true)
 }
 
-// saveUnlink persists the manifest and lockfile, optionally GC'ing the store.
-func (a *App) saveUnlink(p *project, m *manifest.Manifest, lf *lockfile.Lockfile, gc bool) error {
-	if err := manifest.Save(p.manifestPath, m); err != nil {
-		return err
-	}
+// saveUnlink persists the lock, optionally GC'ing the store.
+func (a *App) saveUnlink(p *project, lf *skillslock.State, gc bool) error {
 	if err := saveLock(p.lockPath, lf); err != nil {
 		return err
 	}

@@ -308,8 +308,8 @@ func (l *Lock) Validate() error {
 			return fmt.Errorf("%w: skill %q: invalid \"skillPath\" %q: %w", ErrInvalid, name, e.SkillPath, err)
 		}
 		// computedHash is the only integrity anchor for external-only entries.
-		// Entries carrying gskill metadata (e.g. freshly migrated from
-		// gskill.lock) may omit it until the next install records it.
+		// Entries carrying gskill metadata may omit it until the next install
+		// records it.
 		if e.ComputedHash == "" && e.Ext == nil {
 			return fmt.Errorf("%w: skill %q: missing \"computedHash\"", ErrInvalid, name)
 		}

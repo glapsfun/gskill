@@ -16,7 +16,7 @@ const (
 	CodeOK                Code = 0  // success
 	CodeGeneric           Code = 1  // generic/unexpected error
 	CodeUsage             Code = 2  // usage error (bad flags/args)
-	CodeInvalidManifest   Code = 3  // invalid manifest
+	CodeInvalidLock       Code = 3  // invalid or missing skills-lock.json
 	CodeLockMismatch      Code = 4  // lockfile mismatch (--frozen-lockfile would change)
 	CodeSourceUnavailable Code = 5  // source unavailable / network
 	CodeIntegrity         Code = 6  // integrity failure (checksum mismatch)
@@ -72,7 +72,7 @@ func (e *Error) Is(target error) bool {
 // context while preserving the code.
 var (
 	ErrUsage             = &Error{Code: CodeUsage, Msg: "usage error"}
-	ErrInvalidManifest   = &Error{Code: CodeInvalidManifest, Msg: "invalid manifest"}
+	ErrInvalidLock       = &Error{Code: CodeInvalidLock, Msg: "invalid lock"}
 	ErrLockMismatch      = &Error{Code: CodeLockMismatch, Msg: "lockfile mismatch"}
 	ErrSourceUnavailable = &Error{Code: CodeSourceUnavailable, Msg: "source unavailable"}
 	ErrIntegrity         = &Error{Code: CodeIntegrity, Msg: "integrity failure"}

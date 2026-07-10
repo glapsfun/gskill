@@ -16,7 +16,7 @@ gskill project check --fail-on-drift         # exit 7 if installed state drifts 
 ```
 
 **Expected:** both exit `0` on a clean, in-sync project. `check --fail-on-drift` exits **`7`** if drift
-is detected; `install --frozen-lockfile` exits **`4`** if the manifest and lockfile disagree.
+is detected; `install --frozen-lockfile` exits **`4`** if the lock cannot be restored exactly as recorded.
 
 ## Recipe 2 — Fail when updates are available
 

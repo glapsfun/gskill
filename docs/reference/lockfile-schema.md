@@ -66,15 +66,7 @@ minimal diffs. Map order, timestamps, and ambient environment never leak into th
 fields — that is what makes committing `skills-lock.json` worthwhile. Under
 `install --frozen-lockfile` the file is never modified, byte for byte, even on failing runs.
 
-## Migrating from `gskill.lock`
-
-Projects created before spec 012 hold the legacy `gskill.lock`. Run `gskill migrate lockfile` (or
-any lock-touching command — `install`, `update`, `project lock`, `project sync` — which migrates
-automatically): the legacy file is converted losslessly, backed up as `gskill.lock.backup`, and
-never written again.
-
 ## See also
 
-- [`gskill.toml` manifest schema](manifest-schema.md)
 - [Reproduce with --frozen-lockfile](../how-to/reproduce-with-frozen-lockfile.md)
 - [The reproducibility model](../explanation/reproducibility-model.md)

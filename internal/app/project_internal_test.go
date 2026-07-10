@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -155,10 +154,10 @@ func TestSaveLockFreshProject(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	path := filepath.Join(root, skillslock.FileName)
-	lf := lockfile.New()
-	lf.Skills["fresh"] = lockfile.LockedSkill{
-		Source:   lockfile.Source{Type: "github", Original: "acme/skills", Owner: "acme", Repo: "skills", Path: "skills/fresh"},
-		Resolved: lockfile.Resolved{ContentHash: "sha256:aaaa"},
+	lf := skillslock.NewState()
+	lf.Skills["fresh"] = skillslock.Record{
+		Source:   skillslock.Source{Type: "github", Original: "acme/skills", Owner: "acme", Repo: "skills", Path: "skills/fresh"},
+		Resolved: skillslock.Resolved{ContentHash: "sha256:aaaa"},
 	}
 	if err := saveLock(path, lf); err != nil {
 		t.Fatalf("saveLock: %v", err)

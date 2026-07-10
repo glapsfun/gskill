@@ -19,14 +19,14 @@ gskill install --frozen-lockfile
 
 - GSKILL re-materialises exactly what the lockfile records and exits `0`.
 - The lockfile is **not** rewritten — a frozen restore is read-only with respect to `skills-lock.json`.
-- If the manifest and lockfile disagree (or a resolved artifact no longer matches its recorded
+- If an entry lacks its gskill metadata (or a resolved artifact no longer matches its recorded
   checksum), the command **fails closed**: it exits **`4`** (lockfile mismatch) and modifies **zero**
   agent directories.
 
 ### Verifying the fail-closed behaviour
 
 ```bash
-# Edit gskill.toml so it disagrees with the lock, then:
+# Hand-edit a computedHash in skills-lock.json, then:
 gskill install --frozen-lockfile
 echo "exit: $?"        # prints: exit: 4
 ```

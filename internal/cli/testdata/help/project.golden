@@ -1,6 +1,6 @@
 Usage: gskill project <command> [flags]
 
-Manage this project's manifest, lockfile, and installed state.
+Manage this project's lockfile and installed state.
 
 Flags:
   -h, --help              Show context-sensitive help.
@@ -15,15 +15,13 @@ Flags:
   -v, --verbose           Enable verbose diagnostics.
   -C, --dir=STRING        Run as if gskill started in this directory.
 
-PROJECT (manifest · lockfile · installed state)
+PROJECT (lockfile · installed state)
   project sync [flags]
-    Reconcile disk to the manifest's desired state (--prune removes orphans).
+    Reconcile disk to the lock's declared state (--prune removes managed
+    orphans).
 
   project repair
     Re-materialize broken installs and clean up staging.
-
-  project lock
-    Recompute the lockfile from the manifest.
 
   project verify
     Re-hash installed content against the lockfile.
@@ -32,4 +30,4 @@ PROJECT (manifest · lockfile · installed state)
     Report fast drift status.
 
   project diff
-    Show manifest/lock/disk differences.
+    Show lock/disk differences.

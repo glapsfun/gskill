@@ -22,7 +22,7 @@ func projectWithAgent(t *testing.T) string {
 		t.Fatal(err)
 	}
 	a := app.New(app.Options{Agents: agent.NewDefaultRegistry(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-	if _, err := a.Init(context.Background(), root); err != nil {
+	if _, err := a.Init(context.Background(), root, false); err != nil {
 		t.Fatal(err)
 	}
 	return root
@@ -73,7 +73,7 @@ func TestAddInteractive_FailsFastWithoutAgentBeforeChooser(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := app.New(app.Options{Agents: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-	if _, err := a.Init(context.Background(), proj); err != nil {
+	if _, err := a.Init(context.Background(), proj, false); err != nil {
 		t.Fatal(err)
 	}
 

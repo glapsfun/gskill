@@ -17,22 +17,12 @@ gskill update <name>     # advance only one skill
 **Expected:** GSKILL resolves newer versions allowed by each skill's constraint, re-installs them, and
 rewrites `skills-lock.json`. Commit the updated lockfile.
 
-## Re-lock without bumping versions
-
-```bash
-gskill project lock              # recompute the lock from the manifest, honouring current pins
-```
-
-**Expected:** the lockfile is recomputed from the manifest **without** advancing any version — use this
-after hand-editing `gskill.toml`. It does not bump pins.
-
 ## Expected result
 
-- `gskill update` may change resolved versions; `gskill project lock` never does.
+- `gskill update` may change resolved versions; `gskill install` never does.
 - Both produce a deterministic `skills-lock.json`. Review the diff before committing — the lockfile diff
   should match your intent.
 
 ## See also
 
 - [Add a skill from Git](add-a-git-skill.md)
-- [`gskill.toml` schema](../reference/manifest-schema.md)

@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/glapsfun/gskill/internal/lockfile"
+	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
 // RequirementCheck is one declared requirement and whether the environment
@@ -59,7 +59,7 @@ func (a *App) Doctor(ctx context.Context, root string) (DoctorReport, error) {
 
 // checkRequirements verifies a skill's declared requirements and appends results
 // and warnings to the report.
-func checkRequirements(skill string, req lockfile.Requires, lf *lockfile.Lockfile, report *DoctorReport) {
+func checkRequirements(skill string, req skillslock.Requires, lf *skillslock.State, report *DoctorReport) {
 	for _, cmd := range req.Commands {
 		_, err := exec.LookPath(cmd)
 		report.add(skill, "command", cmd, err == nil, true)

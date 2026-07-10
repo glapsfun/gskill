@@ -104,15 +104,7 @@ func TestAddSingleSkill_AnywhereRecordsPath(t *testing.T) {
 				t.Errorf("skill not installed at %s: %v", installed, err)
 			}
 
-			manifest := string(readFile(t, filepath.Join(proj, "gskill.toml")))
-			if !strings.Contains(manifest, "[skills."+c.name+"]") {
-				t.Errorf("manifest missing [skills.%s]:\n%s", c.name, manifest)
-			}
-			if c.wantPath != "" && !strings.Contains(manifest, "path = '"+c.wantPath+"'") {
-				t.Errorf("manifest missing path = %q:\n%s", c.wantPath, manifest)
-			}
-
-			// Lockfile records the same in-repo path.
+			// Lockfile records the skill and its in-repo path.
 			lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 			if c.wantPath != "" && !strings.Contains(lock, c.wantPath) {
 				t.Errorf("lockfile missing path %q:\n%s", c.wantPath, lock)

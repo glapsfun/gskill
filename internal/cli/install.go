@@ -13,19 +13,15 @@ import (
 // runLockWizardFn is swapped in tests.
 var runLockWizardFn = tui.RunLockWizard
 
-// installCmd installs all declared skills.
+// installCmd restores the environment declared in skills-lock.json.
 type installCmd struct {
 	Agent          []string `sep:"," help:"Target agent(s); repeatable or comma-separated (spec 012 FR-012)."`
-	Global         bool     `xor:"scope" help:"Install into the user-global location."`
-	Project        bool     `xor:"scope" help:"Install into the project (default)."`
 	Copy           bool     `help:"Copy instead of symlinking (deprecated alias for --install-mode copy)."`
 	InstallMode    string   `name:"install-mode" placeholder:"auto|symlink|copy" help:"How skills are placed into agent directories."`
 	Force          bool     `help:"Accept changed upstream content: reinstall and rewrite the recorded computedHash."`
 	NoInit         bool     `name:"no-init" help:"Never auto-initialize the project; fail instead."`
-	PreferLock     bool     `name:"prefer-lock" xor:"prefer" help:"On a gskill.toml/skills-lock.json disagreement, the lock wins (manifest declarations are rewritten)."`
-	PreferManifest bool     `name:"prefer-manifest" xor:"prefer" help:"On a gskill.toml/skills-lock.json disagreement, the manifest wins (lock entries are rewritten)."`
 	FrozenLockfile bool     `name:"frozen-lockfile" help:"Restore exactly from the lockfile; never modify it."`
-	UpdateLockfile bool     `name:"update-lockfile" help:"Allow the lockfile to be rewritten."`
+	Prune          bool     `help:"Remove managed installs whose lock entries are gone."`
 }
 
 // Help returns the detailed help shown by `gskill install --help`.
@@ -34,7 +30,6 @@ func (installCmd) Help() string {
 		"gskill install",
 		"gskill install --agent claude,codex",
 		"gskill install --frozen-lockfile",
-		"gskill install --global --copy",
 	)
 }
 
@@ -46,25 +41,13 @@ func (c installCmd) validateFlags() error {
 	if c.Force && c.FrozenLockfile {
 		return fmt.Errorf("%w: --force cannot be combined with --frozen-lockfile (frozen runs never rewrite the lock)", errs.ErrUsage)
 	}
-	if (c.PreferLock || c.PreferManifest) && c.FrozenLockfile {
-		return fmt.Errorf("%w: --prefer-lock/--prefer-manifest cannot be combined with --frozen-lockfile (reconciliation rewrites a file)", errs.ErrUsage)
+	if c.Prune && c.FrozenLockfile {
+		return fmt.Errorf("%w: --prune cannot be combined with --frozen-lockfile (pruning modifies installed state)", errs.ErrUsage)
 	}
 	if !installModes[c.InstallMode] {
 		return fmt.Errorf("%w: invalid --install-mode %q (want auto, symlink, or copy)", errs.ErrUsage, c.InstallMode)
 	}
 	return nil
-}
-
-// reconcile maps the reconciliation flags onto the app request (FR-023).
-func (c installCmd) reconcile() string {
-	switch {
-	case c.PreferLock:
-		return app.ReconcileLock
-	case c.PreferManifest:
-		return app.ReconcileManifest
-	default:
-		return ""
-	}
 }
 
 // mode merges --install-mode with the deprecated --copy alias.
@@ -75,46 +58,42 @@ func (c installCmd) mode() string {
 	return modeFromFlags(c.Copy, false, false)
 }
 
-// Run executes `gskill install`. The --offline, --dry-run, --yes, and
-// --no-cache flags are global. In an interactive terminal, a project with a
-// skills-lock.json opens the guided agent-selection flow (spec 012 FR-013);
-// --agent, --yes, --json, a non-TTY, and --frozen-lockfile all suppress it.
+// Run executes `gskill install`: restore every skill declared in
+// skills-lock.json. The --offline, --dry-run, --yes, and --no-cache flags are
+// global. In an interactive terminal a project whose lock needs agent
+// selection opens the guided flow (spec 012 FR-013); --agent, --yes, --json,
+// a non-TTY, and --frozen-lockfile all suppress it.
 func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
 	if err := c.validateFlags(); err != nil {
 		return err
 	}
-	preview, found, err := a.PreviewLock(string(root))
-	if err != nil {
-		return err
-	}
-	if !found || len(preview.Skills) == 0 {
-		return c.runDirect(ctx, out, a, root, g)
-	}
 	if c.wizardEligible(out, g) {
-		if err := c.rejectGlobalOnLockPath(); err != nil {
+		preview, found, err := a.PreviewLock(string(root))
+		if err != nil {
 			return err
 		}
-		return c.runLockWizard(ctx, out, a, string(root), preview, g)
-	}
-	if g.DryRun || c.lockDirectEligible(a, string(root)) {
-		if err := c.rejectGlobalOnLockPath(); err != nil {
-			return err
+		if found && len(preview.Skills) > 0 {
+			return c.runLockWizard(ctx, out, a, string(root), preview, g)
 		}
-		return c.runLockDirect(ctx, out, a, string(root), g)
 	}
-	return c.runDirect(ctx, out, a, root, g)
+	return c.runLockDirect(ctx, out, a, string(root), g)
 }
 
-// rejectGlobalOnLockPath refuses --global on the lock-file-first pipeline
-// instead of silently installing project-scoped: the pipeline records and
-// restores project-scoped state only.
-func (c installCmd) rejectGlobalOnLockPath() error {
-	if !c.Global {
-		return nil
+// request assembles the app request from the flags; every execution path
+// (direct and wizard) builds from this one place so a new flag cannot be
+// silently dropped by one of them.
+func (c installCmd) request(root string, g Globals) app.InstallFromLockRequest {
+	return app.InstallFromLockRequest{
+		Root:        root,
+		Agents:      c.Agent,
+		InstallMode: c.mode(),
+		NoInit:      c.NoInit,
+		Force:       c.Force,
+		DryRun:      g.DryRun,
+		Offline:     g.Offline,
+		Frozen:      c.FrozenLockfile,
+		Prune:       c.Prune,
 	}
-	return errs.WithHint(
-		fmt.Errorf("%w: --global is not supported for lock-file-first installs", errs.ErrUsage),
-		"run without --global, or use 'gskill add --global <source>' for user-global skills")
 }
 
 // wizardEligible reports whether the guided lock-install flow may open:
@@ -125,39 +104,17 @@ func (c installCmd) wizardEligible(out *Output, g Globals) bool {
 		len(c.Agent) == 0 && !g.Yes && !g.DryRun && !c.FrozenLockfile
 }
 
-// lockDirectEligible routes non-interactive runs through the lock-first
-// pipeline when the project is lock-only (fresh clone), the caller selected
-// agents/force/reconciliation explicitly, or the manifest and lock disagree
-// (FR-023: the lock path surfaces the conflict as exit 4 instead of letting
-// the manifest-driven path silently re-resolve). Otherwise fully configured
-// projects keep the established manifest-driven reconcile path.
-func (c installCmd) lockDirectEligible(a *app.App, root string) bool {
-	if len(c.Agent) > 0 || c.Force || c.NoInit || c.PreferLock || c.PreferManifest {
-		return true
-	}
-	if !a.ManifestExists(root) {
-		return true
-	}
-	conflicts, err := a.LockManifestConflicts(root)
-	return err == nil && len(conflicts) > 0
-}
-
-// runLockDirect executes the non-interactive lock-first install.
+// runLockDirect executes the non-interactive install.
 func (c installCmd) runLockDirect(ctx context.Context, out *Output, a *app.App, root string, g Globals) error {
 	ctx, done := out.withFetchProgress(ctx)
 	defer done()
-	res, err := a.InstallFromLock(ctx, app.InstallFromLockRequest{
-		Root:        root,
-		Agents:      c.Agent,
-		InstallMode: c.mode(),
-		NoInit:      c.NoInit,
-		Force:       c.Force,
-		DryRun:      g.DryRun,
-		Offline:     g.Offline,
-		Frozen:      c.FrozenLockfile,
-		Reconcile:   c.reconcile(),
-	})
+	res, err := a.InstallFromLock(ctx, c.request(root, g))
 	done()
+	if err != nil && len(res.Skills) == 0 {
+		// Nothing ran (missing/invalid lock, agent selection failed): report
+		// the error alone instead of a misleading empty summary.
+		return err
+	}
 	if renderErr := renderLockInstall(out, res); renderErr != nil {
 		return renderErr
 	}
@@ -172,30 +129,17 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 	for _, s := range preview.Skills {
 		skills = append(skills, tui.LockWizardSkill{Name: s.Name, Source: s.Source})
 	}
-	conflicts, err := a.LockManifestConflicts(root)
-	if err != nil {
-		return err
-	}
-	reconcile := c.reconcile()
 	cfg := tui.LockWizardConfig{
-		LockPath:  preview.Path,
-		Skills:    skills,
-		Conflicts: conflicts,
+		LockPath: preview.Path,
+		Skills:   skills,
 		Phases: tui.LockWizardPhases{
 			Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
 				return a.AgentChoices(ctx, root)
 			},
-			Reconcile: func(choice string) { reconcile = choice },
 			Execute: func(ctx context.Context, agentIDs []string) (app.InstallFromLockResult, error) {
-				return a.InstallFromLock(ctx, app.InstallFromLockRequest{
-					Root:        root,
-					Agents:      agentIDs,
-					InstallMode: c.mode(),
-					NoInit:      c.NoInit,
-					Force:       c.Force,
-					Offline:     g.Offline,
-					Reconcile:   reconcile,
-				})
+				req := c.request(root, g)
+				req.Agents = agentIDs
+				return a.InstallFromLock(ctx, req)
 			},
 		},
 	}
@@ -220,8 +164,8 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 	}
 }
 
-// renderLockInstall prints the lock-install summary on the plain streams (so
-// it survives the alternate screen) and the --json document.
+// renderLockInstall prints the install summary on the plain streams (so it
+// survives the alternate screen) and the --json document.
 func renderLockInstall(out *Output, res app.InstallFromLockResult) error {
 	skills := make([]map[string]any, 0, len(res.Skills))
 	var names []string
@@ -257,56 +201,15 @@ func renderLockInstall(out *Output, res app.InstallFromLockResult) error {
 	case !res.Changed:
 		human = fmt.Sprintf("Up to date (%d skill(s), no changes)", len(res.Skills))
 	}
+	for _, p := range res.Pruned {
+		out.Diag("pruned: %s", p)
+	}
 	human = out.summary(human)
 	return out.Result(human, map[string]any{
 		"changed":     res.Changed,
 		"initialized": res.Initialized,
-		"migrated":    res.Migrated,
 		"agents":      res.Agents,
 		"skills":      skills,
-	})
-}
-
-// runDirect executes the manifest-driven install path unchanged.
-func (c installCmd) runDirect(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
-	ctx, done := out.withFetchProgress(ctx)
-	defer done()
-	res, err := a.Install(ctx, app.InstallRequest{
-		Root:           string(root),
-		Scope:          scopeFlag(c.Global),
-		Mode:           c.mode(),
-		Frozen:         c.FrozenLockfile,
-		Offline:        g.Offline,
-		NoCache:        g.NoCache,
-		UpdateLockfile: c.UpdateLockfile,
-	})
-	// Finish the live line before the summary prints (done stays deferred for
-	// the error paths, but is idempotent so this early call is safe).
-	done()
-	if err != nil {
-		return err
-	}
-
-	skills := make([]map[string]any, 0, len(res.Skills))
-	changedCount := 0
-	for _, s := range res.Skills {
-		if s.Changed {
-			changedCount++
-		}
-		skills = append(skills, map[string]any{
-			"name":         s.Name,
-			"content_hash": s.ContentHash,
-			"changed":      s.Changed,
-		})
-	}
-
-	human := fmt.Sprintf("Installed %d skill(s); %d changed", len(res.Skills), changedCount)
-	if !res.Changed {
-		human = fmt.Sprintf("Up to date (%d skill(s), no changes)", len(res.Skills))
-	}
-	human = out.summary(human)
-	return out.Result(human, map[string]any{
-		"changed": res.Changed,
-		"skills":  skills,
+		"pruned":      res.Pruned,
 	})
 }

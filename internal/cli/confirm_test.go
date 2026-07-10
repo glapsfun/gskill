@@ -81,8 +81,12 @@ func TestDestructiveOps_ProceedNonInteractively(t *testing.T) {
 
 	// In tests stdout is a buffer (never a TTY), so these runs are
 	// non-interactive: remove and sync --prune must proceed without any
-	// prompt or blocking read (FR-012).
-	dir := initedProject(t)
+	// prompt or blocking read (FR-012). Sync needs a lock file to operate on
+	// (a missing lock fails closed), so init with an empty one.
+	dir := t.TempDir()
+	if _, stderr, code := runCLI(t, newTestApp(), "-C", dir, "init", "--lock"); code != 0 {
+		t.Fatalf("init --lock: %s", stderr)
+	}
 	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "project", "sync", "--prune")
 	if code != 0 {
 		t.Fatalf("project sync --prune: exit code = %d, stderr: %q", code, stderr)

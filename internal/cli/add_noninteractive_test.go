@@ -111,11 +111,11 @@ func TestAddBaseline_NonInteractiveMatrix(t *testing.T) {
 			wantOut:    "alpha",
 		},
 		{
-			name:       "missing manifest fails with init hint",
-			empty:      true,
-			args:       []string{"add", "SRC", "--skill", "alpha"},
-			wantCode:   3,
-			wantErrSub: "run 'gskill init' to create one",
+			name:     "empty project installs without any manifest",
+			empty:    true,
+			args:     []string{"add", "SRC", "--skill", "alpha"},
+			wantCode: 0,
+			wantOut:  "Installed 1 skill(s): alpha",
 		},
 	}
 
@@ -172,24 +172,15 @@ func TestAddBaseline_ListWritesNothing(t *testing.T) {
 	src := addSourceTree(t, "alpha", "beta")
 	dir := agentProject(t)
 
-	manifestBefore, err := os.ReadFile(filepath.Join(dir, "gskill.toml")) //nolint:gosec // test-controlled temp path
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "add", src, "--list")
 	if code != 0 {
 		t.Fatalf("add --list: exit code = %d, stderr: %q", code, stderr)
 	}
 
-	manifestAfter, err := os.ReadFile(filepath.Join(dir, "gskill.toml")) //nolint:gosec // test-controlled temp path
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(manifestBefore) != string(manifestAfter) {
-		t.Error("add --list modified the manifest")
-	}
 	if _, err := os.Stat(filepath.Join(dir, "skills-lock.json")); err == nil {
 		t.Error("add --list created a lockfile")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "gskill.toml")); err == nil {
+		t.Error("add --list created a manifest")
 	}
 }

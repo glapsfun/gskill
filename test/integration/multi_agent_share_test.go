@@ -82,10 +82,14 @@ func requireCounts(t *testing.T, proj string, store, active int) {
 // requireManifestAgents fails unless the manifest mentions every given agent id.
 func requireManifestAgents(t *testing.T, proj string, ids ...string) {
 	t.Helper()
-	man := string(readFile(t, filepath.Join(proj, "gskill.toml")))
+	got := lockAgents(t, proj, "demo")
+	set := map[string]bool{}
+	for _, id := range got {
+		set[id] = true
+	}
 	for _, id := range ids {
-		if !strings.Contains(man, id) {
-			t.Errorf("manifest missing agent %q:\n%s", id, man)
+		if !set[id] {
+			t.Errorf("lock missing agent %q (got %v)", id, got)
 		}
 	}
 }

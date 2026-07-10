@@ -2,12 +2,14 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -77,16 +79,19 @@ func TestCoexist_LockTouchingCommandsPreserveForeignData(t *testing.T) {
 			_, err := a.Update(context.Background(), root, nil)
 			return err
 		}},
-		{"lock", func(a *app.App, root string) error {
-			_, err := a.Lock(context.Background(), root)
-			return err
-		}},
 		{"sync", func(a *app.App, root string) error {
 			_, err := a.Sync(context.Background(), app.SyncRequest{Root: root})
 			return err
 		}},
 		{"reinstall", func(a *app.App, root string) error {
-			_, err := a.Install(context.Background(), app.InstallRequest{Root: root})
+			// The foreign external-only entry's fake source cannot install;
+			// per-skill isolation reports it as a partial failure while the
+			// preservation guarantee under test still holds.
+			_, err := a.InstallFromLock(context.Background(),
+				app.InstallFromLockRequest{Root: root, Agents: []string{"claude"}})
+			if errors.Is(err, errs.ErrPartialInstall) {
+				return nil
+			}
 			return err
 		}},
 	}

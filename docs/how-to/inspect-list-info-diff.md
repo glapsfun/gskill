@@ -1,6 +1,6 @@
 # Inspect with list, info, and diff
 
-See what's installed, drill into one skill, and compare manifest, lockfile, and disk.
+See what's installed, drill into one skill, and compare the lockfile with disk.
 
 ## Before you start
 

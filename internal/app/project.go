@@ -13,43 +13,36 @@ import (
 	"github.com/glapsfun/gskill/internal/store"
 )
 
-// Project file and directory names. The canonical committed lockfile is
-// skills-lock.json (skillslock.FileName, spec 012); LockName is the legacy
-// gskill.lock, read only for migration.
-const (
-	ManifestName = "gskill.toml"
-	LockName     = "gskill.lock"
-	stateDirName = ".gskill"
-)
+// Project directory names. The canonical committed lockfile is
+// skills-lock.json (skillslock.FileName, spec 012).
+const stateDirName = ".gskill"
 
-// errNoManifest is the shared missing-manifest failure, carrying the next
-// step as a hint so every command reports it identically.
-func errNoManifest() error {
+// errNoLock is the shared missing-lock failure, carrying the next step as a
+// hint so every command reports it identically.
+func errNoLock() error {
 	return errs.WithHint(
-		fmt.Errorf("%w: no %s found", errs.ErrInvalidManifest, ManifestName),
-		"run 'gskill init' to create one")
+		fmt.Errorf("%w: no %s found", errs.ErrInvalidLock, skillslock.FileName),
+		"run 'gskill add <source>' to install a first skill, or clone a project that commits one")
 }
 
 // project bundles the resolved paths and content stores for one project root.
 type project struct {
-	root         string
-	manifestPath string
-	lockPath     string
-	store        *store.Store
-	cache        *cache.Cache
-	locksDir     string
+	root     string
+	lockPath string
+	store    *store.Store
+	cache    *cache.Cache
+	locksDir string
 }
 
 // openProject resolves the project layout under root.
 func openProject(root string) *project {
 	stateDir := filepath.Join(root, stateDirName)
 	return &project{
-		root:         root,
-		manifestPath: filepath.Join(root, ManifestName),
-		lockPath:     filepath.Join(root, skillslock.FileName),
-		store:        store.New(filepath.Join(stateDir, "store")),
-		cache:        cache.New(filepath.Join(stateDir, "cache")),
-		locksDir:     filepath.Join(stateDir, "locks"),
+		root:     root,
+		lockPath: filepath.Join(root, skillslock.FileName),
+		store:    store.New(filepath.Join(stateDir, "store")),
+		cache:    cache.New(filepath.Join(stateDir, "cache")),
+		locksDir: filepath.Join(stateDir, "locks"),
 	}
 }
 
@@ -74,14 +67,8 @@ func (a *App) installerForScope(p *project, scope string) *installer.Installer {
 		store.New(filepath.Join(cfgDir, "store")))
 }
 
-// manifestExists reports whether the project has a manifest.
-func (p *project) manifestExists() bool {
-	_, err := os.Stat(p.manifestPath)
+// fileExists reports whether path exists.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
 	return err == nil
-}
-
-// ManifestExists reports whether root holds a gskill.toml (used by the CLI to
-// route between the lock-first and manifest-driven install paths, spec 012).
-func (a *App) ManifestExists(root string) bool {
-	return openProject(root).manifestExists()
 }

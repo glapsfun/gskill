@@ -17,7 +17,7 @@ Flags:
 
 CORE
   init [flags]
-    Scaffold a gskill project (manifest, state dir, gitignore).
+    Initialize local gskill state (.gskill, .agents/skills, gitignore).
 
   add <source> [flags]
     Add and install a new skill.
@@ -50,12 +50,9 @@ INSPECT
   outdated [flags]
     Show skills with newer versions available.
 
-PROJECT (manifest · lockfile · installed state)
+PROJECT (lockfile · installed state)
   project <command> [flags]
-    Manage this project's manifest, lockfile, and installed state.
-
-  migrate <command> [flags]
-    One-way format migrations (gskill.lock -> skills-lock.json).
+    Manage this project's lockfile and installed state.
 
 MORE
   source <command> [flags]

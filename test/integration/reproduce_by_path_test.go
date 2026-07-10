@@ -46,10 +46,10 @@ func TestReproduceByPath_DeepPath(t *testing.T) {
 		t.Fatalf("add: %s", stderr)
 	}
 
-	// Manifest/lock pin the in-repo path.
-	manifest := string(readFile(t, filepath.Join(proj, "gskill.toml")))
-	if !bytes.Contains([]byte(manifest), []byte("skills/category/deep-skill")) {
-		t.Errorf("manifest must record the deep in-repo path:\n%s", manifest)
+	// The lock pins the in-repo path.
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
+	if !bytes.Contains([]byte(lock), []byte("skills/category/deep-skill")) {
+		t.Errorf("lock must record the deep in-repo path:\n%s", lock)
 	}
 
 	installedBefore := readFile(t, filepath.Join(proj, ".claude", "skills", "deep-skill", "SKILL.md"))

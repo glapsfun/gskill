@@ -38,7 +38,7 @@ func (c checkCmd) Run(ctx context.Context, out *Output, a *app.App, root project
 		return rErr
 	}
 	if err != nil && errors.Is(err, errs.ErrDrift) {
-		return errs.WithHint(err, "run 'gskill project sync' to reconcile disk with the manifest")
+		return errs.WithHint(err, "run 'gskill install' to reconcile disk with the lock")
 	}
 	return err
 }

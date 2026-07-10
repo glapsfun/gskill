@@ -9,18 +9,18 @@ import (
 func TestRun_ErrorWithHintRendersArrowLine(t *testing.T) {
 	t.Parallel()
 
-	// `install` in an empty (un-inited) directory fails with the missing-manifest
-	// error, which must carry the init hint (FR-010).
+	// `install` in an empty directory fails with the missing-lock error, which
+	// must carry the add hint (FR-010).
 	dir := t.TempDir()
 	stdout, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install")
 	if code == 0 {
-		t.Fatal("install in an empty dir succeeded, want a missing-manifest error")
+		t.Fatal("install in an empty dir succeeded, want a missing-lock error")
 	}
 	if !strings.Contains(stderr, "error:") {
 		t.Errorf("stderr = %q, want an error line", stderr)
 	}
-	if !strings.Contains(stderr, "→ run 'gskill init' to create one") {
-		t.Errorf("stderr = %q, want the init hint arrow line", stderr)
+	if !strings.Contains(stderr, "→ run 'gskill add <source>'") {
+		t.Errorf("stderr = %q, want the add hint arrow line", stderr)
 	}
 	if stdout != "" {
 		t.Errorf("stdout = %q, want empty on error", stdout)
@@ -75,12 +75,7 @@ func TestHintAudit_RepresentativeSites(t *testing.T) {
 		args     []string
 		wantHint string
 	}{
-		{"install without manifest", false, []string{"install"}, "run 'gskill init' to create one"},
-		{"update without manifest", false, []string{"update"}, "run 'gskill init' to create one"},
-		{"remove without manifest", false, []string{"remove", "foo"}, "run 'gskill init' to create one"},
-		{"sync alias without manifest", false, []string{"sync"}, "run 'gskill init' to create one"},
-		{"project sync without manifest", false, []string{"project", "sync"}, "run 'gskill init' to create one"},
-		{"unlink without manifest", false, []string{"unlink", "foo", "--agent", "claude"}, "run 'gskill init' to create one"},
+		{"install without lock", false, []string{"install"}, "run 'gskill add <source>' to install a first skill"},
 		{"unlink unknown agent", true, []string{"unlink", "foo", "--agent", "no-such-agent"}, "run 'gskill doctor' to list detected agents"},
 		{"unlink undeclared skill", true, []string{"unlink", "foo", "--agent", "claude"}, "run 'gskill list' to see installed skills"},
 		{"config get unknown key", false, []string{"config", "get", "no_such_key"}, "run 'gskill config list' to see available keys"},

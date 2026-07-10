@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/glapsfun/gskill/internal/skillslock"
+
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/errs"
-	"github.com/glapsfun/gskill/internal/lockfile"
-	"github.com/glapsfun/gskill/internal/manifest"
+
 	"github.com/glapsfun/gskill/internal/resolver"
 )
 
@@ -57,106 +58,41 @@ func (a *App) Outdated(ctx context.Context, root string) (OutdatedReport, error)
 }
 
 // Update re-resolves the named skills (or all when names is empty) to the newest
-// version within their constraints and rewrites the lockfile (FR-009).
+// version within their constraints and rewrites the lock (FR-009).
 func (a *App) Update(ctx context.Context, root string, names []string) (InstallResult, error) {
-	p, m, err := a.openMigratedProject(ctx, root)
-	if err != nil {
-		return InstallResult{}, err
+	p := openProject(root)
+	if !fileExists(p.lockPath) {
+		return InstallResult{}, errNoLock()
 	}
-
-	targets := names
-	if len(targets) == 0 {
-		targets = sortedKeys(m.Skills)
-	}
-
 	var out InstallResult
-	err = a.withLock(ctx, p, func() error {
+	err := a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr
 		}
-		manifestChanged := false
+		targets := names
+		if len(targets) == 0 {
+			targets = sortedKeys(lf.Skills)
+		}
+		if len(targets) == 0 {
+			return nil // nothing declared: never create a lock as a side effect
+		}
 		for k, name := range targets {
-			ms, ok := m.Skills[name]
+			r, ok := lf.Skills[name]
 			if !ok {
 				return errs.WithHint(
-					fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidManifest, name),
+					fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidLock, name),
 					"run 'gskill list' to see installed skills")
 			}
 			sctx := stampSkill(ctx, name, k+1, len(targets))
-			change, newMS, applyErr := a.installOne(sctx, p, lf, name, ms, InstallRequest{Root: root}, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
+			change, applyErr := a.installOne(sctx, p, lf, name, intentFromRecord(r), InstallRequest{Root: root})
 			if applyErr != nil {
 				return applyErr
-			}
-			if change.ManifestChanged {
-				m.Skills[name] = newMS
-				manifestChanged = true
 			}
 			out.Skills = append(out.Skills, change)
 			out.Changed = out.Changed || change.Changed
 		}
-		if err := saveLock(p.lockPath, lf); err != nil {
-			return err
-		}
-		if manifestChanged {
-			return manifest.Save(p.manifestPath, m)
-		}
-		return nil
-	})
-	if err != nil {
-		return InstallResult{}, err
-	}
-	return out, nil
-}
-
-// Lock recomputes the lockfile from the manifest, honoring existing pins without
-// bumping skills whose declaration is unchanged.
-func (a *App) Lock(ctx context.Context, root string) (InstallResult, error) {
-	if err := a.maybeMigrate(ctx, root); err != nil {
-		return InstallResult{}, err
-	}
-	p := openProject(root)
-	if !p.manifestExists() {
-		return InstallResult{}, errNoManifest()
-	}
-	m, err := manifest.Load(p.manifestPath)
-	if err != nil {
-		return InstallResult{}, err
-	}
-
-	var out InstallResult
-	err = a.withLock(ctx, p, func() error {
-		old, lockErr := loadOrNewLock(p.lockPath)
-		if lockErr != nil {
-			return lockErr
-		}
-		next := lockfile.New()
-		manifestChanged := false
-		for _, name := range sortedKeys(m.Skills) {
-			ms := m.Skills[name]
-			if entry, ok := old.Skills[name]; ok && declarationUnchanged(ms, entry) {
-				next.Skills[name] = entry // honor existing pin, no bump
-				out.Skills = append(out.Skills, SkillChange{Name: name, ContentHash: entry.Resolved.ContentHash})
-				continue
-			}
-			change, newMS, applyErr := a.installOne(ctx, p, next, name, ms, InstallRequest{Root: root}, m.Defaults.Agents, len(m.Defaults.Agents) > 0)
-			if applyErr != nil {
-				return applyErr
-			}
-			if change.ManifestChanged {
-				m.Skills[name] = newMS
-				manifestChanged = true
-			}
-			out.Skills = append(out.Skills, change)
-			out.Changed = true
-		}
-		if err := saveLock(p.lockPath, next); err != nil {
-			return err
-		}
-		if manifestChanged {
-			return manifest.Save(p.manifestPath, m)
-		}
-		return nil
+		return saveLock(p.lockPath, lf)
 	})
 	if err != nil {
 		return InstallResult{}, err
@@ -171,34 +107,26 @@ type RemoveResult struct {
 	NotPresent []string
 }
 
-// Remove uninstalls the named skills from the manifest, lockfile, and every
-// agent directory, then garbage-collects unreferenced store entries.
+// Remove uninstalls the named skills from the lock and every agent directory,
+// then garbage-collects unreferenced store entries.
 func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveResult, error) {
-	if err := a.maybeMigrate(ctx, root); err != nil {
-		return RemoveResult{}, err
-	}
 	p := openProject(root)
-	if !p.manifestExists() {
-		return RemoveResult{}, errNoManifest()
+	if !fileExists(p.lockPath) {
+		return RemoveResult{}, errNoLock()
 	}
-	m, err := manifest.Load(p.manifestPath)
-	if err != nil {
-		return RemoveResult{}, err
-	}
-
 	var out RemoveResult
-	err = a.withLock(ctx, p, func() error {
+	err := a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr
 		}
-		if rmErr := a.removeSkills(p, m, lf, names, &out); rmErr != nil {
+		if rmErr := a.removeSkills(p, lf, names, &out); rmErr != nil {
 			return rmErr
 		}
-
-		if saveErr := manifest.Save(p.manifestPath, m); saveErr != nil {
-			return saveErr
+		if len(out.Removed) == 0 {
+			return nil // nothing removed: never create or rewrite the lock
 		}
+
 		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
 			return saveErr
 		}
@@ -216,44 +144,32 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 	return out, nil
 }
 
-// removeSkills deletes the named skills from the manifest, lockfile, agent
-// directories (confined), and the active layer, recording the outcome in out.
-func (a *App) removeSkills(p *project, m *manifest.Manifest, lf *lockfile.Lockfile, names []string, out *RemoveResult) error {
+// removeSkills deletes the named skills from the lock, agent directories
+// (confined), and the active layer, recording the outcome in out.
+func (a *App) removeSkills(p *project, lf *skillslock.State, names []string, out *RemoveResult) error {
 	for _, name := range names {
 		locked, inLock := lf.Skills[name]
-		_, inManifest := m.Skills[name]
-		if !inLock && !inManifest {
+		if !inLock {
 			out.NotPresent = append(out.NotPresent, name)
 			continue
 		}
-		if inLock {
-			scope := locked.Installation.Scope
-			for _, id := range sortedKeys(locked.Installation.Targets) {
-				if _, err := a.removeSafeTarget(p, scope, id, name, locked.Installation.Targets[id]); err != nil {
-					return fmt.Errorf("remove target for %q: %w", name, err)
-				}
-			}
-			if err := active.Remove(p.root, name); err != nil {
-				return fmt.Errorf("remove active for %q: %w", name, err)
+		scope := locked.Installation.Scope
+		for _, id := range sortedKeys(locked.Installation.Targets) {
+			if _, err := a.removeSafeTarget(p, scope, id, name, locked.Installation.Targets[id]); err != nil {
+				return fmt.Errorf("remove target for %q: %w", name, err)
 			}
 		}
-		delete(m.Skills, name)
+		if err := active.Remove(p.root, name); err != nil {
+			return fmt.Errorf("remove active for %q: %w", name, err)
+		}
 		delete(lf.Skills, name)
 		out.Removed = append(out.Removed, name)
 	}
 	return nil
 }
 
-// declarationUnchanged reports whether a manifest entry still matches its lock.
-func declarationUnchanged(ms manifest.Skill, entry lockfile.LockedSkill) bool {
-	return entry.Source.Original == ms.Source &&
-		entry.Requested.Version == ms.Version &&
-		entry.Requested.Ref == ms.Ref &&
-		entry.Requested.Commit == ms.Commit
-}
-
 // referencedHashes collects the content hashes still referenced by the lockfile.
-func referencedHashes(lf *lockfile.Lockfile) map[string]bool {
+func referencedHashes(lf *skillslock.State) map[string]bool {
 	refs := make(map[string]bool, len(lf.Skills))
 	for _, s := range lf.Skills {
 		if s.Resolved.ContentHash != "" {

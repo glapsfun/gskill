@@ -1,12 +1,9 @@
 package integrity
 
-// SkillState is the observed manifest, lockfile, and filesystem state of one
-// skill, used to classify its drift without coupling this package to the
-// manifest/lockfile types.
+// SkillState is the observed lock and filesystem state of one skill, used to
+// classify its drift without coupling this package to the lock types.
 type SkillState struct {
-	InManifest      bool
 	InLock          bool
-	SourceChanged   bool // normalized source/owner/repo differs between manifest and lock (FR-044)
 	SourceAvailable bool
 	ContentMismatch bool // installed content hash != locked hash (set only by content checks)
 	TargetsTotal    int
@@ -17,12 +14,8 @@ type SkillState struct {
 // ordered from most to least severe so the first matching condition wins.
 func Classify(s SkillState) DriftStatus {
 	switch {
-	case s.InLock && !s.InManifest:
-		return DriftOrphaned
-	case s.InManifest && !s.InLock:
-		return DriftManifestLockMismatch
-	case s.SourceChanged:
-		return DriftManifestLockMismatch
+	case !s.InLock:
+		return DriftMissing
 	case !s.SourceAvailable:
 		return DriftSourceUnavailable
 	case s.ContentMismatch:

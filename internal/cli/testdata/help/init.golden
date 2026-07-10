@@ -1,10 +1,11 @@
 Usage: gskill init [flags]
 
-Scaffold a gskill project (manifest, state dir, gitignore).
+Initialize local gskill state (.gskill, .agents/skills, gitignore).
 
 Examples:
 
     gskill init
+    gskill init --lock
     gskill -C path/to/repo init
 
 Flags:
@@ -19,3 +20,5 @@ Flags:
       --config=STRING     Path to a config file.
   -v, --verbose           Enable verbose diagnostics.
   -C, --dir=STRING        Run as if gskill started in this directory.
+
+      --lock              Also create an empty skills-lock.json.

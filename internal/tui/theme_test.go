@@ -17,7 +17,6 @@ func TestStatusCell_Vocabulary(t *testing.T) {
 		{"orphaned", "✗"},
 		{"source-unavailable", "✗"},
 		{"checksum-mismatch", "✗"},
-		{"manifest-lock-mismatch", "✗"},
 	}
 	for _, c := range cases {
 		got := th.StatusCell(c.status)

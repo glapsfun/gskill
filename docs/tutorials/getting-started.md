@@ -28,7 +28,7 @@ mkdir .claude          # marks this as a Claude Code project so GSKILL detects t
 gskill init
 ```
 
-**Expected:** GSKILL scaffolds a `gskill.toml` manifest, a `.gskill/` state directory, and `.gitignore`
+**Expected:** GSKILL prepares a `.gskill/` state directory, the `.agents/skills/` layer, and `.gitignore`
 hints. `gskill init` exits `0`.
 
 ## Step 3 — Add a skill

@@ -16,42 +16,27 @@ func TestClassify(t *testing.T) {
 	}{
 		{
 			name:  "fully installed",
-			state: integrity.SkillState{InManifest: true, InLock: true, SourceAvailable: true, TargetsTotal: 2, TargetsPresent: 2},
+			state: integrity.SkillState{InLock: true, SourceAvailable: true, TargetsTotal: 2, TargetsPresent: 2},
 			want:  integrity.DriftInstalled,
 		},
 		{
 			name:  "missing",
-			state: integrity.SkillState{InManifest: true, InLock: true, SourceAvailable: true, TargetsTotal: 2, TargetsPresent: 0},
+			state: integrity.SkillState{InLock: true, SourceAvailable: true, TargetsTotal: 2, TargetsPresent: 0},
 			want:  integrity.DriftMissing,
 		},
 		{
 			name:  "partially installed",
-			state: integrity.SkillState{InManifest: true, InLock: true, SourceAvailable: true, TargetsTotal: 2, TargetsPresent: 1},
+			state: integrity.SkillState{InLock: true, SourceAvailable: true, TargetsTotal: 2, TargetsPresent: 1},
 			want:  integrity.DriftPartiallyInstalled,
 		},
 		{
-			name:  "orphaned (locked, not declared)",
-			state: integrity.SkillState{InManifest: false, InLock: true, SourceAvailable: true, TargetsTotal: 1, TargetsPresent: 1},
-			want:  integrity.DriftOrphaned,
-		},
-		{
-			name:  "declared but not locked",
-			state: integrity.SkillState{InManifest: true, InLock: false},
-			want:  integrity.DriftManifestLockMismatch,
-		},
-		{
-			name:  "source substitution",
-			state: integrity.SkillState{InManifest: true, InLock: true, SourceChanged: true, SourceAvailable: true, TargetsTotal: 1, TargetsPresent: 1},
-			want:  integrity.DriftManifestLockMismatch,
-		},
-		{
 			name:  "source unavailable",
-			state: integrity.SkillState{InManifest: true, InLock: true, SourceAvailable: false, TargetsTotal: 1, TargetsPresent: 1},
+			state: integrity.SkillState{InLock: true, SourceAvailable: false, TargetsTotal: 1, TargetsPresent: 1},
 			want:  integrity.DriftSourceUnavailable,
 		},
 		{
 			name:  "checksum mismatch",
-			state: integrity.SkillState{InManifest: true, InLock: true, SourceAvailable: true, ContentMismatch: true, TargetsTotal: 1, TargetsPresent: 1},
+			state: integrity.SkillState{InLock: true, SourceAvailable: true, ContentMismatch: true, TargetsTotal: 1, TargetsPresent: 1},
 			want:  integrity.DriftChecksumMismatch,
 		},
 	}

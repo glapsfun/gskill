@@ -27,7 +27,7 @@ gskill add github.com/<org>/<repo>/<skill> --commit <sha>
 
 ## Expected result
 
-- GSKILL resolves the source, fetches it, installs the skill, and records both intent (`gskill.toml`)
+- GSKILL resolves the source, fetches it, installs the skill, and records both intent (the `gskill` block)
   and resolved reality (`skills-lock.json`) — including the exact commit and content hash.
 - A mutable reference (like a branch) is resolved to an immutable commit in the lock and flagged as
   mutable.

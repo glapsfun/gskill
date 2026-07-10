@@ -33,11 +33,9 @@ var helpPages = []struct {
 
 	{"project-sync", []string{"project", "sync"}},
 	{"project-repair", []string{"project", "repair"}},
-	{"project-lock", []string{"project", "lock"}},
 	{"project-verify", []string{"project", "verify"}},
 	{"project-check", []string{"project", "check"}},
 	{"project-diff", []string{"project", "diff"}},
-	{"migrate-lockfile", []string{"migrate", "lockfile"}},
 
 	{"source-list", []string{"source", "list"}},
 	{"source-inspect", []string{"source", "inspect"}},
@@ -152,7 +150,7 @@ func TestProjectBareInvocation_ShowsGroupHelp(t *testing.T) {
 	if stdout != helpOut {
 		t.Errorf("bare `gskill project` output differs from `gskill project --help`")
 	}
-	for _, sub := range []string{"sync", "repair", "lock", "verify", "check", "diff"} {
+	for _, sub := range []string{"sync", "repair", "verify", "check", "diff"} {
 		re := regexp.MustCompile(`(?m)^\s+project ` + sub + `\b`)
 		if !re.MatchString(stdout) {
 			t.Errorf("project group help missing subcommand %q", sub)

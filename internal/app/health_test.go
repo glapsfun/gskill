@@ -5,10 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/glapsfun/gskill/internal/skillslock"
+
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/integrity"
-	"github.com/glapsfun/gskill/internal/lockfile"
 )
 
 // seedStore imports real content into p's store and returns the content hash and
@@ -34,11 +35,11 @@ func seedStore(t *testing.T, p *project) (string, string) {
 }
 
 // lockWith builds a single-skill lockfile for the demo skill targeting claude.
-func lockWith(name, hash string) *lockfile.Lockfile {
-	lf := lockfile.New()
-	lf.Skills[name] = lockfile.LockedSkill{
-		Resolved: lockfile.Resolved{ContentHash: hash},
-		Installation: lockfile.Installation{
+func lockWith(name, hash string) *skillslock.State {
+	lf := skillslock.NewState()
+	lf.Skills[name] = skillslock.Record{
+		Resolved: skillslock.Resolved{ContentHash: hash},
+		Installation: skillslock.Installation{
 			Scope:      "project",
 			Agents:     []string{"claude"},
 			ActivePath: active.Rel(name),

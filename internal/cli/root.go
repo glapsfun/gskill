@@ -33,7 +33,7 @@ type rootCLI struct {
 	Verbose       bool   `short:"v" help:"Enable verbose diagnostics."`
 	Dir           string `short:"C" help:"Run as if gskill started in this directory." type:"path"`
 
-	Init    initCmd    `cmd:"" group:"core" help:"Scaffold a gskill project (manifest, state dir, gitignore)."`
+	Init    initCmd    `cmd:"" group:"core" help:"Initialize local gskill state (.gskill, .agents/skills, gitignore)."`
 	Add     addCmd     `cmd:"" group:"core" help:"Add and install a new skill."`
 	Onboard onboardCmd `cmd:"" group:"core" help:"Guided skill installation without a predefined source."`
 	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent)."`
@@ -52,15 +52,13 @@ type rootCLI struct {
 	// ungrouped "Commands:" bucket, hidden keeps them out of every help
 	// listing, and declaring them before Project keeps the section's spacing
 	// clean (kong emits an entry separator only after visible nodes).
-	Sync   syncCmd   `cmd:"" hidden:"" group:"project" help:"Reconcile disk to the manifest's desired state (--prune removes orphans)."`
+	Sync   syncCmd   `cmd:"" hidden:"" group:"project" help:"Reconcile disk to the lock's declared state (--prune removes managed orphans)."`
 	Repair repairCmd `cmd:"" hidden:"" group:"project" help:"Re-materialize broken installs and clean up staging."`
-	Lock   lockCmd   `cmd:"" hidden:"" group:"project" help:"Recompute the lockfile from the manifest."`
 	Verify verifyCmd `cmd:"" hidden:"" group:"project" help:"Re-hash installed content against the lockfile."`
 	Check  checkCmd  `cmd:"" hidden:"" group:"project" help:"Report fast drift status."`
-	Diff   diffCmd   `cmd:"" hidden:"" group:"project" help:"Show manifest/lock/disk differences."`
+	Diff   diffCmd   `cmd:"" hidden:"" group:"project" help:"Show lock/disk differences."`
 
-	Project projectCmd `cmd:"" group:"project" help:"Manage this project's manifest, lockfile, and installed state."`
-	Migrate migrateCmd `cmd:"" group:"project" help:"One-way format migrations (gskill.lock -> skills-lock.json)."`
+	Project projectCmd `cmd:"" group:"project" help:"Manage this project's lockfile and installed state."`
 
 	Source     sourceCmd     `cmd:"" group:"more" help:"Inspect a skill source (list/inspect/check) without installing."`
 	Cache      cacheCmd      `cmd:"" group:"more" help:"Manage the content cache."`

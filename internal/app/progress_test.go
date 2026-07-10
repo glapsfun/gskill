@@ -171,20 +171,19 @@ func TestInstall_StampsSkillAndCounter(t *testing.T) {
 	t.Parallel()
 
 	root, a := twoSkillProject(t)
-	var events []progress.Event
-	if _, err := a.Install(sinkCtx(&events), app.InstallRequest{Root: root}); err != nil {
-		t.Fatalf("Install: %v", err)
+	// Break the targets so install re-materializes (a healthy chain
+	// short-circuits with no per-skill events).
+	for _, name := range []string{"alpha", "beta"} {
+		if err := os.RemoveAll(filepath.Join(root, ".gskill")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(filepath.Join(root, ".claude", "skills", name)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	assertStamped(t, events)
-}
-
-func TestInstallFrozen_StampsSkillAndCounter(t *testing.T) {
-	t.Parallel()
-
-	root, a := twoSkillProject(t)
 	var events []progress.Event
-	if _, err := a.Install(sinkCtx(&events), app.InstallRequest{Root: root, Frozen: true}); err != nil {
-		t.Fatalf("frozen Install: %v", err)
+	if _, err := a.InstallFromLock(sinkCtx(&events), app.InstallFromLockRequest{Root: root}); err != nil {
+		t.Fatalf("InstallFromLock: %v", err)
 	}
 	assertStamped(t, events)
 }

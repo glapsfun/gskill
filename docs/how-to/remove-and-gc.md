@@ -1,6 +1,6 @@
 # Remove a skill and reclaim space
 
-Uninstall a skill from your agents, drop it from the manifest and lockfile, and garbage-collect its
+Uninstall a skill from your agents, drop it from the lockfile, and garbage-collect its
 content from the store.
 
 ## Before you start

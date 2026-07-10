@@ -15,7 +15,7 @@ and exiting `6` on any difference.
 
 When verification or integrity checks fail, GSKILL **fails closed**: it stops with a non-zero exit and
 a clear diagnostic, rather than partially installing or falling back to an unverified source. The same
-discipline applies to the manifest/lockfile relationship — when they disagree, GSKILL reports it (and
+discipline applies to the lockfile itself — when recorded facts and content disagree, GSKILL reports it (and
 `--frozen-lockfile` exits `4`) instead of silently "fixing" things.
 
 This is the difference between a package manager and a download script: a download script fetches files

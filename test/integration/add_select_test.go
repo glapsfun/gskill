@@ -156,7 +156,7 @@ func TestAddSelect_AtomicOnCollision(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "add", src, "--skill", "code-review"); code != 0 {
 		t.Fatalf("first add: %s", stderr)
 	}
-	manifestBefore := readFile(t, filepath.Join(proj, "gskill.toml"))
+	lockBefore := readFile(t, filepath.Join(proj, "skills-lock.json"))
 
 	// Now add writing + code-review together: code-review collides (no --force).
 	_, _, code := runGskill(t, proj, "add", src, "--skill", "writing", "--skill", "code-review")
@@ -170,8 +170,8 @@ func TestAddSelect_AtomicOnCollision(t *testing.T) {
 			t.Error("writing was installed despite the batch failing (not atomic)")
 		}
 	}
-	if manifestAfter := readFile(t, filepath.Join(proj, "gskill.toml")); string(manifestAfter) != string(manifestBefore) {
-		t.Error("manifest changed despite the failed batch")
+	if lockAfter := readFile(t, filepath.Join(proj, "skills-lock.json")); string(lockAfter) != string(lockBefore) {
+		t.Error("lock changed despite the failed batch")
 	}
 }
 

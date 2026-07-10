@@ -25,9 +25,12 @@ func TestOfflineRestore_WarmCacheSucceedsColdCacheFails(t *testing.T) {
 		t.Fatalf("offline restore with warm cache failed: %s", stderr)
 	}
 
-	// Clear the cache; an offline restore of an uncached commit fails (exit 5).
-	if err := os.RemoveAll(filepath.Join(proj, ".gskill", "cache")); err != nil {
-		t.Fatal(err)
+	// Wipe all local state (store + cache + installs); an offline restore with
+	// nothing local fails (exit 5).
+	for _, d := range []string{".gskill", ".agents", ".claude"} {
+		if err := os.RemoveAll(filepath.Join(proj, d)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	_, _, code := runGskill(t, proj, "--offline", "install", "--frozen-lockfile")
 	if code != 5 {

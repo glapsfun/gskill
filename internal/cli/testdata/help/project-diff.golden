@@ -1,6 +1,6 @@
 Usage: gskill project diff
 
-Show manifest/lock/disk differences.
+Show lock/disk differences.
 
 Examples:
 
