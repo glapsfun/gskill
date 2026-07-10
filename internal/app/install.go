@@ -16,6 +16,7 @@ import (
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/fsutil"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/lockfile"
 	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/progress"
@@ -956,6 +957,12 @@ func buildLockEntry(ref source.Ref, rev resolver.Revision, ireq installer.Reques
 		ContentHash:   result.ContentHash,
 		SkillFileHash: result.SkillFileHash,
 		MutableRef:    rev.MutableRef,
+	}
+	// Record the shared computedHash so the skills-lock.json entry stays
+	// consumable by external tooling (spec 012 FR-024). Best-effort: the
+	// gskill-canonical ContentHash above remains the verification anchor.
+	if compat, err := integrity.CompatHash(result.Skill.Dir); err == nil {
+		resolved.CompatHash = compat
 	}
 	if rev.RefKind == resolver.RefKindLocal {
 		resolved.LocalPathHash = result.ContentHash

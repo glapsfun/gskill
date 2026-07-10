@@ -397,3 +397,160 @@ func TestInstallFromLock_MissingLock(t *testing.T) {
 		t.Errorf("error %v should name the missing file", err)
 	}
 }
+
+// ---- US2: non-interactive behavior matrix (T025, research R4) ----------------
+
+// TestInstallFromLock_NoAgentsAnywhere: nothing selected, nothing recorded →
+// fail fast with usage guidance (FR-014), never prompt.
+func TestInstallFromLock_NoAgentsAnywhere(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+
+	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{Root: root})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+	if !strings.Contains(err.Error(), "agent") {
+		t.Errorf("error %v should mention agents", err)
+	}
+}
+
+// TestInstallFromLock_RecordedDefaultAgents: manifest defaults satisfy the
+// agent requirement without flags (restore path, US5 groundwork).
+func TestInstallFromLock_RecordedDefaultAgents(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	pre := manifest.New()
+	pre.Defaults.Agents = []string{testAgent}
+	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{Root: root})
+	if err != nil {
+		t.Fatalf("InstallFromLock: %v", err)
+	}
+	if len(res.Agents) != 1 || res.Agents[0] != testAgent {
+		t.Errorf("Agents = %v, want recorded default", res.Agents)
+	}
+	assertAgentTargets(t, root, "alpha", "beta")
+}
+
+// TestInstallFromLock_UnknownAgent: a clear unsupported-agent failure (exit 9
+// at the CLI), listing nothing half-installed.
+func TestInstallFromLock_UnknownAgent(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+
+	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root:   root,
+		Agents: []string{"not-an-agent"},
+	})
+	if !errors.Is(err, errs.ErrUnsupportedAgent) {
+		t.Fatalf("err = %v, want ErrUnsupportedAgent", err)
+	}
+}
+
+// ---- US2: frozen and force semantics (T027, FR-018/FR-018a) ------------------
+
+// TestInstallFromLock_FrozenNeverWritesLock: a frozen restore leaves the lock
+// byte-identical (SC-007) while still materializing content.
+func TestInstallFromLock_FrozenNeverWritesLock(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	before, err := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root:   root,
+		Agents: []string{testAgent},
+		Frozen: true,
+	})
+	if err != nil {
+		t.Fatalf("InstallFromLock frozen: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("frozen run modified the lock:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+	if len(res.Skills) != 2 {
+		t.Fatalf("Skills = %+v", res.Skills)
+	}
+	assertAgentTargets(t, root, "alpha", "beta")
+}
+
+// TestInstallFromLock_FrozenFailsClosedOnMismatch: hash drift under frozen
+// aborts that skill and never rewrites the lock — even with Force set.
+func TestInstallFromLock_FrozenFailsClosedOnMismatch(t *testing.T) {
+	t.Parallel()
+	repo, ha, _ := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, strings.Repeat("0", 64))
+	before, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+
+	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root:   root,
+		Agents: []string{testAgent},
+		Frozen: true,
+		Force:  true, // force must be inert under frozen
+	})
+	if !errors.Is(err, errs.ErrPartialInstall) && !errors.Is(err, errs.ErrIntegrity) {
+		t.Fatalf("err = %v, want integrity/partial failure", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if string(before) != string(after) {
+		t.Errorf("frozen failure modified the lock")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "."+testAgent, "skills", "beta")); statErr == nil {
+		t.Error("mismatched skill was activated under frozen")
+	}
+}
+
+// TestInstallFromLock_ForceAcceptsChangedContent (FR-018a): --force is the
+// only way to accept changed upstream content; it rewrites computedHash and
+// the gskill block.
+func TestInstallFromLock_ForceAcceptsChangedContent(t *testing.T) {
+	t.Parallel()
+	repo, ha, _ := lockRepo(t)
+	root := t.TempDir()
+	stale := strings.Repeat("0", 64)
+	writeLockOnly(t, root, repo, ha, stale) // beta records a stale hash
+
+	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root:   root,
+		Agents: []string{testAgent},
+		Force:  true,
+	})
+	if err != nil {
+		t.Fatalf("InstallFromLock --force: %v", err)
+	}
+	for _, s := range res.Skills {
+		if s.Status != app.LockSkillInstalled {
+			t.Errorf("%s status = %q (%v)", s.Name, s.Status, s.Err)
+		}
+	}
+	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := l.Entry("beta")
+	if e.ComputedHash == stale || len(e.ComputedHash) != 64 {
+		t.Errorf("beta computedHash = %q, want rewritten to actual content hash", e.ComputedHash)
+	}
+	if e.Ext == nil {
+		t.Error("beta gskill block missing after force install")
+	}
+}

@@ -79,3 +79,9 @@ func (p *project) manifestExists() bool {
 	_, err := os.Stat(p.manifestPath)
 	return err == nil
 }
+
+// ManifestExists reports whether root holds a gskill.toml (used by the CLI to
+// route between the lock-first and manifest-driven install paths, spec 012).
+func (a *App) ManifestExists(root string) bool {
+	return openProject(root).manifestExists()
+}

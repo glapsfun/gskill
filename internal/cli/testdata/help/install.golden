@@ -5,6 +5,7 @@ Install all declared skills (additive, idempotent).
 Examples:
 
     gskill install
+    gskill install --agent claude,codex
     gskill install --frozen-lockfile
     gskill install --global --copy
 
@@ -21,8 +22,16 @@ Flags:
   -v, --verbose            Enable verbose diagnostics.
   -C, --dir=STRING         Run as if gskill started in this directory.
 
+      --agent=AGENT,...    Target agent(s); repeatable or comma-separated (spec
+                           012 FR-012).
       --global             Install into the user-global location.
       --project            Install into the project (default).
-      --copy               Copy instead of symlinking.
+      --copy               Copy instead of symlinking (deprecated alias for
+                           --install-mode copy).
+      --install-mode=auto|symlink|copy
+                           How skills are placed into agent directories.
+      --force              Accept changed upstream content: reinstall and
+                           rewrite the recorded computedHash.
+      --no-init            Never auto-initialize the project; fail instead.
       --frozen-lockfile    Restore exactly from the lockfile; never modify it.
       --update-lockfile    Allow the lockfile to be rewritten.
