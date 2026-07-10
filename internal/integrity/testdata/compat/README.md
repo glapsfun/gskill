@@ -1,28 +1,24 @@
 # Compat-hash fixture corpus
 
-Each fixture directory under this folder is a skill directory paired with an
-`expected.json` recording the `computedHash` the external lock producer
-(`npx skills`, the `vercel-labs/skills` CLI) computes for it:
+Pins `integrity.CompatHash` to the external lock producer's `computedHash`
+(the `npx skills` CLI, `vercel-labs/skills`). Layout:
 
-```json
-{"computedHash": "<64-char lowercase hex sha256>", "recordedWith": "skills@<version>"}
-```
+- `fixtures/<name>/` — one skill directory per case: `basic`, `crlf`,
+  `binary`, `hidden`, `excluded` (`.git`/`node_modules` skipped), `executable`,
+  `case-order` and `unicode` (exercise the locale-aware sort where byte order
+  and `localeCompare` disagree).
+- `expected/<name>.json` — the recorded reference hash:
+  `{"computedHash": "…", "recordedWith": "…", "node": "…"}`.
+- `generate.mjs` — regenerates `expected/`. Its `computeSkillFolderHash` /
+  `collectFiles` are copied VERBATIM from `vercel-labs/skills`
+  `src/local-lock.ts` @ commit `4ce6d48`; never edit them independently of
+  upstream. Run `node generate.mjs` from this directory (one-time; results are
+  committed, CI never needs Node).
+- `.gitattributes` (`* -text`) keeps git from normalizing the CRLF/binary
+  fixtures.
 
-How fixtures are produced (one-time, results committed — CI never needs Node):
-
-1. Create the fixture skill directory (must contain a `SKILL.md`).
-2. Run the real tool against it and capture the hash it writes to
-   `skills-lock.json` (e.g. add the skill from a local/test repo, or invoke the
-   tool's hashing entry point directly).
-3. Record the hash and tool version in `expected.json` next to the fixture.
-
-`TestCompatHashParity` (internal/integrity/compathash_test.go) walks every
-fixture and asserts `integrity.CompatHash(dir)` matches `expected.json`.
-Per spec 012 (FR-025), gskill must not claim `computedHash` compatibility
-until this parity suite is green against tool-recorded values.
-
-Notes:
-
-- Git cannot track empty directories; the empty-dir case is created by the
-  test at runtime, not stored here.
-- Keep fixtures small and deterministic (no timestamps, no generated data).
+`TestCompatHashParity` (../../compathash_test.go) asserts parity for every
+fixture; per spec 012 (FR-025) gskill must not claim `computedHash`
+compatibility unless it is green. Cases git cannot represent (empty dirs,
+symlinks) are built at runtime by the sibling tests instead of being stored
+here.
