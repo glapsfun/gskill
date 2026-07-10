@@ -183,12 +183,12 @@ func TestInitAddInstall_RoundTripAndIdempotent(t *testing.T) {
 		t.Errorf("manifest missing skill entry:\n%s", manifestBytes)
 	}
 
-	lockBytes, err := os.ReadFile(filepath.Join(proj, "gskill.lock")) //nolint:gosec // test-controlled path
+	lockBytes, err := os.ReadFile(filepath.Join(proj, "skills-lock.json")) //nolint:gosec // test-controlled path
 	if err != nil {
 		t.Fatal(err)
 	}
 	lockStr := string(lockBytes)
-	for _, want := range []string{`"ref_kind": "semver"`, `"version": "1.2.0"`, `"commit":`, `"content_hash":`, `"claude"`} {
+	for _, want := range []string{`"refKind": "semver"`, `"version": "1.2.0"`, `"commit":`, `"storeHash":`, `"claude"`} {
 		if !strings.Contains(lockStr, want) {
 			t.Errorf("lockfile missing %q:\n%s", want, lockStr)
 		}

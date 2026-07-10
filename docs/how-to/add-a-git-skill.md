@@ -28,7 +28,7 @@ gskill add github.com/<org>/<repo>/<skill> --commit <sha>
 ## Expected result
 
 - GSKILL resolves the source, fetches it, installs the skill, and records both intent (`gskill.toml`)
-  and resolved reality (`gskill.lock`) — including the exact commit and content hash.
+  and resolved reality (`skills-lock.json`) — including the exact commit and content hash.
 - A mutable reference (like a branch) is resolved to an immutable commit in the lock and flagged as
   mutable.
 - `gskill add` exits `0`. Adding a skill whose key already exists errors and points you to `update` or
@@ -38,4 +38,4 @@ gskill add github.com/<org>/<repo>/<skill> --commit <sha>
 
 - [Install a local skill](install-a-local-skill.md)
 - [Update and re-lock](update-and-lock.md)
-- [`gskill.lock` schema](../reference/lockfile-schema.md)
+- [`skills-lock.json` schema](../reference/lockfile-schema.md)

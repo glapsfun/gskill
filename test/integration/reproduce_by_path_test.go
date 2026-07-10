@@ -53,7 +53,7 @@ func TestReproduceByPath_DeepPath(t *testing.T) {
 	}
 
 	installedBefore := readFile(t, filepath.Join(proj, ".claude", "skills", "deep-skill", "SKILL.md"))
-	lockBefore := readFile(t, filepath.Join(proj, "gskill.lock"))
+	lockBefore := readFile(t, filepath.Join(proj, "skills-lock.json"))
 
 	// Clean checkout: drop state + installed content.
 	if err := os.RemoveAll(filepath.Join(proj, ".gskill")); err != nil {
@@ -66,7 +66,7 @@ func TestReproduceByPath_DeepPath(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "install", "--frozen-lockfile"); code != 0 {
 		t.Fatalf("frozen restore exit: %s", stderr)
 	}
-	if lockAfter := readFile(t, filepath.Join(proj, "gskill.lock")); !bytes.Equal(lockBefore, lockAfter) {
+	if lockAfter := readFile(t, filepath.Join(proj, "skills-lock.json")); !bytes.Equal(lockBefore, lockAfter) {
 		t.Error("frozen restore modified the lockfile")
 	}
 	installedAfter := readFile(t, filepath.Join(proj, ".claude", "skills", "deep-skill", "SKILL.md"))

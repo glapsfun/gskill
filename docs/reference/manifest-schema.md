@@ -49,6 +49,6 @@ install_mode = "symlink"            # optional: overrides defaults.install_mode
 
 ## See also
 
-- [`gskill.lock` schema](lockfile-schema.md) — the resolved, verified counterpart.
+- [`skills-lock.json` schema](lockfile-schema.md) — the resolved, verified counterpart.
 - [`SKILL.md` frontmatter schema](frontmatter-schema.md)
 - [The reproducibility model](../explanation/reproducibility-model.md)

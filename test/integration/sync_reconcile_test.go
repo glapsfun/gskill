@@ -37,14 +37,14 @@ func TestInstall_BackfillsIncompleteManifest(t *testing.T) {
 
 	// Idempotent: a second install changes neither file.
 	tomlBefore := readFile(t, filepath.Join(proj, "gskill.toml"))
-	lockBefore := readFile(t, filepath.Join(proj, "gskill.lock"))
+	lockBefore := readFile(t, filepath.Join(proj, "skills-lock.json"))
 	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
 		t.Fatalf("second install: %s", stderr)
 	}
 	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.toml")), tomlBefore) {
 		t.Error("manifest rewritten on idempotent re-install")
 	}
-	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.lock")), lockBefore) {
+	if !bytes.Equal(readFile(t, filepath.Join(proj, "skills-lock.json")), lockBefore) {
 		t.Error("lockfile rewritten on idempotent re-install")
 	}
 }
@@ -81,7 +81,7 @@ func TestSync_BackfillsLegacyManifestFromLock(t *testing.T) {
 
 	// Second sync is a byte-identical no-op.
 	tomlBefore := readFile(t, filepath.Join(proj, "gskill.toml"))
-	lockBefore := readFile(t, filepath.Join(proj, "gskill.lock"))
+	lockBefore := readFile(t, filepath.Join(proj, "skills-lock.json"))
 	stdout, stderr, code := runGskill(t, proj, "--json", "sync")
 	if code != 0 {
 		t.Fatalf("second sync: %s", stderr)
@@ -92,7 +92,7 @@ func TestSync_BackfillsLegacyManifestFromLock(t *testing.T) {
 	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.toml")), tomlBefore) {
 		t.Error("manifest rewritten on idempotent re-sync")
 	}
-	if !bytes.Equal(readFile(t, filepath.Join(proj, "gskill.lock")), lockBefore) {
+	if !bytes.Equal(readFile(t, filepath.Join(proj, "skills-lock.json")), lockBefore) {
 		t.Error("lockfile rewritten on idempotent re-sync")
 	}
 }
@@ -139,7 +139,7 @@ func TestSyncReconcile_ManifestDrivenInstall(t *testing.T) {
 	requireCounts(t, proj, 1, 1)
 	requireResolvesActive(t, proj, ".claude", "demo")
 	requireResolvesActive(t, proj, ".codex", "demo")
-	lock := string(readFile(t, filepath.Join(proj, "gskill.lock")))
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 	if !strings.Contains(lock, ".agents/skills/demo") {
 		t.Errorf("lockfile missing active_path:\n%s", lock)
 	}
@@ -160,7 +160,7 @@ func TestSyncReconcile_Idempotent(t *testing.T) {
 		t.Fatalf("first sync: %s", stderr)
 	}
 
-	lockPath := filepath.Join(proj, "gskill.lock")
+	lockPath := filepath.Join(proj, "skills-lock.json")
 	before := dirMTime(t, lockPath)
 
 	stdout, stderr, code := runGskill(t, proj, "--json", "sync")

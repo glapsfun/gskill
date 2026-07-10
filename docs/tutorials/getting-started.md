@@ -42,7 +42,7 @@ gskill add ./path/to/a/skill        # a folder containing SKILL.md
 ```
 
 **Expected:** GSKILL resolves the source, installs the skill into `.claude/skills/<name>/`, records
-**intent** in `gskill.toml`, and records **resolved reality** in `gskill.lock`. You'll see
+**intent** in `gskill.toml`, and records **resolved reality** in `skills-lock.json`. You'll see
 `Added <name> (<content-hash>) into 1 agent(s)`.
 
 ## Step 4 — Inspect what you have
@@ -59,11 +59,11 @@ JSON object on stdout — handy for scripts (see [Script with --json](../how-to/
 
 ```bash
 git init
-git add gskill.toml gskill.lock
+git add gskill.toml skills-lock.json
 git commit -m "Add first skill via gskill"
 ```
 
-**Expected:** both files are committed. `gskill.toml` is human-editable intent; `gskill.lock` is the
+**Expected:** both files are committed. `gskill.toml` is human-editable intent; `skills-lock.json` is the
 machine-generated, deterministic record that makes restores reproducible. To understand why both
 exist, read [The reproducibility model](../explanation/reproducibility-model.md).
 
@@ -73,7 +73,7 @@ Simulate a fresh checkout, then restore **exactly** from the lockfile:
 
 ```bash
 rm -rf .gskill .claude/skills        # throw away installed state
-gskill install --frozen-lockfile     # restore precisely from gskill.lock
+gskill install --frozen-lockfile     # restore precisely from skills-lock.json
 ```
 
 **Expected:** GSKILL re-creates the identical skill files and exits `0`. `--frozen-lockfile` never
@@ -82,7 +82,7 @@ CI can trust it. Try [gating CI on drift](../how-to/gate-ci-on-drift.md) next.
 
 ## You did it 🎉
 
-You now have a committed `gskill.toml` + `gskill.lock` and a one-command reproducible restore.
+You now have a committed `gskill.toml` + `skills-lock.json` and a one-command reproducible restore.
 
 ### Next steps
 

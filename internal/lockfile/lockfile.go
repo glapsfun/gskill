@@ -62,6 +62,10 @@ type Resolved struct {
 	SkillFileHash string `json:"skill_file_hash,omitempty"`
 	MutableRef    bool   `json:"mutable_ref"`
 	LocalPathHash string `json:"local_path_hash,omitempty"`
+	// CompatHash is the npx-skills-compatible computedHash (spec 012). It is
+	// carried in memory only: the shared skills-lock.json persists it as the
+	// core computedHash field, never this legacy format.
+	CompatHash string `json:"-"`
 }
 
 // Metadata is the captured SKILL.md frontmatter.

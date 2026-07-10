@@ -20,7 +20,7 @@ func TestUpdate_AdvancesLockWithinConstraint(t *testing.T) {
 		t.Fatalf("add: %s", stderr)
 	}
 
-	lock := string(readFile(t, filepath.Join(proj, "gskill.lock")))
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 	if !strings.Contains(lock, `"version": "1.0.0"`) {
 		t.Fatalf("initial lock not at 1.0.0:\n%s", lock)
 	}
@@ -38,7 +38,7 @@ func TestUpdate_AdvancesLockWithinConstraint(t *testing.T) {
 		t.Fatalf("update: %s", stderr)
 	}
 
-	lock = string(readFile(t, filepath.Join(proj, "gskill.lock")))
+	lock = string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 	if !strings.Contains(lock, `"version": "1.1.0"`) {
 		t.Errorf("lock did not advance to 1.1.0:\n%s", lock)
 	}

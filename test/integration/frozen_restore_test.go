@@ -20,7 +20,7 @@ func TestFrozenRestore_CleanCheckoutMatchesLockAndIsByteIdentical(t *testing.T) 
 		t.Fatalf("add: %s", stderr)
 	}
 
-	lockBefore := readFile(t, filepath.Join(proj, "gskill.lock"))
+	lockBefore := readFile(t, filepath.Join(proj, "skills-lock.json"))
 	installedBefore := readFile(t, filepath.Join(proj, ".claude", "skills", "demo", "SKILL.md"))
 
 	// Simulate a clean checkout: drop the state dir and installed content.
@@ -36,7 +36,7 @@ func TestFrozenRestore_CleanCheckoutMatchesLockAndIsByteIdentical(t *testing.T) 
 	}
 
 	// Lock is not modified by a frozen restore (SC-002).
-	if lockAfter := readFile(t, filepath.Join(proj, "gskill.lock")); !bytes.Equal(lockBefore, lockAfter) {
+	if lockAfter := readFile(t, filepath.Join(proj, "skills-lock.json")); !bytes.Equal(lockBefore, lockAfter) {
 		t.Errorf("frozen restore modified the lockfile")
 	}
 	// Installed content matches the original byte-for-byte (SC-001).

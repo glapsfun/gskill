@@ -59,11 +59,7 @@ func (a *App) Outdated(ctx context.Context, root string) (OutdatedReport, error)
 // Update re-resolves the named skills (or all when names is empty) to the newest
 // version within their constraints and rewrites the lockfile (FR-009).
 func (a *App) Update(ctx context.Context, root string, names []string) (InstallResult, error) {
-	p := openProject(root)
-	if !p.manifestExists() {
-		return InstallResult{}, errNoManifest()
-	}
-	m, err := manifest.Load(p.manifestPath)
+	p, m, err := a.openMigratedProject(ctx, root)
 	if err != nil {
 		return InstallResult{}, err
 	}
@@ -99,7 +95,7 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 			out.Skills = append(out.Skills, change)
 			out.Changed = out.Changed || change.Changed
 		}
-		if err := lockfile.Save(p.lockPath, lf); err != nil {
+		if err := saveLock(p.lockPath, lf); err != nil {
 			return err
 		}
 		if manifestChanged {
@@ -116,6 +112,9 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 // Lock recomputes the lockfile from the manifest, honoring existing pins without
 // bumping skills whose declaration is unchanged.
 func (a *App) Lock(ctx context.Context, root string) (InstallResult, error) {
+	if err := a.maybeMigrate(ctx, root); err != nil {
+		return InstallResult{}, err
+	}
 	p := openProject(root)
 	if !p.manifestExists() {
 		return InstallResult{}, errNoManifest()
@@ -151,7 +150,7 @@ func (a *App) Lock(ctx context.Context, root string) (InstallResult, error) {
 			out.Skills = append(out.Skills, change)
 			out.Changed = true
 		}
-		if err := lockfile.Save(p.lockPath, next); err != nil {
+		if err := saveLock(p.lockPath, next); err != nil {
 			return err
 		}
 		if manifestChanged {
@@ -175,6 +174,9 @@ type RemoveResult struct {
 // Remove uninstalls the named skills from the manifest, lockfile, and every
 // agent directory, then garbage-collects unreferenced store entries.
 func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveResult, error) {
+	if err := a.maybeMigrate(ctx, root); err != nil {
+		return RemoveResult{}, err
+	}
 	p := openProject(root)
 	if !p.manifestExists() {
 		return RemoveResult{}, errNoManifest()
@@ -197,7 +199,7 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 		if saveErr := manifest.Save(p.manifestPath, m); saveErr != nil {
 			return saveErr
 		}
-		if saveErr := lockfile.Save(p.lockPath, lf); saveErr != nil {
+		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
 			return saveErr
 		}
 

@@ -30,7 +30,7 @@ func TestRemove_ClearsManifestLockAgentDirsAndGCsStore(t *testing.T) {
 		t.Errorf("manifest still references demo:\n%s", m)
 	}
 	// Lockfile no longer locks it.
-	if l := string(readFile(t, filepath.Join(proj, "gskill.lock"))); strings.Contains(l, "demo") {
+	if l := string(readFile(t, filepath.Join(proj, "skills-lock.json"))); strings.Contains(l, "demo") {
 		t.Errorf("lockfile still references demo:\n%s", l)
 	}
 	// Agent dir is gone.

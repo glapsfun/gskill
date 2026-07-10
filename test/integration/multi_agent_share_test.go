@@ -109,7 +109,7 @@ func TestMultiAgentShare_InstallOnceAddSecondAgent(t *testing.T) {
 	}
 	requireCounts(t, proj, 1, 1)
 	requireResolvesActive(t, proj, ".claude", "demo")
-	if lock := string(readFile(t, filepath.Join(proj, "gskill.lock"))); !strings.Contains(lock, ".agents/skills/demo") {
+	if lock := string(readFile(t, filepath.Join(proj, "skills-lock.json"))); !strings.Contains(lock, ".agents/skills/demo") {
 		t.Errorf("lockfile missing active_path:\n%s", lock)
 	}
 
@@ -203,7 +203,7 @@ func TestMultiAgentShare_CopyModeRecorded(t *testing.T) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		t.Error("--copy produced a symlink, want a copy")
 	}
-	lock := string(readFile(t, filepath.Join(proj, "gskill.lock")))
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 	if !strings.Contains(lock, `"copy"`) {
 		t.Errorf("lockfile does not record copy mode:\n%s", lock)
 	}

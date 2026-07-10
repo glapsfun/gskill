@@ -5,7 +5,7 @@ air-gapped CI, or whenever you want to guarantee no network calls.
 
 ## Before you start
 
-- A committed `gskill.lock`.
+- A committed `skills-lock.json`.
 - A **warm cache**: the content was fetched at least once on this machine (e.g. a previous
   `gskill add` or `gskill install`).
 

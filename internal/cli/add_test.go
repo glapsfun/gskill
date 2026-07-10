@@ -217,7 +217,7 @@ func TestAddDryRun_RendersPlanWritesNothing(t *testing.T) {
 	if strings.Contains(stdout, "Installed") {
 		t.Errorf("dry-run must not claim an install happened:\n%s", stdout)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "gskill.lock")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "skills-lock.json")); err == nil {
 		t.Error("dry-run wrote a lockfile")
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "alpha")); err == nil {

@@ -27,7 +27,7 @@ func TestLock_RecomputeHonorsPinsWithoutBumping(t *testing.T) {
 		t.Fatalf("lock: %s", stderr)
 	}
 
-	lock := string(readFile(t, filepath.Join(proj, "gskill.lock")))
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 	if !strings.Contains(lock, `"version": "1.0.0"`) {
 		t.Errorf("lock bumped the pinned version; want it to stay 1.0.0:\n%s", lock)
 	}

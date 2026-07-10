@@ -189,7 +189,7 @@ func TestAddBaseline_ListWritesNothing(t *testing.T) {
 	if string(manifestBefore) != string(manifestAfter) {
 		t.Error("add --list modified the manifest")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "gskill.lock")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "skills-lock.json")); err == nil {
 		t.Error("add --list created a lockfile")
 	}
 }

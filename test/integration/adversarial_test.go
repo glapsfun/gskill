@@ -11,7 +11,7 @@ import (
 // to simulate a malicious/malformed committed lockfile).
 func patchLock(t *testing.T, proj, old, replacement string) {
 	t.Helper()
-	path := filepath.Join(proj, "gskill.lock")
+	path := filepath.Join(proj, "skills-lock.json")
 	data := readFile(t, path)
 	patched := strings.Replace(string(data), old, replacement, 1)
 	if patched == string(data) {

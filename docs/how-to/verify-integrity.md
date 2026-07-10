@@ -3,13 +3,13 @@
 > `gskill project verify` is the canonical command; the former flat
 > `gskill verify` still works as a silent alias.
 
-Re-hash installed skill content and compare it against the checksums recorded in `gskill.lock`. Use
+Re-hash installed skill content and compare it against the checksums recorded in `skills-lock.json`. Use
 this to detect tampering or accidental edits to installed skills.
 
 ## Before you start
 
 - At least one installed skill (`gskill add ...` or `gskill install`).
-- A `gskill.lock` present.
+- A `skills-lock.json` present.
 
 ## Steps
 

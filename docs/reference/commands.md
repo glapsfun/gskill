@@ -140,9 +140,15 @@ Install all declared skills (additive, idempotent).
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--copy` | bool | Copy instead of symlinking. |
+| `--agent` | []string | Target agent(s); repeatable or comma-separated (spec 012 FR-012). |
+| `--copy` | bool | Copy instead of symlinking (deprecated alias for --install-mode copy). |
+| `--force` | bool | Accept changed upstream content: reinstall and rewrite the recorded computedHash. |
 | `--frozen-lockfile` | bool | Restore exactly from the lockfile; never modify it. |
 | `--global` | bool | Install into the user-global location. |
+| `--install-mode` | string | How skills are placed into agent directories. |
+| `--no-init` | bool | Never auto-initialize the project; fail instead. |
+| `--prefer-lock` | bool | On a gskill.toml/skills-lock.json disagreement, the lock wins (manifest declarations are rewritten). |
+| `--prefer-manifest` | bool | On a gskill.toml/skills-lock.json disagreement, the manifest wins (lock entries are rewritten). |
 | `--project` | bool | Install into the project (default). |
 | `--update-lockfile` | bool | Allow the lockfile to be rewritten. |
 
@@ -150,6 +156,16 @@ Install all declared skills (additive, idempotent).
 ## `list`
 
 List installed skills and their status.
+
+
+## `migrate`
+
+One-way format migrations (gskill.lock -> skills-lock.json).
+
+
+## `migrate lockfile`
+
+Convert a legacy gskill.lock into skills-lock.json (backs up the original).
 
 
 ## `onboard`

@@ -4,7 +4,7 @@ Advance skills to newer versions within their declared constraints, and recomput
 
 ## Before you start
 
-- A committed `gskill.toml` and `gskill.lock`.
+- A committed `gskill.toml` and `skills-lock.json`.
 
 ## Update within constraints
 
@@ -15,7 +15,7 @@ gskill update <name>     # advance only one skill
 ```
 
 **Expected:** GSKILL resolves newer versions allowed by each skill's constraint, re-installs them, and
-rewrites `gskill.lock`. Commit the updated lockfile.
+rewrites `skills-lock.json`. Commit the updated lockfile.
 
 ## Re-lock without bumping versions
 
@@ -29,7 +29,7 @@ after hand-editing `gskill.toml`. It does not bump pins.
 ## Expected result
 
 - `gskill update` may change resolved versions; `gskill project lock` never does.
-- Both produce a deterministic `gskill.lock`. Review the diff before committing — the lockfile diff
+- Both produce a deterministic `skills-lock.json`. Review the diff before committing — the lockfile diff
   should match your intent.
 
 ## See also

@@ -54,6 +54,9 @@ PROJECT (manifest · lockfile · installed state)
   project <command> [flags]
     Manage this project's manifest, lockfile, and installed state.
 
+  migrate <command> [flags]
+    One-way format migrations (gskill.lock -> skills-lock.json).
+
 MORE
   source <command> [flags]
     Inspect a skill source (list/inspect/check) without installing.

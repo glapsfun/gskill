@@ -21,6 +21,7 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	golang.org/x/term v0.44.0
+	golang.org/x/text v0.30.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -66,5 +67,4 @@ require (
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.30.0 // indirect
 )

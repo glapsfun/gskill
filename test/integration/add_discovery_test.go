@@ -113,7 +113,7 @@ func TestAddSingleSkill_AnywhereRecordsPath(t *testing.T) {
 			}
 
 			// Lockfile records the same in-repo path.
-			lock := string(readFile(t, filepath.Join(proj, "gskill.lock")))
+			lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 			if c.wantPath != "" && !strings.Contains(lock, c.wantPath) {
 				t.Errorf("lockfile missing path %q:\n%s", c.wantPath, lock)
 			}

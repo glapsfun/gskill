@@ -53,7 +53,7 @@ func TestE2E_SyncFromManifest(t *testing.T) {
 	}
 
 	tomlBefore := readManifest(t, proj)
-	lockBefore, err := os.ReadFile(filepath.Join(proj, "gskill.lock")) //nolint:gosec // test path
+	lockBefore, err := os.ReadFile(filepath.Join(proj, "skills-lock.json")) //nolint:gosec // test path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestE2E_SyncFromManifest(t *testing.T) {
 	if readManifest(t, proj) != tomlBefore {
 		t.Error("manifest rewritten on idempotent re-sync")
 	}
-	lockAfter, err := os.ReadFile(filepath.Join(proj, "gskill.lock")) //nolint:gosec // test path
+	lockAfter, err := os.ReadFile(filepath.Join(proj, "skills-lock.json")) //nolint:gosec // test path
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestE2E_InstallFromManifest(t *testing.T) {
 	}
 	assertChain(t, proj, "helm", "claude")
 
-	lock, err := os.ReadFile(filepath.Join(proj, "gskill.lock")) //nolint:gosec // test path
+	lock, err := os.ReadFile(filepath.Join(proj, "skills-lock.json")) //nolint:gosec // test path
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,11 +1,11 @@
 # Reproduce exactly with `--frozen-lockfile`
 
-Restore a byte-identical skill environment from a committed `gskill.lock`, with a guarantee that the
+Restore a byte-identical skill environment from a committed `skills-lock.json`, with a guarantee that the
 lockfile is never modified. This is the command CI and teammates should use.
 
 ## Before you start
 
-- A committed `gskill.toml` and `gskill.lock` (see the [tutorial](../tutorials/getting-started.md)).
+- A committed `gskill.toml` and `skills-lock.json` (see the [tutorial](../tutorials/getting-started.md)).
 - The project checked out (the lockfile present at the project root).
 
 ## Steps
@@ -18,7 +18,7 @@ gskill install --frozen-lockfile
 ## Expected result
 
 - GSKILL re-materialises exactly what the lockfile records and exits `0`.
-- The lockfile is **not** rewritten — a frozen restore is read-only with respect to `gskill.lock`.
+- The lockfile is **not** rewritten — a frozen restore is read-only with respect to `skills-lock.json`.
 - If the manifest and lockfile disagree (or a resolved artifact no longer matches its recorded
   checksum), the command **fails closed**: it exits **`4`** (lockfile mismatch) and modifies **zero**
   agent directories.

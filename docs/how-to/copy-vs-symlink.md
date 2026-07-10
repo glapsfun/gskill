@@ -26,7 +26,7 @@ gskill add ./skill --copy        # write a real copy into the agent dir
 - With `--symlink`, the agent's `skills/<name>` entry points into the store; verification still detects
   tampering because writes go through to the store content.
 - With `--copy`, a full copy is written into the agent directory.
-- Either way, `gskill.lock` records the install mode so restores are reproducible.
+- Either way, `skills-lock.json` records the install mode so restores are reproducible.
 
 ## See also
 

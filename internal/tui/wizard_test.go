@@ -1178,7 +1178,7 @@ func TestWizard_EndToEndAgainstRealApp(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "alpha", "SKILL.md")); err != nil {
 		t.Errorf("skill not installed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "gskill.lock")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "skills-lock.json")); err != nil {
 		t.Errorf("lockfile not written: %v", err)
 	}
 }
@@ -1210,7 +1210,7 @@ func TestWizard_CancelAgainstRealAppWritesNothing(t *testing.T) {
 	if string(manifestBefore) != string(manifestAfter) {
 		t.Error("cancel changed the manifest (SC-002)")
 	}
-	if _, err := os.Stat(filepath.Join(root, "gskill.lock")); err == nil {
+	if _, err := os.Stat(filepath.Join(root, "skills-lock.json")); err == nil {
 		t.Error("cancel left a lockfile behind (SC-002)")
 	}
 	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "alpha")); err == nil {

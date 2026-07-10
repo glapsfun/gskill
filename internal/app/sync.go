@@ -47,6 +47,9 @@ type SyncResult struct {
 // targets and active entries the manifest no longer declares; without Prune it
 // reports such orphans instead of deleting them (FR-013).
 func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
+	if err := a.maybeMigrate(ctx, req.Root); err != nil {
+		return SyncResult{}, err
+	}
 	p := openProject(req.Root)
 	if !p.manifestExists() {
 		return SyncResult{}, errNoManifest()
@@ -98,7 +101,7 @@ func (a *App) reconcile(ctx context.Context, p *project, m *manifest.Manifest, r
 
 	out.UpToDate = !lockChanged && !manifestChanged && noChanges(out.Reconciled)
 	if lockChanged {
-		if err := lockfile.Save(p.lockPath, lf); err != nil {
+		if err := saveLock(p.lockPath, lf); err != nil {
 			return SyncResult{}, err
 		}
 	}

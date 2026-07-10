@@ -29,10 +29,10 @@ gskill project diff              # all skills
 gskill project diff <name>       # one skill
 ```
 
-**Expected:** the differences between `gskill.toml` (intent), `gskill.lock` (reality), and what's
+**Expected:** the differences between `gskill.toml` (intent), `skills-lock.json` (reality), and what's
 actually installed — so you can see exactly what a `sync`, `update`, or `install` would change.
 
 ## See also
 
 - [Sync and repair](sync-and-repair.md)
-- [`gskill.lock` schema](../reference/lockfile-schema.md)
+- [`skills-lock.json` schema](../reference/lockfile-schema.md)
