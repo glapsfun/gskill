@@ -554,3 +554,108 @@ func TestInstallFromLock_ForceAcceptsChangedContent(t *testing.T) {
 		t.Error("beta gskill block missing after force install")
 	}
 }
+
+// ---- US5: idempotency, repair, offline (T042/T043, FR-017) -------------------
+
+// TestInstallFromLock_SecondRunIsNoOp (SC-005): everything installed and
+// matching → no work, lock byte-identical, success.
+func TestInstallFromLock_SecondRunIsNoOp(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := runLockInstall(t, root)
+	if err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	if res.Changed {
+		t.Error("Changed = true on a no-op re-install")
+	}
+	for _, s := range res.Skills {
+		if s.Status != app.LockSkillUpToDate {
+			t.Errorf("%s status = %q, want up-to-date", s.Name, s.Status)
+		}
+	}
+	after, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if string(before) != string(after) {
+		t.Errorf("no-op re-install changed the lock:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
+// TestInstallFromLock_RepairsMissingLink (US5): a deleted agent target is
+// recreated from the store without touching anything else.
+func TestInstallFromLock_RepairsMissingLink(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "."+testAgent, "skills", "alpha")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := runLockInstall(t, root)
+	if err != nil {
+		t.Fatalf("repair run: %v", err)
+	}
+	statuses := map[string]string{}
+	for _, s := range res.Skills {
+		statuses[s.Name] = s.Status
+	}
+	if statuses["alpha"] != app.LockSkillRepaired {
+		t.Errorf("alpha status = %q, want repaired", statuses["alpha"])
+	}
+	if statuses["beta"] != app.LockSkillUpToDate {
+		t.Errorf("beta status = %q, want up-to-date", statuses["beta"])
+	}
+	assertAgentTargets(t, root, "alpha", "beta")
+}
+
+// TestInstallFromLock_OfflineRestoresFromStore (US5): with the store
+// populated, --offline restores without any source access; with an empty
+// store it fails with a source-unavailable diagnostic.
+func TestInstallFromLock_OfflineRestoresFromStore(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	// Wipe the agent layer, keep the store; offline must restore it.
+	if err := os.RemoveAll(filepath.Join(root, "."+testAgent)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent}, Offline: true,
+	}); err != nil {
+		t.Fatalf("offline restore: %v", err)
+	}
+	assertAgentTargets(t, root, "alpha", "beta")
+}
+
+// TestInstallFromLock_OfflineEmptyStoreFails (US5): nothing cached and no
+// network allowed → clear failure.
+func TestInstallFromLock_OfflineEmptyStoreFails(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+
+	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent}, Offline: true,
+	})
+	if err == nil {
+		t.Fatal("offline install with an empty store should fail")
+	}
+}

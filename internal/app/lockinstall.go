@@ -126,7 +126,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, m *manifest
 	if err != nil {
 		return err
 	}
-	var failures, successes int
+	var failures, healthy int
 	var firstErr error
 	for _, name := range sortedLockNames(l) {
 		e, _ := l.Entry(name)
@@ -138,9 +138,11 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, m *manifest
 			if firstErr == nil {
 				firstErr = r.Err
 			}
-		case r.Status == LockSkillInstalled || r.Status == LockSkillRepaired:
-			successes++
-			res.Changed = true
+		default:
+			healthy++
+			if r.Status == LockSkillInstalled || r.Status == LockSkillRepaired {
+				res.Changed = true
+			}
 		}
 	}
 	if !req.DryRun && !req.Frozen {
@@ -149,9 +151,9 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, m *manifest
 		}
 	}
 	switch {
-	case failures > 0 && successes > 0:
+	case failures > 0 && healthy > 0:
 		return fmt.Errorf("%w: %d of %d skills failed",
-			errs.ErrPartialInstall, failures, failures+successes)
+			errs.ErrPartialInstall, failures, failures+healthy)
 	case failures > 0:
 		return firstErr
 	default:
@@ -323,6 +325,13 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 			errs.ErrInvalidManifest, e.SourceType))
 	}
 
+	// Idempotency fast path (FR-017): recorded state matches the lock and the
+	// store — skip downloads and store writes, repair only missing links, and
+	// leave the entry (and therefore the lock file) untouched.
+	if r2, handled := a.lockEntryUpToDate(ctx, p, lf, name, e, agents, req); handled {
+		return r2
+	}
+
 	ref, rev, err := a.resolveLockEntry(ctx, lf, name, e)
 	if err != nil {
 		return fail(err)
@@ -379,6 +388,48 @@ func (a *App) installLockEntry(ctx context.Context, p *project, m *manifest.Mani
 	r.Status = LockSkillInstalled
 	r.Err = nil
 	return r
+}
+
+// lockEntryUpToDate implements the no-op/repair fast path: when the entry's
+// recorded computedHash matches the lock, every requested agent is already
+// recorded, and the canonical content sits in the store, no resolution or
+// fetch happens. Intact targets short-circuit to up-to-date; missing targets
+// are relinked from the store only (US5). handled=false falls through to the
+// full pipeline.
+func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *lockfile.Lockfile, name string, e skillslock.Entry, agents []agent.Agent, req InstallFromLockRequest) (LockSkillResult, bool) {
+	prior, ok := lf.Skills[name]
+	if !ok || e.ComputedHash == "" || prior.Resolved.CompatHash != e.ComputedHash {
+		return LockSkillResult{}, false
+	}
+	ids := agentIDs(agents)
+	if len(subtract(ids, prior.Installation.Agents)) > 0 {
+		return LockSkillResult{}, false // new agents requested: full path
+	}
+	if !p.store.Has(prior.Resolved.ContentHash) {
+		return LockSkillResult{}, false
+	}
+
+	var missing []agent.Agent
+	for _, ag := range agents {
+		recorded, ok := prior.Installation.Targets[ag.ID()]
+		if !ok || !fileExists(resolveTarget(p.root, recorded)) {
+			missing = append(missing, ag)
+		}
+	}
+	r := LockSkillResult{Name: name, Source: e.Source, ComputedHash: e.ComputedHash, Status: LockSkillUpToDate}
+	if len(missing) == 0 || req.DryRun {
+		return r, true
+	}
+
+	result, err := a.reconcileFromLock(ctx, p, name, prior, missing,
+		SyncRequest{Root: p.root, Offline: req.Offline}, false)
+	if err != nil {
+		return LockSkillResult{}, false // repair failed: retry via the full path
+	}
+	mergeAgentInstall(&prior, result)
+	lf.Skills[name] = prior
+	r.Status = LockSkillRepaired
+	return r, true
 }
 
 // resolveLockEntry pins an entry to a revision: a previously recorded gskill
