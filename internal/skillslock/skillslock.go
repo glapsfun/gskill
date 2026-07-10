@@ -42,6 +42,7 @@ type Lock struct {
 // gskill). Unknown entry fields stay in the Lock and survive rewrites.
 type Entry struct {
 	Source       string
+	Ref          string // optional branch/tag used for installation (npx "ref")
 	SourceType   string
 	SkillPath    string
 	ComputedHash string
@@ -172,6 +173,7 @@ func (l *Lock) Entry(name string) (Entry, bool) {
 	}
 	var e Entry
 	e.Source = stringField(eo, "source")
+	e.Ref = stringField(eo, "ref")
 	e.SourceType = stringField(eo, "sourceType")
 	e.SkillPath = stringField(eo, "skillPath")
 	e.ComputedHash = stringField(eo, "computedHash")
@@ -184,9 +186,13 @@ func (l *Lock) Entry(name string) (Entry, bool) {
 	return e, true
 }
 
-// SetEntry creates or updates an entry's core fields (and extension block when
-// e.Ext is non-nil), preserving any fields it does not understand. New entries
-// are inserted in sorted order after the original ones.
+// SetEntry creates or updates an entry, preserving any fields it does not
+// understand. Core identity fields (source, ref, sourceType, skillPath) are
+// owned by whichever tool wrote them first: gskill fills them only when
+// absent and never rewrites them. computedHash is the shared verification
+// fact and is updated in place; the gskill extension block is always gskill's
+// to replace. New entries are inserted in sorted order after the original
+// ones.
 func (l *Lock) SetEntry(name string, e Entry) {
 	eo, ok := l.entries[name]
 	if !ok {
@@ -196,9 +202,10 @@ func (l *Lock) SetEntry(name string, e Entry) {
 		// slot fixes ordering.
 		l.skills.setSortedSuffix(name, nil)
 	}
-	setStringField(eo, "source", e.Source)
-	setStringField(eo, "sourceType", e.SourceType)
-	setStringField(eo, "skillPath", e.SkillPath)
+	setStringFieldIfAbsent(eo, "source", e.Source)
+	setStringFieldIfAbsent(eo, "ref", e.Ref)
+	setStringFieldIfAbsent(eo, "sourceType", e.SourceType)
+	setStringFieldIfAbsent(eo, "skillPath", e.SkillPath)
 	setStringField(eo, "computedHash", e.ComputedHash)
 	if e.Ext != nil {
 		raw, err := marshalRaw(e.Ext)
@@ -294,4 +301,14 @@ func setStringField(o *object, key, val string) {
 		return
 	}
 	o.set(key, raw)
+}
+
+// setStringFieldIfAbsent writes a string-valued key only when it is not
+// already present, so a rewrite never repurposes a core field another tool
+// recorded.
+func setStringFieldIfAbsent(o *object, key, val string) {
+	if o.has(key) {
+		return
+	}
+	setStringField(o, key, val)
 }

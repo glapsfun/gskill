@@ -16,6 +16,10 @@ const skillFileName = "SKILL.md"
 // lives nested under gskill.state so the top of the extension block stays the
 // small, documented interop surface.
 type ExtState struct {
+	// SourceKind is gskill's resolved source type (e.g. a "local" entry whose
+	// path is a git repo resolves as "git"); the entry's core sourceType stays
+	// whatever the external tool wrote.
+	SourceKind     string `json:"sourceKind,omitempty"`
 	SourceOriginal string `json:"sourceOriginal,omitempty"`
 	SourceOwner    string `json:"sourceOwner,omitempty"`
 	SourceRepo     string `json:"sourceRepo,omitempty"`
@@ -81,6 +85,7 @@ func FromLegacy(ls lockfile.LockedSkill) Entry {
 		InstalledAt:   ls.Provenance.FetchedAt,
 		UpdatedAt:     ls.Provenance.UpdatedAt,
 		State: &ExtState{
+			SourceKind:          ls.Source.Type,
 			SourceOriginal:      ls.Source.Original,
 			SourceOwner:         ls.Source.Owner,
 			SourceRepo:          ls.Source.Repo,
@@ -108,7 +113,14 @@ func FromLegacy(ls lockfile.LockedSkill) Entry {
 			Trust:               ls.Provenance.Trust,
 		},
 	}
-	return Entry{Source: src, SourceType: ls.Source.Type, SkillPath: skillPath, Ext: ext}
+	return Entry{
+		Source:       src,
+		Ref:          ls.Requested.Ref,
+		SourceType:   ls.Source.Type,
+		SkillPath:    skillPath,
+		ComputedHash: ls.Resolved.CompatHash,
+		Ext:          ext,
+	}
 }
 
 // ToLegacy reconstructs the in-memory legacy record from a shared-format
@@ -145,10 +157,14 @@ func ToLegacy(name string, e Entry) lockfile.LockedSkill {
 	if metaName == "" {
 		metaName = name
 	}
+	srcType := st.SourceKind
+	if srcType == "" {
+		srcType = e.SourceType
+	}
 
 	return lockfile.LockedSkill{
 		Source: lockfile.Source{
-			Type:     e.SourceType,
+			Type:     srcType,
 			Original: original,
 			URL:      ext.SourceURL,
 			Owner:    owner,
@@ -169,6 +185,7 @@ func ToLegacy(name string, e Entry) lockfile.LockedSkill {
 			SkillFileHash: ext.SkillFileHash,
 			MutableRef:    st.MutableRef,
 			LocalPathHash: st.LocalPathHash,
+			CompatHash:    e.ComputedHash,
 		},
 		Metadata: lockfile.Metadata{
 			Name: metaName, Description: st.MetaDescription,
