@@ -306,7 +306,7 @@ func TestPlanInstall_CopyModeReonboardIsUpdateNotConflict(t *testing.T) {
 	if _, err := a.Add(ctx, app.AddRequest{Root: root, Source: src, Mode: "copy"}); err != nil {
 		t.Fatalf("seed Add: %v", err)
 	}
-	for _, f := range []string{"gskill.toml", "gskill.lock"} {
+	for _, f := range []string{"gskill.toml", "skills-lock.json"} {
 		if err := os.Remove(filepath.Join(root, f)); err != nil {
 			t.Fatal(err)
 		}

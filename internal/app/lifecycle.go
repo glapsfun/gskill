@@ -99,7 +99,7 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 			out.Skills = append(out.Skills, change)
 			out.Changed = out.Changed || change.Changed
 		}
-		if err := lockfile.Save(p.lockPath, lf); err != nil {
+		if err := saveLock(p.lockPath, lf); err != nil {
 			return err
 		}
 		if manifestChanged {
@@ -151,7 +151,7 @@ func (a *App) Lock(ctx context.Context, root string) (InstallResult, error) {
 			out.Skills = append(out.Skills, change)
 			out.Changed = true
 		}
-		if err := lockfile.Save(p.lockPath, next); err != nil {
+		if err := saveLock(p.lockPath, next); err != nil {
 			return err
 		}
 		if manifestChanged {
@@ -197,7 +197,7 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 		if saveErr := manifest.Save(p.manifestPath, m); saveErr != nil {
 			return saveErr
 		}
-		if saveErr := lockfile.Save(p.lockPath, lf); saveErr != nil {
+		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
 			return saveErr
 		}
 

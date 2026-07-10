@@ -33,7 +33,7 @@ func TestMultiAgent_OneAddInstallsIntoAllDetected(t *testing.T) {
 		}
 	}
 
-	lock := string(readFile(t, filepath.Join(proj, "gskill.lock")))
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 	for _, id := range []string{"claude", "codex"} {
 		if !strings.Contains(lock, id) {
 			t.Errorf("lock targets missing %q:\n%s", id, lock)

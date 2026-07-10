@@ -120,7 +120,7 @@ func (a *App) saveUnlink(p *project, m *manifest.Manifest, lf *lockfile.Lockfile
 	if err := manifest.Save(p.manifestPath, m); err != nil {
 		return err
 	}
-	if err := lockfile.Save(p.lockPath, lf); err != nil {
+	if err := saveLock(p.lockPath, lf); err != nil {
 		return err
 	}
 	if gc {

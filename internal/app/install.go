@@ -21,6 +21,7 @@ import (
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/selection"
+	"github.com/glapsfun/gskill/internal/skillslock"
 	"github.com/glapsfun/gskill/internal/source"
 )
 
@@ -239,7 +240,7 @@ func (a *App) materializeLocalAgentAdd(ctx context.Context, p *project, m *manif
 		if saveErr := manifest.Save(p.manifestPath, m); saveErr != nil {
 			return saveErr
 		}
-		return lockfile.Save(p.lockPath, lf)
+		return saveLock(p.lockPath, lf)
 	})
 	return res, err
 }
@@ -455,7 +456,7 @@ func (a *App) installSelected(ctx context.Context, p *project, m *manifest.Manif
 			rollback()
 			return saveErr
 		}
-		if saveErr := lockfile.Save(p.lockPath, lf); saveErr != nil {
+		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
 			rollback()
 			return saveErr
 		}
@@ -702,7 +703,7 @@ func (a *App) installAll(ctx context.Context, p *project, m *manifest.Manifest, 
 	// Save the lockfile when content changed or a manifest pin was backfilled
 	// (the latter updates the lock's `requested` to match — 008 FR-007).
 	if out.Changed || manifestChanged {
-		if err := lockfile.Save(p.lockPath, lf); err != nil {
+		if err := saveLock(p.lockPath, lf); err != nil {
 			return InstallResult{}, err
 		}
 	}
@@ -1029,15 +1030,70 @@ func revFromLock(res lockfile.Resolved) resolver.Revision {
 	}
 }
 
-// loadOrNewLock loads the lockfile at path, or returns a fresh one if absent.
+// loadOrNewLock loads the shared skills-lock.json at path into the legacy
+// in-memory view (only entries carrying a gskill block surface; external-only
+// entries stay on disk untouched), or returns a fresh view if absent. Until
+// migration (spec 012 US3) rewrites it, a legacy gskill.lock next to a missing
+// skills-lock.json is read directly so pre-migration projects keep working.
 func loadOrNewLock(path string) (*lockfile.Lockfile, error) {
 	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return lockfile.New(), nil
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("stat lockfile: %w", err)
 		}
-		return nil, fmt.Errorf("stat lockfile: %w", err)
+		legacy := filepath.Join(filepath.Dir(path), LockName)
+		if _, lerr := os.Stat(legacy); lerr == nil {
+			return lockfile.Load(legacy)
+		}
+		return lockfile.New(), nil
 	}
-	return lockfile.Load(path)
+	l, err := skillslock.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	lf := lockfile.New()
+	for _, name := range l.Names() {
+		e, _ := l.Entry(name)
+		if e.Ext == nil {
+			continue
+		}
+		lf.Skills[name] = skillslock.ToLegacy(name, e)
+	}
+	return lf, nil
+}
+
+// saveLock writes the legacy in-memory view through the lossless shared lock:
+// managed entries are synced (never clearing a recorded computedHash), entries
+// gskill removed are dropped, and every field gskill does not understand —
+// unknown keys, external-only entries, other tools' blocks — is preserved
+// byte-for-byte (FR-003, FR-006).
+func saveLock(path string, lf *lockfile.Lockfile) error {
+	var l *skillslock.Lock
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("stat lockfile: %w", err)
+		}
+		l = skillslock.New()
+	} else {
+		var lerr error
+		l, lerr = skillslock.Load(path)
+		if lerr != nil {
+			// Fail closed: never clobber a shared file gskill cannot parse.
+			return lerr
+		}
+	}
+	for _, name := range l.Names() {
+		e, _ := l.Entry(name)
+		if e.Ext == nil {
+			continue
+		}
+		if _, ok := lf.Skills[name]; !ok {
+			l.Remove(name)
+		}
+	}
+	for _, name := range sortedKeys(lf.Skills) {
+		l.SetEntry(name, skillslock.FromLegacy(lf.Skills[name]))
+	}
+	return skillslock.Save(path, l)
 }
 
 // gskillIgnorePatterns are the gskill-managed, reproducible artifacts kept out

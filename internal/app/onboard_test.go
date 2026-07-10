@@ -287,7 +287,7 @@ func TestExecutePlan_InitsFreshProjectAndInstalls(t *testing.T) {
 	if len(res.Installed) != 1 || res.Installed[0].Name != "alpha" {
 		t.Fatalf("Installed = %+v, want alpha", res.Installed)
 	}
-	for _, f := range []string{"gskill.toml", "gskill.lock"} {
+	for _, f := range []string{"gskill.toml", "skills-lock.json"} {
 		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
 			t.Errorf("%s missing after ExecutePlan on a fresh dir: %v", f, err)
 		}
@@ -336,8 +336,8 @@ func TestAddParity_PhasesProduceIdenticalLockfile(t *testing.T) {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
-	lockAdd := normalizedLock(t, filepath.Join(rootAdd, "gskill.lock"))
-	lockPhases := normalizedLock(t, filepath.Join(rootPhases, "gskill.lock"))
+	lockAdd := normalizedLock(t, filepath.Join(rootAdd, "skills-lock.json"))
+	lockPhases := normalizedLock(t, filepath.Join(rootPhases, "skills-lock.json"))
 	if lockAdd != lockPhases {
 		t.Errorf("lockfiles differ between Add and phase composition:\nAdd:    %s\nPhases: %s", lockAdd, lockPhases)
 	}
@@ -359,9 +359,9 @@ func normalizedLock(t *testing.T, path string) string {
 	skills, _ := v["skills"].(map[string]any)
 	for _, sv := range skills {
 		sm, _ := sv.(map[string]any)
-		if prov, ok := sm["provenance"].(map[string]any); ok {
-			prov["fetched_at"] = ""
-			prov["updated_at"] = ""
+		if ext, ok := sm["gskill"].(map[string]any); ok {
+			ext["installedAt"] = ""
+			ext["updatedAt"] = ""
 		}
 		// The two projects install from the same temp source; the recorded
 		// source is identical. Nothing else is machine-specific here.
@@ -380,7 +380,7 @@ func normalizedLock(t *testing.T, path string) string {
 func assertNoPartialInstall(t *testing.T, root, skill string) {
 	t.Helper()
 
-	if _, err := os.Stat(filepath.Join(root, "gskill.lock")); err == nil {
+	if _, err := os.Stat(filepath.Join(root, "skills-lock.json")); err == nil {
 		t.Error("lockfile exists after failed install")
 	}
 	data, err := os.ReadFile(filepath.Join(root, "gskill.toml")) //nolint:gosec // test-controlled temp path
@@ -545,7 +545,7 @@ func TestExecutePlan_MultiAgentRecordsBothTargets(t *testing.T) {
 			t.Errorf("agent target %s/skills/alpha missing: %v", dir, err)
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(root, "gskill.lock")) //nolint:gosec // test-controlled temp path
+	data, err := os.ReadFile(filepath.Join(root, "skills-lock.json")) //nolint:gosec // test-controlled temp path
 	if err != nil {
 		t.Fatalf("read lock: %v", err)
 	}
@@ -694,7 +694,7 @@ func TestPlanInstall_ReResolvesChangedVersionPin(t *testing.T) {
 	if _, err := a.ExecutePlan(ctx, plan, nil); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
-	lock, err := os.ReadFile(filepath.Join(root, "gskill.lock")) //nolint:gosec // test-controlled temp path
+	lock, err := os.ReadFile(filepath.Join(root, "skills-lock.json")) //nolint:gosec // test-controlled temp path
 	if err != nil {
 		t.Fatalf("read lock: %v", err)
 	}
@@ -993,7 +993,7 @@ func TestPlanInstall_CorruptLockfileFailsClosed(t *testing.T) {
 	a := onboardApp()
 	ctx := context.Background()
 
-	if err := os.WriteFile(filepath.Join(root, "gskill.lock"), []byte("{not json"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "skills-lock.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	disc := discover(t, a, root, src)

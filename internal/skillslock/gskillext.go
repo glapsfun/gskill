@@ -17,4 +17,7 @@ type Ext struct {
 	SkillFileHash string   `json:"skillFileHash,omitempty"`
 	InstalledAt   string   `json:"installedAt,omitempty"`
 	UpdatedAt     string   `json:"updatedAt,omitempty"`
+	// State nests the residual machine state existing commands still consume;
+	// see ExtState (bridge.go).
+	State *ExtState `json:"state,omitempty"`
 }

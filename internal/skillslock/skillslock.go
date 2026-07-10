@@ -281,10 +281,12 @@ func stringField(o *object, key string) string {
 	return s
 }
 
-// setStringField writes a string-valued key, skipping empty values for keys
-// that are not already present (so partial updates never plant empty fields).
+// setStringField writes a string-valued key. Empty values are never written
+// and never overwrite an existing value: callers with partial knowledge (e.g.
+// the legacy bridge, which cannot derive computedHash) must not erase facts
+// another writer recorded.
 func setStringField(o *object, key, val string) {
-	if val == "" && !o.has(key) {
+	if val == "" {
 		return
 	}
 	raw, err := marshalRaw(val)

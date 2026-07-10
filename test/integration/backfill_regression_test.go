@@ -55,7 +55,7 @@ func TestUpdate_CaretFloatsToNewerTag(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "update"); code != 0 {
 		t.Fatalf("update: %s", stderr)
 	}
-	lock := string(readFile(t, filepath.Join(proj, "gskill.lock")))
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
 	if !strings.Contains(lock, `"version": "1.3.0"`) {
 		t.Errorf("update did not bump the lock to 1.3.0:\n%s", lock)
 	}

@@ -9,10 +9,13 @@ import (
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/skillslock"
 	"github.com/glapsfun/gskill/internal/store"
 )
 
-// Project file and directory names.
+// Project file and directory names. The canonical committed lockfile is
+// skills-lock.json (skillslock.FileName, spec 012); LockName is the legacy
+// gskill.lock, read only for migration.
 const (
 	ManifestName = "gskill.toml"
 	LockName     = "gskill.lock"
@@ -43,7 +46,7 @@ func openProject(root string) *project {
 	return &project{
 		root:         root,
 		manifestPath: filepath.Join(root, ManifestName),
-		lockPath:     filepath.Join(root, LockName),
+		lockPath:     filepath.Join(root, skillslock.FileName),
 		store:        store.New(filepath.Join(stateDir, "store")),
 		cache:        cache.New(filepath.Join(stateDir, "cache")),
 		locksDir:     filepath.Join(stateDir, "locks"),

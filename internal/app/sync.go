@@ -98,7 +98,7 @@ func (a *App) reconcile(ctx context.Context, p *project, m *manifest.Manifest, r
 
 	out.UpToDate = !lockChanged && !manifestChanged && noChanges(out.Reconciled)
 	if lockChanged {
-		if err := lockfile.Save(p.lockPath, lf); err != nil {
+		if err := saveLock(p.lockPath, lf); err != nil {
 			return SyncResult{}, err
 		}
 	}

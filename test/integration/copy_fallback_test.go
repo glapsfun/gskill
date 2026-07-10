@@ -22,8 +22,8 @@ func TestCopyMode_RecordedAndMaterializedAsRealDir(t *testing.T) {
 		t.Fatalf("add --copy: %s", stderr)
 	}
 
-	lock := string(readFile(t, filepath.Join(proj, "gskill.lock")))
-	if !strings.Contains(lock, `"mode": "copy"`) {
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
+	if !strings.Contains(lock, `"installMode": "copy"`) {
 		t.Errorf("lock did not record mode: copy:\n%s", lock)
 	}
 
