@@ -5,7 +5,12 @@ import (
 	"fmt"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/tui"
 )
+
+// runLockWizardFn is swapped in tests.
+var runLockWizardFn = tui.RunLockWizard
 
 // installCmd installs all declared skills.
 type installCmd struct {
@@ -26,7 +31,118 @@ func (installCmd) Help() string {
 }
 
 // Run executes `gskill install`. The --offline and --no-cache flags are global.
+// In an interactive terminal, a project with a skills-lock.json opens the
+// guided agent-selection flow (spec 012 FR-013); --yes, --json, a non-TTY, and
+// --frozen-lockfile all suppress it.
 func (c installCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
+	if c.wizardEligible(out, g) {
+		preview, found, err := a.PreviewLock(string(root))
+		if err != nil {
+			return err
+		}
+		if found && len(preview.Skills) > 0 {
+			return c.runLockWizard(ctx, out, a, string(root), preview, g)
+		}
+	}
+	return c.runDirect(ctx, out, a, root, g)
+}
+
+// wizardEligible reports whether the guided lock-install flow may open:
+// interactive stdout, real stdin TTY, no machine-readable mode, and no flag
+// that demands an unattended run (research R4 matrix).
+func (c installCmd) wizardEligible(out *Output, g Globals) bool {
+	return out.Interactive() && !out.JSON() && stdinIsTTY() &&
+		!g.Yes && !g.DryRun && !c.FrozenLockfile
+}
+
+// runLockWizard drives the guided flow and maps its outcome onto the CLI
+// contract: cancel → exit 130 with zero writes, no agents → exit 9 with zero
+// writes, otherwise the summary (and any partial-failure error) of the run.
+func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, root string, preview app.LockPreview, g Globals) error {
+	skills := make([]tui.LockWizardSkill, 0, len(preview.Skills))
+	for _, s := range preview.Skills {
+		skills = append(skills, tui.LockWizardSkill{Name: s.Name, Source: s.Source})
+	}
+	cfg := tui.LockWizardConfig{
+		LockPath: preview.Path,
+		Skills:   skills,
+		Phases: tui.LockWizardPhases{
+			Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
+				return a.AgentChoices(ctx, root)
+			},
+			Execute: func(ctx context.Context, agentIDs []string) (app.InstallFromLockResult, error) {
+				return a.InstallFromLock(ctx, app.InstallFromLockRequest{
+					Root:        root,
+					Agents:      agentIDs,
+					InstallMode: modeFromFlags(c.Copy, false, false),
+					Offline:     g.Offline,
+				})
+			},
+		},
+	}
+	outcome, err := runLockWizardFn(ctx, cfg, out.Interactive())
+	if err != nil {
+		return err
+	}
+	switch {
+	case outcome.Cancelled:
+		return fmt.Errorf("%w — nothing was changed", errs.ErrCancelled)
+	case outcome.NoAgents:
+		return errs.WithHint(
+			fmt.Errorf("%w: no supported agents detected", errs.ErrUnsupportedAgent),
+			"pass --agent <id>[,<id>...] to install for a specific agent")
+	case outcome.Executed:
+		if renderErr := renderLockInstall(out, outcome.Result); renderErr != nil {
+			return renderErr
+		}
+		return outcome.Err
+	default:
+		return outcome.Err
+	}
+}
+
+// renderLockInstall prints the lock-install summary on the plain streams (so
+// it survives the alternate screen) and the --json document.
+func renderLockInstall(out *Output, res app.InstallFromLockResult) error {
+	skills := make([]map[string]any, 0, len(res.Skills))
+	installed, failed := 0, 0
+	for _, s := range res.Skills {
+		entry := map[string]any{
+			"name":         s.Name,
+			"source":       s.Source,
+			"status":       s.Status,
+			"computedHash": s.ComputedHash,
+		}
+		if s.Err != nil {
+			entry["error"] = s.Err.Error()
+		}
+		skills = append(skills, entry)
+		switch s.Status {
+		case app.LockSkillFailed:
+			failed++
+		case app.LockSkillInstalled, app.LockSkillRepaired:
+			installed++
+		}
+	}
+	human := fmt.Sprintf("Installed %d skill(s) for %d agent(s)", installed, len(res.Agents))
+	switch {
+	case failed > 0:
+		human = fmt.Sprintf("Installed %d skill(s), %d failed", installed, failed)
+	case !res.Changed:
+		human = fmt.Sprintf("Up to date (%d skill(s), no changes)", len(res.Skills))
+	}
+	human = out.summary(human)
+	return out.Result(human, map[string]any{
+		"changed":     res.Changed,
+		"initialized": res.Initialized,
+		"migrated":    res.Migrated,
+		"agents":      res.Agents,
+		"skills":      skills,
+	})
+}
+
+// runDirect executes the manifest-driven install path unchanged.
+func (c installCmd) runDirect(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
 	ctx, done := out.withFetchProgress(ctx)
 	defer done()
 	res, err := a.Install(ctx, app.InstallRequest{

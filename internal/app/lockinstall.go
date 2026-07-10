@@ -150,6 +150,40 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, m *manifest
 	}
 }
 
+// LockPreview describes the shared lock for the interactive install flow.
+type LockPreview struct {
+	Path   string
+	Skills []LockPreviewSkill
+}
+
+// LockPreviewSkill is one entry's display line.
+type LockPreviewSkill struct {
+	Name   string
+	Source string
+}
+
+// PreviewLock loads and validates the shared lock for display. found=false
+// (with a nil error) means the project has no skills-lock.json.
+func (a *App) PreviewLock(root string) (LockPreview, bool, error) {
+	p := openProject(root)
+	if _, err := os.Stat(p.lockPath); err != nil {
+		if os.IsNotExist(err) {
+			return LockPreview{}, false, nil
+		}
+		return LockPreview{}, false, fmt.Errorf("stat %s: %w", skillslock.FileName, err)
+	}
+	l, err := a.loadSharedLock(p)
+	if err != nil {
+		return LockPreview{}, true, err
+	}
+	pv := LockPreview{Path: skillslock.FileName}
+	for _, name := range l.Names() {
+		e, _ := l.Entry(name)
+		pv.Skills = append(pv.Skills, LockPreviewSkill{Name: name, Source: e.Source})
+	}
+	return pv, true, nil
+}
+
 // loadSharedLock loads and validates the shared lock, failing with a clear
 // diagnostic when it is missing, unparsable, or structurally invalid (FR-002,
 // FR-030).
