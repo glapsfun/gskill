@@ -245,3 +245,65 @@ func TestLockWizard_ExecFailureShowsError(t *testing.T) {
 		t.Errorf("outcome = %+v, want executed with error", out)
 	}
 }
+
+// TestLockWizard_ConflictStepAsksWhichSideWins (FR-023): a manifest/lock
+// disagreement is shown first and the user picks the winning side.
+func TestLockWizard_ConflictStepAsksWhichSideWins(t *testing.T) {
+	t.Parallel()
+	f := newLockFixture(t, twoAgents())
+	var chosen string
+	f.m.cfg.Conflicts = []string{`skill "alpha": source: gskill.toml says "x", skills-lock.json says "y"`}
+	f.m.cfg.Phases.Reconcile = func(c string) { chosen = c }
+	m := newLockWizardModel(context.Background(), f.m.cfg)
+	if m.step != lockStepConflict {
+		t.Fatalf("step = %v, want conflict first", m.step)
+	}
+	view := m.View()
+	for _, want := range []string{"disagree", "alpha", "gskill.toml", "skills-lock.json"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("conflict view missing %q:\n%s", want, view)
+		}
+	}
+
+	m = lockDrive(t, m, lockKey("l"))
+	if chosen != "lock" {
+		t.Errorf("Reconcile choice = %q, want lock", chosen)
+	}
+	if m.step != lockStepAgents {
+		t.Errorf("step = %v after choice, want agents", m.step)
+	}
+}
+
+// TestLockWizard_ConflictManifestChoice: "m" picks the manifest side.
+func TestLockWizard_ConflictManifestChoice(t *testing.T) {
+	t.Parallel()
+	f := newLockFixture(t, twoAgents())
+	var chosen string
+	f.m.cfg.Conflicts = []string{"skill x: source differs"}
+	f.m.cfg.Phases.Reconcile = func(c string) { chosen = c }
+	m := newLockWizardModel(context.Background(), f.m.cfg)
+	m = lockDrive(t, m, lockKey("m"))
+	if chosen != "manifest" {
+		t.Errorf("Reconcile choice = %q, want manifest", chosen)
+	}
+	if m.step != lockStepAgents {
+		t.Errorf("step = %v, want agents", m.step)
+	}
+}
+
+// TestLockWizard_ConflictCancel: quitting at the conflict step cancels with
+// zero writes.
+func TestLockWizard_ConflictCancel(t *testing.T) {
+	t.Parallel()
+	f := newLockFixture(t, twoAgents())
+	f.m.cfg.Conflicts = []string{"skill x: source differs"}
+	m := newLockWizardModel(context.Background(), f.m.cfg)
+	m = lockDrive(t, m, lockKey("q"))
+	out := m.Outcome()
+	if !out.Cancelled || out.Executed {
+		t.Errorf("outcome = %+v, want cancelled", out)
+	}
+	if len(*f.executed) != 0 {
+		t.Error("Execute called after cancel at conflict step")
+	}
+}

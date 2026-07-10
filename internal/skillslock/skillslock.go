@@ -215,6 +215,30 @@ func (l *Lock) SetEntry(name string, e Entry) {
 	}
 }
 
+// ReplaceEntryCore rewrites an entry's core identity fields. This is the one
+// sanctioned core rewrite: manifest-wins reconciliation (spec 012 FR-023),
+// where the user explicitly chose the manifest's declaration over the lock.
+// Stale verification facts — computedHash and the gskill block — are dropped
+// so the next install re-resolves and re-records them; fields gskill does not
+// understand still survive.
+func (l *Lock) ReplaceEntryCore(name string, e Entry) {
+	eo, ok := l.entries[name]
+	if !ok {
+		l.SetEntry(name, e)
+		return
+	}
+	setStringField(eo, "source", e.Source)
+	if e.Ref == "" {
+		eo.remove("ref")
+	} else {
+		setStringField(eo, "ref", e.Ref)
+	}
+	setStringField(eo, "sourceType", e.SourceType)
+	setStringField(eo, "skillPath", e.SkillPath)
+	eo.remove("computedHash")
+	eo.remove("gskill")
+}
+
 // SetExt creates or replaces the namespaced gskill block on an existing entry.
 func (l *Lock) SetExt(name string, ext *Ext) error {
 	eo, ok := l.entries[name]

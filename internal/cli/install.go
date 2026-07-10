@@ -22,6 +22,8 @@ type installCmd struct {
 	InstallMode    string   `name:"install-mode" placeholder:"auto|symlink|copy" help:"How skills are placed into agent directories."`
 	Force          bool     `help:"Accept changed upstream content: reinstall and rewrite the recorded computedHash."`
 	NoInit         bool     `name:"no-init" help:"Never auto-initialize the project; fail instead."`
+	PreferLock     bool     `name:"prefer-lock" xor:"prefer" help:"On a gskill.toml/skills-lock.json disagreement, the lock wins (manifest declarations are rewritten)."`
+	PreferManifest bool     `name:"prefer-manifest" xor:"prefer" help:"On a gskill.toml/skills-lock.json disagreement, the manifest wins (lock entries are rewritten)."`
 	FrozenLockfile bool     `name:"frozen-lockfile" help:"Restore exactly from the lockfile; never modify it."`
 	UpdateLockfile bool     `name:"update-lockfile" help:"Allow the lockfile to be rewritten."`
 }
@@ -44,10 +46,25 @@ func (c installCmd) validateFlags() error {
 	if c.Force && c.FrozenLockfile {
 		return fmt.Errorf("%w: --force cannot be combined with --frozen-lockfile (frozen runs never rewrite the lock)", errs.ErrUsage)
 	}
+	if (c.PreferLock || c.PreferManifest) && c.FrozenLockfile {
+		return fmt.Errorf("%w: --prefer-lock/--prefer-manifest cannot be combined with --frozen-lockfile (reconciliation rewrites a file)", errs.ErrUsage)
+	}
 	if !installModes[c.InstallMode] {
 		return fmt.Errorf("%w: invalid --install-mode %q (want auto, symlink, or copy)", errs.ErrUsage, c.InstallMode)
 	}
 	return nil
+}
+
+// reconcile maps the reconciliation flags onto the app request (FR-023).
+func (c installCmd) reconcile() string {
+	switch {
+	case c.PreferLock:
+		return app.ReconcileLock
+	case c.PreferManifest:
+		return app.ReconcileManifest
+	default:
+		return ""
+	}
 }
 
 // mode merges --install-mode with the deprecated --copy alias.
@@ -90,14 +107,20 @@ func (c installCmd) wizardEligible(out *Output, g Globals) bool {
 }
 
 // lockDirectEligible routes non-interactive runs through the lock-first
-// pipeline when the project is lock-only (fresh clone) or the caller selected
-// agents/force explicitly; fully configured projects keep the established
-// manifest-driven reconcile path.
+// pipeline when the project is lock-only (fresh clone), the caller selected
+// agents/force/reconciliation explicitly, or the manifest and lock disagree
+// (FR-023: the lock path surfaces the conflict as exit 4 instead of letting
+// the manifest-driven path silently re-resolve). Otherwise fully configured
+// projects keep the established manifest-driven reconcile path.
 func (c installCmd) lockDirectEligible(a *app.App, root string) bool {
-	if len(c.Agent) > 0 || c.Force || c.NoInit {
+	if len(c.Agent) > 0 || c.Force || c.NoInit || c.PreferLock || c.PreferManifest {
 		return true
 	}
-	return !a.ManifestExists(root)
+	if !a.ManifestExists(root) {
+		return true
+	}
+	conflicts, err := a.LockManifestConflicts(root)
+	return err == nil && len(conflicts) > 0
 }
 
 // runLockDirect executes the non-interactive lock-first install.
@@ -113,6 +136,7 @@ func (c installCmd) runLockDirect(ctx context.Context, out *Output, a *app.App, 
 		DryRun:      g.DryRun,
 		Offline:     g.Offline,
 		Frozen:      c.FrozenLockfile,
+		Reconcile:   c.reconcile(),
 	})
 	done()
 	if renderErr := renderLockInstall(out, res); renderErr != nil {
@@ -129,19 +153,27 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 	for _, s := range preview.Skills {
 		skills = append(skills, tui.LockWizardSkill{Name: s.Name, Source: s.Source})
 	}
+	conflicts, err := a.LockManifestConflicts(root)
+	if err != nil {
+		return err
+	}
+	reconcile := c.reconcile()
 	cfg := tui.LockWizardConfig{
-		LockPath: preview.Path,
-		Skills:   skills,
+		LockPath:  preview.Path,
+		Skills:    skills,
+		Conflicts: conflicts,
 		Phases: tui.LockWizardPhases{
 			Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
 				return a.AgentChoices(ctx, root)
 			},
+			Reconcile: func(choice string) { reconcile = choice },
 			Execute: func(ctx context.Context, agentIDs []string) (app.InstallFromLockResult, error) {
 				return a.InstallFromLock(ctx, app.InstallFromLockRequest{
 					Root:        root,
 					Agents:      agentIDs,
 					InstallMode: c.mode(),
 					Offline:     g.Offline,
+					Reconcile:   reconcile,
 				})
 			},
 		},

@@ -177,3 +177,63 @@ func TestInstall_JSONShape(t *testing.T) {
 		t.Errorf("skills = %+v", doc.Skills)
 	}
 }
+
+// conflictProject builds a lock-only project plus a manifest disagreeing on
+// alpha's source (FR-023).
+func conflictProject(t *testing.T) string {
+	t.Helper()
+	dir := lockOnlyProject(t)
+	manifestBody := "schema_version = 1\n\n[skills.alpha]\nsource = \"github.com/acme/elsewhere\"\npath = \"skills/alpha\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "gskill.toml"), []byte(manifestBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestInstall_ConflictExitsLockMismatch (FR-023): non-interactive disagreement
+// exits 4 and shows the difference.
+func TestInstall_ConflictExitsLockMismatch(t *testing.T) {
+	t.Parallel()
+	dir := conflictProject(t)
+	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude")
+	if code != 4 {
+		t.Fatalf("code = %d, want 4 (stderr %q)", code, stderr)
+	}
+	for _, want := range []string{"disagree", "acme/elsewhere", "prefer-lock"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr %q missing %q", stderr, want)
+		}
+	}
+}
+
+// TestInstall_PreferLockFlag (FR-023): the explicit lock-wins option installs
+// and rewrites the manifest declaration.
+func TestInstall_PreferLockFlag(t *testing.T) {
+	t.Parallel()
+	dir := conflictProject(t)
+	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude", "--prefer-lock")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr %q", code, stderr)
+	}
+	m, err := os.ReadFile(filepath.Join(dir, "gskill.toml")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(m), "acme/elsewhere") {
+		t.Errorf("manifest still holds the conflicting declaration:\n%s", m)
+	}
+	agentDirsExist(t, dir, "claude")
+}
+
+// TestInstall_PreferFlagConflicts: reconciliation flags are mutually
+// exclusive and incompatible with frozen runs.
+func TestInstall_PreferFlagConflicts(t *testing.T) {
+	t.Parallel()
+	dir := conflictProject(t)
+	if _, _, code := runCLI(t, newTestApp(), "-C", dir, "install", "--prefer-lock", "--prefer-manifest"); code != 2 {
+		t.Errorf("--prefer-lock --prefer-manifest: code = %d, want 2", code)
+	}
+	if _, _, code := runCLI(t, newTestApp(), "-C", dir, "install", "--prefer-lock", "--frozen-lockfile"); code != 2 {
+		t.Errorf("--prefer-lock --frozen-lockfile: code = %d, want 2", code)
+	}
+}

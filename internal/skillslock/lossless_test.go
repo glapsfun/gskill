@@ -171,3 +171,38 @@ func TestMarshalFormat(t *testing.T) {
 		t.Error("Marshal is not deterministic")
 	}
 }
+
+// TestReplaceEntryCore: reconciliation (spec 012 FR-023) is the one sanctioned
+// case where core fields are rewritten; stale verification facts (computedHash,
+// gskill block) are dropped, foreign fields survive.
+func TestReplaceEntryCore(t *testing.T) {
+	t.Parallel()
+	l := mustUnmarshal(t, foreignInput(t))
+	if err := l.SetExt("deploy-to-vercel", &skillslock.Ext{Commit: "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	l.ReplaceEntryCore("deploy-to-vercel", skillslock.Entry{
+		Source:     "acme/new-home",
+		SourceType: "github",
+		SkillPath:  "skills/moved/SKILL.md",
+	})
+	e, ok := l.Entry("deploy-to-vercel")
+	if !ok {
+		t.Fatal("entry lost")
+	}
+	if e.Source != "acme/new-home" || e.SkillPath != "skills/moved/SKILL.md" {
+		t.Errorf("core not replaced: %+v", e)
+	}
+	if e.ComputedHash != "" {
+		t.Errorf("stale computedHash survived: %q", e.ComputedHash)
+	}
+	if e.Ext != nil {
+		t.Errorf("stale gskill block survived: %+v", e.Ext)
+	}
+	out := mustMarshal(t, l)
+	for _, want := range []string{`"otherTool": {`, `"entryUnknown": 42`, `"customTopLevel": "keep-me"`} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("foreign data %q lost:\n%s", want, out)
+		}
+	}
+}

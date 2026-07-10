@@ -147,6 +147,8 @@ Install all declared skills (additive, idempotent).
 | `--global` | bool | Install into the user-global location. |
 | `--install-mode` | string | How skills are placed into agent directories. |
 | `--no-init` | bool | Never auto-initialize the project; fail instead. |
+| `--prefer-lock` | bool | On a gskill.toml/skills-lock.json disagreement, the lock wins (manifest declarations are rewritten). |
+| `--prefer-manifest` | bool | On a gskill.toml/skills-lock.json disagreement, the manifest wins (lock entries are rewritten). |
 | `--project` | bool | Install into the project (default). |
 | `--update-lockfile` | bool | Allow the lockfile to be rewritten. |
 

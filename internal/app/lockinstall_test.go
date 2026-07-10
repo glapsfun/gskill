@@ -256,7 +256,8 @@ func TestInstallFromLock_ManifestGeneration(t *testing.T) {
 }
 
 // TestInstallFromLock_ExistingManifestPreserved (T018): declared skills and
-// settings survive; only missing skills are appended.
+// settings survive; only missing skills are appended. (Agreeing declarations —
+// disagreement is FR-023 conflict territory, tested separately.)
 func TestInstallFromLock_ExistingManifestPreserved(t *testing.T) {
 	t.Parallel()
 	repo, ha, hb := lockRepo(t)
@@ -266,13 +267,12 @@ func TestInstallFromLock_ExistingManifestPreserved(t *testing.T) {
 	pre := manifest.New()
 	pre.Defaults.InstallMode = "copy"
 	pre.Defaults.Agents = []string{"codex"}
-	pre.Skills[skillAlpha] = manifest.Skill{Source: "github.com/acme/custom", Path: "skills/alpha"}
+	pre.Skills[skillAlpha] = manifest.Skill{Source: repo, Path: "skills/alpha"}
+	pre.Skills["manifest-only"] = manifest.Skill{Source: "github.com/acme/custom", Path: "skills/extra"}
 	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
 		t.Fatal(err)
 	}
 
-	// alpha's manifest declaration points elsewhere; install still proceeds
-	// lock-first, but the declaration must not be rewritten.
 	if _, err := runLockInstall(t, root); err != nil {
 		t.Fatalf("InstallFromLock: %v", err)
 	}
@@ -283,11 +283,132 @@ func TestInstallFromLock_ExistingManifestPreserved(t *testing.T) {
 	if m.Defaults.InstallMode != "copy" {
 		t.Errorf("Defaults.InstallMode = %q, want preserved copy", m.Defaults.InstallMode)
 	}
-	if got := m.Skills[skillAlpha].Source; got != "github.com/acme/custom" {
-		t.Errorf("alpha source rewritten to %q", got)
+	if got := m.Skills["manifest-only"].Source; got != "github.com/acme/custom" {
+		t.Errorf("manifest-only declaration rewritten to %q", got)
 	}
 	if _, ok := m.Skills["beta"]; !ok {
 		t.Error("missing skill beta was not appended")
+	}
+}
+
+// ---- FR-023: manifest/lock disagreement --------------------------------------
+
+// conflictingProject builds a lock-only project plus a manifest whose alpha
+// declaration contradicts the lock (different source).
+func conflictingProject(t *testing.T) (root, repo string) {
+	t.Helper()
+	var ha, hb string
+	repo, ha, hb = lockRepo(t)
+	root = t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	pre := manifest.New()
+	pre.Skills[skillAlpha] = manifest.Skill{Source: "github.com/acme/elsewhere", Path: "skills/alpha"}
+	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
+		t.Fatal(err)
+	}
+	return root, repo
+}
+
+// TestInstallFromLock_DisagreementFailsClosed (FR-023): both files exist and
+// disagree → show the differences, exit with the lock-mismatch code, and
+// rewrite neither file.
+func TestInstallFromLock_DisagreementFailsClosed(t *testing.T) {
+	t.Parallel()
+	root, _ := conflictingProject(t)
+	lockBefore, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	manifestBefore, _ := os.ReadFile(filepath.Join(root, "gskill.toml"))   //nolint:gosec // test-controlled temp path
+
+	_, err := runLockInstall(t, root)
+	if !errors.Is(err, errs.ErrLockMismatch) {
+		t.Fatalf("err = %v, want ErrLockMismatch (exit 4)", err)
+	}
+	for _, want := range []string{skillAlpha, "acme/elsewhere", "source"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should show the difference (%q)", err, want)
+		}
+	}
+	lockAfter, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	manifestAfter, _ := os.ReadFile(filepath.Join(root, "gskill.toml"))   //nolint:gosec // test-controlled temp path
+	if string(lockBefore) != string(lockAfter) {
+		t.Error("conflict run modified the lock")
+	}
+	if string(manifestBefore) != string(manifestAfter) {
+		t.Error("conflict run modified the manifest")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "."+testAgent, "skills", skillAlpha)); statErr == nil {
+		t.Error("skills were installed despite the unresolved conflict")
+	}
+}
+
+// TestInstallFromLock_PreferLock (FR-023): the explicit lock-wins option
+// rewrites the manifest declaration from the lock and proceeds.
+func TestInstallFromLock_PreferLock(t *testing.T) {
+	t.Parallel()
+	root, repo := conflictingProject(t)
+
+	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent}, Reconcile: app.ReconcileLock,
+	})
+	if err != nil {
+		t.Fatalf("InstallFromLock --prefer-lock: %v", err)
+	}
+	if !res.Changed {
+		t.Error("Changed = false")
+	}
+	m, err := manifest.Load(filepath.Join(root, "gskill.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Skills[skillAlpha].Source; got != repo {
+		t.Errorf("manifest alpha source = %q, want lock-derived %q", got, repo)
+	}
+	assertAgentTargets(t, root, skillAlpha, "beta")
+}
+
+// TestInstallFromLock_PreferManifest (FR-023): the explicit manifest-wins
+// option rewrites the lock entry's core identity from the declaration; stale
+// verification facts are re-recorded by the install.
+func TestInstallFromLock_PreferManifest(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	// Conflict on path: the manifest says alpha lives at skills/beta.
+	pre := manifest.New()
+	pre.Skills[skillAlpha] = manifest.Skill{Source: repo, Path: "skills/beta"}
+	if err := manifest.Save(filepath.Join(root, "gskill.toml"), pre); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent}, Reconcile: app.ReconcileManifest,
+	})
+	if err != nil {
+		t.Fatalf("InstallFromLock --prefer-manifest: %v", err)
+	}
+	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := l.Entry(skillAlpha)
+	if e.SkillPath != "skills/beta/SKILL.md" {
+		t.Errorf("lock skillPath = %q, want manifest-derived skills/beta/SKILL.md", e.SkillPath)
+	}
+	if e.ComputedHash != hb {
+		t.Errorf("computedHash = %q, want re-recorded %q for the new content", e.ComputedHash, hb)
+	}
+}
+
+// TestInstallFromLock_FrozenConflictAlwaysFails (FR-018/FR-023): under frozen
+// a disagreement is drift — reconciliation writes are forbidden.
+func TestInstallFromLock_FrozenConflictAlwaysFails(t *testing.T) {
+	t.Parallel()
+	root, _ := conflictingProject(t)
+	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent}, Frozen: true, Reconcile: app.ReconcileLock,
+	})
+	if !errors.Is(err, errs.ErrLockMismatch) {
+		t.Fatalf("err = %v, want ErrLockMismatch under frozen", err)
 	}
 }
 

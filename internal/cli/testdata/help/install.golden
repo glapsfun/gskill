@@ -33,5 +33,9 @@ Flags:
       --force              Accept changed upstream content: reinstall and
                            rewrite the recorded computedHash.
       --no-init            Never auto-initialize the project; fail instead.
+      --prefer-lock        On a gskill.toml/skills-lock.json disagreement,
+                           the lock wins (manifest declarations are rewritten).
+      --prefer-manifest    On a gskill.toml/skills-lock.json disagreement,
+                           the manifest wins (lock entries are rewritten).
       --frozen-lockfile    Restore exactly from the lockfile; never modify it.
       --update-lockfile    Allow the lockfile to be rewritten.

@@ -31,7 +31,21 @@ type InstallFromLockRequest struct {
 	DryRun      bool     // report the plan, write nothing
 	Offline     bool     // restore from local store/cache only
 	Frozen      bool     // never modify the lock file; fail closed on drift
+	// Reconcile resolves a manifest/lock disagreement (FR-023): ReconcileLock
+	// rewrites the manifest declaration from the lock, ReconcileManifest
+	// rewrites the lock entry's core identity from the declaration. Empty
+	// fails closed with the lock-mismatch code when the two disagree.
+	Reconcile string
 }
+
+// sourceTypeGitHub is the shared lock's GitHub sourceType value.
+const sourceTypeGitHub = "github"
+
+// Reconciliation choices for manifest/lock disagreements (FR-023).
+const (
+	ReconcileLock     = "lock"
+	ReconcileManifest = "manifest"
+)
 
 // Lock-install per-skill statuses (contracts/cli-install-migrate.md).
 const (
@@ -90,6 +104,10 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 		return res, err
 	}
 	res.Initialized = initialized
+
+	if err := a.reconcileManifestLock(p, m, l, req); err != nil {
+		return res, err
+	}
 
 	ids := req.Agents
 	if len(ids) == 0 {
@@ -243,6 +261,132 @@ func (a *App) ensureProject(ctx context.Context, p *project, req InstallFromLock
 	return m, initialized, nil
 }
 
+// lockConflict is one manifest/lock disagreement (FR-023).
+type lockConflict struct {
+	name, field, manifestVal, lockVal string
+}
+
+// manifestLockConflicts compares every skill declared in both files. A
+// manifest field left empty is an unconstrained declaration, never a
+// conflict; manifest-only and lock-only skills are additive, not conflicts.
+func manifestLockConflicts(m *manifest.Manifest, l *skillslock.Lock) []lockConflict {
+	var out []lockConflict
+	for _, name := range l.Names() {
+		ms, ok := m.Skills[name]
+		if !ok {
+			continue
+		}
+		e, _ := l.Entry(name)
+		if ms.Source != "" && ms.Source != manifestSourceForEntry(e) && ms.Source != e.Source {
+			out = append(out, lockConflict{name, "source", ms.Source, manifestSourceForEntry(e)})
+		}
+		if ms.Path != "" && ms.Path != skillDirOf(e.SkillPath) {
+			out = append(out, lockConflict{name, "path", ms.Path, skillDirOf(e.SkillPath)})
+		}
+		if ms.Ref != "" && e.Ref != "" && ms.Ref != e.Ref {
+			out = append(out, lockConflict{name, "ref", ms.Ref, e.Ref})
+		}
+	}
+	return out
+}
+
+// LockManifestConflicts reports the manifest/lock disagreements of a project
+// as human-readable diff lines (empty = the two agree). The interactive flow
+// uses it to decide whether to ask which side wins (FR-023).
+func (a *App) LockManifestConflicts(root string) ([]string, error) {
+	p := openProject(root)
+	if !p.manifestExists() || !fileExists(p.lockPath) {
+		return nil, nil
+	}
+	m, err := manifest.Load(p.manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	l, err := skillslock.Load(p.lockPath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errs.ErrInvalidManifest, err)
+	}
+	return conflictLines(manifestLockConflicts(m, l)), nil
+}
+
+// conflictLines renders conflicts for diagnostics and the TUI.
+func conflictLines(conflicts []lockConflict) []string {
+	lines := make([]string, 0, len(conflicts))
+	for _, c := range conflicts {
+		lines = append(lines, fmt.Sprintf("skill %q: %s: %s says %q, %s says %q",
+			c.name, c.field, ManifestName, c.manifestVal, skillslock.FileName, c.lockVal))
+	}
+	return lines
+}
+
+// reconcileManifestLock enforces FR-023: when gskill.toml and skills-lock.json
+// disagree, neither file is silently rewritten. Without an explicit choice the
+// run fails with the lock-mismatch code and the differences; ReconcileLock
+// rewrites the manifest declarations from the lock, ReconcileManifest rewrites
+// the lock entries' core identity from the declarations. Frozen runs never
+// reconcile — a disagreement is drift.
+func (a *App) reconcileManifestLock(p *project, m *manifest.Manifest, l *skillslock.Lock, req InstallFromLockRequest) error {
+	conflicts := manifestLockConflicts(m, l)
+	if len(conflicts) == 0 {
+		return nil
+	}
+	diff := strings.Join(conflictLines(conflicts), "; ")
+	if req.Frozen || req.Reconcile == "" {
+		return errs.WithHint(
+			fmt.Errorf("%w: %s and %s disagree: %s", errs.ErrLockMismatch, ManifestName, skillslock.FileName, diff),
+			"re-run with --prefer-lock or --prefer-manifest to pick a side (neither file was changed)")
+	}
+
+	switch req.Reconcile {
+	case ReconcileLock:
+		for _, c := range conflicts {
+			e, _ := l.Entry(c.name)
+			ms := m.Skills[c.name]
+			ms.Source = manifestSourceForEntry(e)
+			ms.Path = skillDirOf(e.SkillPath)
+			ms.Ref = e.Ref
+			m.Skills[c.name] = ms
+		}
+		if req.DryRun {
+			return nil
+		}
+		return manifest.Save(p.manifestPath, m)
+	case ReconcileManifest:
+		seen := map[string]bool{}
+		for _, c := range conflicts {
+			if seen[c.name] {
+				continue
+			}
+			seen[c.name] = true
+			l.ReplaceEntryCore(c.name, entryFromDeclaration(m.Skills[c.name]))
+		}
+		if req.DryRun {
+			return nil
+		}
+		return skillslock.Save(p.lockPath, l)
+	default:
+		return fmt.Errorf("%w: unknown reconciliation %q (want %q or %q)",
+			errs.ErrUsage, req.Reconcile, ReconcileLock, ReconcileManifest)
+	}
+}
+
+// entryFromDeclaration maps a manifest declaration onto shared-lock core
+// fields (the inverse of manifestSourceForEntry / skillDirOf).
+func entryFromDeclaration(ms manifest.Skill) skillslock.Entry {
+	src, srcType := ms.Source, "local"
+	if rest, ok := strings.CutPrefix(ms.Source, "github.com/"); ok {
+		src, srcType = rest, sourceTypeGitHub
+	} else if ref, err := source.Parse(ms.Source); err == nil &&
+		ref.Type == source.TypeGit && ref.Owner != "" && ref.Repo != "" {
+		src, srcType = ref.Owner+"/"+ref.Repo, sourceTypeGitHub
+	}
+	skillPath := "SKILL.md"
+	if ms.Path != "" {
+		skillPath = path.Join(ms.Path, "SKILL.md")
+	}
+	return skillslock.Entry{Source: src, Ref: ms.Ref, SourceType: srcType, SkillPath: skillPath}
+}
+
 // mergeManifestFromLock appends manifest declarations for lock entries the
 // manifest does not know, and records the selected agents as project defaults
 // when none are set. Existing declarations and settings are never rewritten
@@ -280,7 +424,7 @@ func (a *App) mergeManifestFromLock(p *project, m *manifest.Manifest, l *skillsl
 // notation: github shorthand gains the host prefix, everything else passes
 // through (research R7).
 func manifestSourceForEntry(e skillslock.Entry) string {
-	if e.SourceType == "github" && !strings.Contains(e.Source, "://") &&
+	if e.SourceType == sourceTypeGitHub && !strings.Contains(e.Source, "://") &&
 		!strings.HasPrefix(e.Source, "github.com/") {
 		return "github.com/" + e.Source
 	}
@@ -306,7 +450,7 @@ func sortedLockNames(l *skillslock.Lock) []string {
 }
 
 // lockEntrySourceTypes are the sourceType values this build installs from.
-var lockEntrySourceTypes = map[string]bool{"github": true, "local": true}
+var lockEntrySourceTypes = map[string]bool{sourceTypeGitHub: true, "local": true}
 
 // installLockEntry restores one lock entry: resolve, verify the compatible
 // computedHash against the fetched content BEFORE any activation (fail closed,
