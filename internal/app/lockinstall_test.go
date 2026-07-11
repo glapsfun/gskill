@@ -14,6 +14,7 @@ import (
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/skillslock"
+	"github.com/glapsfun/gskill/internal/testutil"
 )
 
 // testAgent is the agent every lock-install test targets.
@@ -52,7 +53,7 @@ func lockRepo(t *testing.T) (repo, hashAlpha, hashBeta string) {
 		t.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", args...)
 		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
+		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
 		)
@@ -674,7 +675,7 @@ func gitCommit(t *testing.T, repo, msg string) {
 	for _, args := range [][]string{{"add", "."}, {"commit", "--quiet", "-m", msg}} {
 		cmd := exec.CommandContext(context.Background(), "git", args...) //nolint:gosec // test-controlled fixture args
 		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
+		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
 		)

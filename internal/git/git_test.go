@@ -10,6 +10,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/progress"
+	"github.com/glapsfun/gskill/internal/testutil"
 )
 
 // fixtureRepo creates a local git repo with one commit tagged v1.0.0 and returns
@@ -26,7 +27,7 @@ func fixtureRepo(t *testing.T) (repo, commit string) {
 		t.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", args...)
 		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
+		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
 		)
@@ -47,6 +48,7 @@ func fixtureRepo(t *testing.T) (repo, commit string) {
 	run("tag", "v1.0.0")
 	cmd := exec.CommandContext(context.Background(), "git", "rev-parse", "HEAD")
 	cmd.Dir = repo
+	cmd.Env = testutil.GitEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("rev-parse: %v", err)
@@ -111,7 +113,7 @@ func TestSystemRunner_ResolveRefPrefersBranchOverSameNamedTag(t *testing.T) {
 		t.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", args...)
 		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
+		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
 		)
@@ -123,6 +125,7 @@ func TestSystemRunner_ResolveRefPrefersBranchOverSameNamedTag(t *testing.T) {
 		t.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", "rev-parse", rev)
 		cmd.Dir = repo
+		cmd.Env = testutil.GitEnv()
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("rev-parse %s: %v", rev, err)
@@ -196,6 +199,7 @@ func TestSystemRunner_LsRemoteHeads(t *testing.T) {
 	repo, commit := fixtureRepo(t)
 	branch := exec.CommandContext(context.Background(), "git", "branch", "dev")
 	branch.Dir = repo
+	branch.Env = testutil.GitEnv()
 	if out, err := branch.CombinedOutput(); err != nil {
 		t.Fatalf("git branch: %v\n%s", err, out)
 	}
