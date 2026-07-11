@@ -157,6 +157,31 @@ func isMissingSubcommand(err error, selected *kong.Node) bool {
 		strings.HasPrefix(err.Error(), "expected one of ")
 }
 
+// styledUsageError renders a kong usage-error message and its follow-up
+// hint line: red / dimmed on an interactive terminal, unchanged otherwise —
+// so piped, NO_COLOR, and --no-interactive output stays byte-identical.
+func styledUsageError(interactive bool, msg string) (errLine, hintLine string) {
+	errLine = styleDiag(interactive, tui.DefaultTheme().Error, msg)
+	hintLine = styleDiag(interactive, tui.DefaultTheme().Hint, "Run 'gskill --help' for usage.")
+	return errLine, hintLine
+}
+
+// noInteractiveRequested reports whether --no-interactive appears anywhere in
+// args, scanned directly rather than through kong's parsed root struct: on a
+// usage error kong never applies flag values to root (Parse's Apply step
+// only runs after a fully successful trace), so root.NoInteractive stays
+// false regardless of what was typed or where. Scanning args directly keeps
+// the usage-error path honoring --no-interactive even when the parse itself
+// failed.
+func noInteractiveRequested(args []string) bool {
+	for _, a := range args {
+		if a == "--no-interactive" {
+			return true
+		}
+	}
+	return false
+}
+
 // Run parses args and executes the selected command, writing to stdout/stderr,
 // and returns the process exit code. Usage errors map to code 2; any error a
 // command returns is mapped through errs.ExitCode.
@@ -207,8 +232,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 		if selected == nil {
 			msg = suggestAlternative(err, parser.Model)
 		}
-		_, _ = fmt.Fprintln(stderr, msg)
-		_, _ = fmt.Fprintln(stderr, "Run 'gskill --help' for usage.")
+		errLine, hintLine := styledUsageError(!noInteractiveRequested(args) && isTTY(stderr), msg)
+		_, _ = fmt.Fprintln(stderr, errLine)
+		_, _ = fmt.Fprintln(stderr, hintLine)
 		return int(errs.CodeUsage)
 	}
 
@@ -231,9 +257,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 			out.Diag("%v", runErr)
 			return errs.ExitCode(runErr)
 		}
-		out.Diag("error: %v", runErr)
+		out.ErrDiag("error: %v", runErr)
 		if hint := errs.HintOf(runErr); hint != "" {
-			out.Diag("→ %s", hint)
+			out.Hint("→ %s", hint)
 		}
 		return errs.ExitCode(runErr)
 	}
