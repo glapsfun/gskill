@@ -87,7 +87,7 @@ func (o *Output) Confirm(prompt string, assumeYes bool) bool {
 		}
 		in = os.Stdin
 	}
-	_, _ = fmt.Fprintf(o.stderr, "%s [y/N]: ", prompt)
+	_, _ = fmt.Fprintf(o.stderr, "%s [y/N]: ", styleDiag(o.stderrColor(), tui.DefaultTheme().Warning, prompt))
 	var reply string
 	_, _ = fmt.Fscanln(in, &reply)
 	switch strings.ToLower(strings.TrimSpace(reply)) {
