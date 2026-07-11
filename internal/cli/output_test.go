@@ -65,6 +65,90 @@ func TestOutput_DiagGoesToStderrAndRespectsQuiet(t *testing.T) {
 	}
 }
 
+func TestOutput_InfoGoesToStderrAndRespectsQuiet(t *testing.T) {
+	t.Parallel()
+
+	var out, errb bytes.Buffer
+	o := cli.NewOutput(&out, &errb, cli.OutputOptions{})
+	o.Info("pruned: %s", "old-skill")
+	if !strings.Contains(errb.String(), "pruned: old-skill") {
+		t.Errorf("stderr = %q, want diagnostic", errb.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want diagnostics kept off stdout", out.String())
+	}
+
+	var out2, errb2 bytes.Buffer
+	quiet := cli.NewOutput(&out2, &errb2, cli.OutputOptions{Quiet: true})
+	quiet.Info("pruned: %s", "suppressed")
+	if errb2.Len() != 0 {
+		t.Errorf("quiet stderr = %q, want empty", errb2.String())
+	}
+}
+
+func TestOutput_WarnGoesToStderrAndRespectsQuiet(t *testing.T) {
+	t.Parallel()
+
+	var out, errb bytes.Buffer
+	o := cli.NewOutput(&out, &errb, cli.OutputOptions{})
+	o.Warn("warning: %s", "something")
+	if !strings.Contains(errb.String(), "warning: something") {
+		t.Errorf("stderr = %q, want diagnostic", errb.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want diagnostics kept off stdout", out.String())
+	}
+
+	var out2, errb2 bytes.Buffer
+	quiet := cli.NewOutput(&out2, &errb2, cli.OutputOptions{Quiet: true})
+	quiet.Warn("warning: %s", "suppressed")
+	if errb2.Len() != 0 {
+		t.Errorf("quiet stderr = %q, want empty", errb2.String())
+	}
+}
+
+func TestOutput_ErrDiagGoesToStderrAndRespectsQuiet(t *testing.T) {
+	t.Parallel()
+
+	var out, errb bytes.Buffer
+	o := cli.NewOutput(&out, &errb, cli.OutputOptions{})
+	o.ErrDiag("error: %s", "boom")
+	if !strings.Contains(errb.String(), "error: boom") {
+		t.Errorf("stderr = %q, want diagnostic", errb.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want diagnostics kept off stdout", out.String())
+	}
+
+	var out2, errb2 bytes.Buffer
+	quiet := cli.NewOutput(&out2, &errb2, cli.OutputOptions{Quiet: true})
+	quiet.ErrDiag("error: %s", "suppressed")
+	if errb2.Len() != 0 {
+		t.Errorf("quiet stderr = %q, want empty", errb2.String())
+	}
+}
+
+func TestOutput_HintGoesToStderrAndRespectsQuiet(t *testing.T) {
+	t.Parallel()
+
+	var out, errb bytes.Buffer
+	o := cli.NewOutput(&out, &errb, cli.OutputOptions{})
+	o.Hint("→ %s", "run 'gskill doctor'")
+	if !strings.Contains(errb.String(), "→ run 'gskill doctor'") {
+		t.Errorf("stderr = %q, want diagnostic", errb.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want diagnostics kept off stdout", out.String())
+	}
+
+	var out2, errb2 bytes.Buffer
+	quiet := cli.NewOutput(&out2, &errb2, cli.OutputOptions{Quiet: true})
+	quiet.Hint("→ %s", "suppressed")
+	if errb2.Len() != 0 {
+		t.Errorf("quiet stderr = %q, want empty", errb2.String())
+	}
+}
+
 func TestOutput_NonFileWriterIsNotInteractive(t *testing.T) {
 	t.Parallel()
 
