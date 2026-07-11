@@ -32,7 +32,7 @@ func (verifyCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 			"actual": s.Actual,
 		})
 		if !s.OK {
-			out.Diag("verify: %s %s (expected %s)", s.Name, s.Issue, s.Expected)
+			out.Warn("verify: %s %s (expected %s)", s.Name, s.Issue, s.Expected)
 		}
 	}
 

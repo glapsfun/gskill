@@ -245,7 +245,7 @@ func finishWizardOutcome(out *Output, outcome tui.WizardOutcome) error {
 	}
 	if outcome.Executed {
 		for _, w := range outcome.Result.Warnings {
-			out.Diag("warning: %s", w)
+			out.Warn("warning: %s", w)
 		}
 		return addCmd{}.renderInstalled(out, outcome.Result)
 	}
@@ -281,7 +281,7 @@ func (c addCmd) runDirect(ctx context.Context, out *Output, a *app.App, root pro
 	}
 
 	for _, w := range res.Warnings {
-		out.Diag("warning: %s", w)
+		out.Warn("warning: %s", w)
 	}
 
 	if c.List {

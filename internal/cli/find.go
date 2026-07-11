@@ -37,7 +37,7 @@ func (c searchCmd) Run(ctx context.Context, out *Output, a *app.App, root projec
 		return err
 	}
 	for _, w := range warnings {
-		out.Diag("warning: %s", w)
+		out.Warn("warning: %s", w)
 	}
 
 	lines := make([]string, 0, len(hits))

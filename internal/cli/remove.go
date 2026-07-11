@@ -34,7 +34,7 @@ func (c removeCmd) Run(ctx context.Context, out *Output, a *app.App, root projec
 	}
 
 	for _, name := range res.NotPresent {
-		out.Diag("not installed: %s", name)
+		out.Info("not installed: %s", name)
 	}
 	human := fmt.Sprintf("Removed %d skill(s); GC'd %d store entr(ies)", len(res.Removed), res.StoreGCed)
 	human = out.summary(human)
