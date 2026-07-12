@@ -30,7 +30,7 @@ func (c initCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 
 	created := res.Created
 	if len(created) == 0 {
-		out.Diag("already initialized")
+		out.Info("already initialized")
 	}
 	human := out.summary("Initialized gskill local state")
 	if len(created) > 0 {

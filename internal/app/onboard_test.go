@@ -22,6 +22,7 @@ import (
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/store"
+	"github.com/glapsfun/gskill/internal/testutil"
 )
 
 // Phase-API integration tests for spec 011 (contracts/app-phases.md):
@@ -570,7 +571,7 @@ func gitSource(t *testing.T) (repo, commitV1, commitV2 string) {
 		t.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", args...)
 		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
+		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
 		)
@@ -720,7 +721,7 @@ func gitSourceWithMovedContent(t *testing.T) (repo string) {
 		t.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", args...)
 		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
+		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
 		)
@@ -921,7 +922,7 @@ func gitSourceWithVendorDup(t *testing.T) (repo string) {
 		t.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", args...)
 		cmd.Dir = repo
-		cmd.Env = append(os.Environ(),
+		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
 		)

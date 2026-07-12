@@ -10,7 +10,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
+
+	"github.com/glapsfun/gskill/internal/tui"
 )
 
 // OutputOptions configures an Output harness.
@@ -84,7 +87,7 @@ func (o *Output) Confirm(prompt string, assumeYes bool) bool {
 		}
 		in = os.Stdin
 	}
-	_, _ = fmt.Fprintf(o.stderr, "%s [y/N]: ", prompt)
+	_, _ = fmt.Fprintf(o.stderr, "%s [y/N]: ", styleDiag(o.stderrColor(), tui.DefaultTheme().Warning, prompt))
 	var reply string
 	_, _ = fmt.Fscanln(in, &reply)
 	switch strings.ToLower(strings.TrimSpace(reply)) {
@@ -101,6 +104,53 @@ func (o *Output) Diag(format string, args ...any) {
 		return
 	}
 	_, _ = fmt.Fprintf(o.stderr, format+"\n", args...)
+}
+
+// styleDiag renders text in st when interactive, unchanged otherwise, so
+// every Diag-based helper stays byte-identical without color (piped,
+// NO_COLOR, --no-interactive) by construction.
+func styleDiag(interactive bool, st lipgloss.Style, text string) string {
+	if !interactive {
+		return text
+	}
+	return st.Render(text)
+}
+
+// stderrColor reports whether diagnostics written to stderr should carry
+// color. o.interactive alone answers "is stdout a TTY" (that is what
+// NewOutput keys it on, correctly, for stdout-bound rendering) — it says
+// nothing about whether stderr was independently redirected, e.g.
+// `gskill add foo 2>err.log` with stdout still attached to a terminal. Every
+// stderr-styling call site must check stderr's own TTY status too.
+func (o *Output) stderrColor() bool {
+	return o.interactive && isTTY(o.stderr)
+}
+
+// Info writes a neutral diagnostic to stderr, dimmed on an interactive
+// terminal.
+func (o *Output) Info(format string, args ...any) {
+	o.Diag("%s", styleDiag(o.stderrColor(), tui.DefaultTheme().Subtitle, fmt.Sprintf(format, args...)))
+}
+
+// Warn writes a warning-severity diagnostic to stderr, yellow on an
+// interactive terminal.
+func (o *Output) Warn(format string, args ...any) {
+	o.Diag("%s", styleDiag(o.stderrColor(), tui.DefaultTheme().Warning, fmt.Sprintf(format, args...)))
+}
+
+// ErrDiag writes an error-severity diagnostic to stderr, red on an
+// interactive terminal. Unlike a command's returned error (which Run maps to
+// an exit code), this is for error-severity lines a command reports without
+// failing the whole run — and for Run's own error-reporting lines.
+func (o *Output) ErrDiag(format string, args ...any) {
+	o.Diag("%s", styleDiag(o.stderrColor(), tui.DefaultTheme().Error, fmt.Sprintf(format, args...)))
+}
+
+// Hint writes a dimmed, actionable follow-up line to stderr — the
+// arrow-prefixed suggestion shown after an error (e.g. "→ run 'gskill
+// doctor'").
+func (o *Output) Hint(format string, args ...any) {
+	o.Diag("%s", styleDiag(o.stderrColor(), tui.DefaultTheme().Hint, fmt.Sprintf(format, args...)))
 }
 
 // isTTY reports whether w is an interactive terminal.

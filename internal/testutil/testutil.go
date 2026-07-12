@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,4 +49,29 @@ func Golden(t *testing.T, name string, got []byte) {
 func TempProject(t *testing.T) string {
 	t.Helper()
 	return t.TempDir()
+}
+
+// GitEnv returns a subprocess environment safe for running git against a
+// test's own isolated fixture repository: os.Environ() with every ambient
+// GIT_* variable stripped, plus extra appended. Without this, a git command
+// invoked from inside a real git hook (as gotest-short runs under
+// pre-commit) inherits GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE that git sets for
+// the hook subprocess tree, so a fixture's "git init" in its own t.TempDir()
+// silently operates on the enclosing gskill repository instead — under
+// t.Parallel() this races real git state and can corrupt it.
+//
+// This strips every GIT_* variable, unlike internal/git.sanitizedEnv's
+// narrower repo-location-only allowlist: fixtures are local, no-auth repos
+// that never need GIT_SSH_COMMAND/GIT_ASKPASS/GIT_CONFIG_*, so the blunter
+// strip is safe here even though it would be wrong for gskill's own fetches.
+func GitEnv(extra ...string) []string {
+	env := os.Environ()
+	filtered := env[:0]
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GIT_") {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return append(filtered, extra...)
 }

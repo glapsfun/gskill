@@ -27,7 +27,7 @@ func (doctorCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	}
 
 	for _, w := range report.Warnings {
-		out.Diag("warning: %s", w)
+		out.Warn("warning: %s", w)
 	}
 
 	reqs := make([]map[string]any, 0, len(report.Requirements))

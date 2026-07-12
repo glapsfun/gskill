@@ -142,6 +142,45 @@ func (w *progressWriter) String() string {
 	return w.raw.String() + w.partial.String()
 }
 
+// repoLocationEnvPrefixes are the environment variables git uses to resolve
+// a repository's location, overriding the dir git would otherwise discover
+// from cmd.Dir. git sets several of these for hook subprocesses (and an
+// enclosing process may set them for other reasons); left unfiltered, they
+// silently redirect gskill's own git commands at an unrelated repository
+// instead of dir. Auth/behavior/config variables (GIT_SSH_COMMAND,
+// GIT_ASKPASS, GIT_TERMINAL_PROMPT, GIT_CONFIG_COUNT/KEY_*/VALUE_*, ...) are
+// deliberately left untouched even though git also sets some of these for
+// hook subprocesses — a user's git auth and config-injection setup (e.g.
+// GIT_CONFIG_KEY_0=http.extraheader for a private source) must keep working
+// through gskill's fetches; only the narrower repo-location class is
+// filtered here. See internal/testutil.GitEnv for the test-only counterpart,
+// which can afford to strip all GIT_* vars since fixtures never need auth.
+var repoLocationEnvPrefixes = []string{
+	"GIT_DIR=", "GIT_WORK_TREE=", "GIT_INDEX_FILE=", "GIT_COMMON_DIR=",
+	"GIT_OBJECT_DIRECTORY=", "GIT_ALTERNATE_OBJECT_DIRECTORIES=",
+	"GIT_CEILING_DIRECTORIES=",
+}
+
+// sanitizedEnv returns os.Environ() with repoLocationEnvPrefixes stripped, so
+// dir is always the sole authority for which repository a git call targets.
+func sanitizedEnv() []string {
+	env := os.Environ()
+	filtered := env[:0]
+	for _, kv := range env {
+		blocked := false
+		for _, prefix := range repoLocationEnvPrefixes {
+			if strings.HasPrefix(kv, prefix) {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
+			filtered = append(filtered, kv)
+		}
+	}
+	return filtered
+}
+
 // runGitProgress executes git with args, streaming stderr through the
 // progress parser. Error handling (classification, credential redaction)
 // matches the historical exec path; LC_ALL=C pins git's output to the
@@ -151,7 +190,7 @@ func runGitProgress(ctx context.Context, dir string, onEvent progress.Sink, args
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	cmd.Env = append(sanitizedEnv(), "LC_ALL=C")
 	var out bytes.Buffer
 	errw := newProgressWriter(onEvent)
 	cmd.Stdout = &out

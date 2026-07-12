@@ -35,10 +35,10 @@ func (c syncCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	}
 
 	for _, p := range res.Pruned {
-		out.Diag("pruned: %s", p)
+		out.Info("pruned: %s", p)
 	}
 	for _, o := range res.Orphans {
-		out.Diag("orphan (run with --prune to remove): %s", o)
+		out.Warn("orphan (run with --prune to remove): %s", o)
 	}
 
 	changed := 0

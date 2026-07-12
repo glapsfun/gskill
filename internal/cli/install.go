@@ -202,7 +202,7 @@ func renderLockInstall(out *Output, res app.InstallFromLockResult) error {
 		human = fmt.Sprintf("Up to date (%d skill(s), no changes)", len(res.Skills))
 	}
 	for _, p := range res.Pruned {
-		out.Diag("pruned: %s", p)
+		out.Info("pruned: %s", p)
 	}
 	human = out.summary(human)
 	return out.Result(human, map[string]any{

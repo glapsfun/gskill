@@ -33,7 +33,7 @@ func (c outdatedCmd) Run(ctx context.Context, out *Output, a *app.App, root proj
 	for _, s := range report.Skills {
 		if s.Available {
 			available++
-			out.Diag("%s: %s -> %s", s.Name, s.Current, s.Latest)
+			out.Info("%s: %s -> %s", s.Name, s.Current, s.Latest)
 		}
 		skills = append(skills, map[string]any{
 			"name": s.Name, "current": s.Current, "latest": s.Latest, "available": s.Available,

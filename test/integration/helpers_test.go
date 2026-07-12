@@ -14,6 +14,7 @@ import (
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/cli"
+	"github.com/glapsfun/gskill/internal/testutil"
 )
 
 // newApp builds an App with a discard logger for tests.
@@ -127,7 +128,7 @@ func gitRun(t *testing.T, dir string, args ...string) {
 
 	cmd := exec.CommandContext(context.Background(), "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = testutil.GitEnv(
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
 	)

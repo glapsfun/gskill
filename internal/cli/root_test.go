@@ -62,6 +62,19 @@ func TestRun_UsageErrorExits2(t *testing.T) {
 	}
 }
 
+func TestRun_UsageErrorMessageUnchangedWithoutColor(t *testing.T) {
+	t.Parallel()
+
+	_, stderr, code := run(t, "--definitely-not-a-flag")
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage)", code)
+	}
+	want := "unknown flag --definitely-not-a-flag\nRun 'gskill --help' for usage.\n"
+	if stderr != want {
+		t.Errorf("stderr = %q, want %q", stderr, want)
+	}
+}
+
 func TestRun_BareInvocationPrintsHelp(t *testing.T) {
 	t.Parallel()
 
