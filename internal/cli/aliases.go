@@ -32,6 +32,7 @@ var aliasTable = []aliasMapping{
 	{Old: "verify", Canonical: "project verify", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 	{Old: "check", Canonical: "project check", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 	{Old: "diff", Canonical: "project diff", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
+	{Old: "status", Canonical: "list", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 
 	// Flag audit result (spec FR-009): the shared vocabulary — --agent
 	// (repeatable), --global/--project, --force, --all, --dry-run, --yes,

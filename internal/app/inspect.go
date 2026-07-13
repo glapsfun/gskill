@@ -92,7 +92,7 @@ func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckRepo
 		return CheckReport{}, err
 	}
 
-	health, err := a.healthByName(p, lf)
+	health, err := a.healthByName(p, lf, true)
 	if err != nil {
 		return CheckReport{}, err
 	}
@@ -127,11 +127,13 @@ func chainStatus(root, name string, lf *skillslock.State, h SkillHealth) integri
 	return status
 }
 
-// healthByName evaluates the chain health of every locked skill, keyed by name.
-// It hash-verifies content so check fails closed (exit 6) on a tampered store or
-// a corrupt copy target, not just on structural drift.
-func (a *App) healthByName(p *project, lf *skillslock.State) (map[string]SkillHealth, error) {
-	healths, err := a.evaluateHealth(p, lf, true)
+// healthByName evaluates the chain health of every locked skill, keyed by
+// name. verifyHash controls whether store content is re-hashed: Check passes
+// true so it fails closed (exit 6) on a tampered store or a corrupt copy
+// target, not just on structural drift; List passes false for the same
+// cheap, non-verifying path `status` always used.
+func (a *App) healthByName(p *project, lf *skillslock.State, verifyHash bool) (map[string]SkillHealth, error) {
+	healths, err := a.evaluateHealth(p, lf, verifyHash)
 	if err != nil {
 		return nil, err
 	}

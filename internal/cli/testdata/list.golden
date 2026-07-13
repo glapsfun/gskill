@@ -1,19 +1,38 @@
 {
   "skills": [
     {
+      "active": "ok",
+      "agent_health": [
+        {
+          "id": "claude",
+          "mode": "symlink",
+          "health": "ok-symlink"
+        },
+        {
+          "id": "codex",
+          "mode": "symlink",
+          "health": "missing"
+        }
+      ],
       "agents": [
         "claude",
         "codex"
       ],
+      "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      "content_hash": "sha256:deadbeefcafef00d",
       "name": "kubernetes-expert",
       "source": "github.com/acme/widgets",
       "status": "installed",
       "version": "2.1.3"
     },
     {
+      "active": "missing",
+      "agent_health": [],
       "agents": [
         "claude"
       ],
+      "commit": "",
+      "content_hash": "",
       "name": "shell-helper",
       "source": "github.com/acme/shell",
       "status": "missing",

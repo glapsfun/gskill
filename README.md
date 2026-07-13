@@ -72,10 +72,9 @@ gskill outdated --exit-code               # exit 8 if updates are available
 gskill update [skill...]                  # advance within constraints, rewrite lock
 gskill add github.com/owner/repo --skill argocd --agent codex  # share an installed skill with another agent
 gskill project sync                               # reconcile disk to the lock (--prune removes managed orphans)
-gskill status --json                      # per-skill, per-agent install health
 gskill unlink argocd --agent codex        # detach one agent (--prune drops the last)
 gskill remove <skill>                     # uninstall + GC the store
-gskill list --json                        # machine-readable inventory
+gskill list --json                        # machine-readable inventory, incl. per-skill, per-agent install health
 ```
 
 Commit `gskill.toml` (intent) and `skills-lock.json` (resolved reality); reproduce a
@@ -112,8 +111,8 @@ prefer a symlink, fall back to a copy where symlinks are unsupported).
 
 `gskill --help` groups the surface into four sections; the long-tail
 maintenance commands live under the `project` noun. Every pre-existing flat
-invocation (`sync`, `verify`, `check`, `lock`, `diff`, `repair`, `find`, `tui`)
-still works as a silent alias of its canonical form.
+invocation (`sync`, `verify`, `check`, `lock`, `diff`, `repair`, `find`, `tui`,
+`status`) still works as a silent alias of its canonical form.
 
 | Command | Purpose |
 | --- | --- |
@@ -125,7 +124,7 @@ still works as a silent alias of its canonical form.
 | `update [name]` | Advance resolutions within constraints; rewrite the lock. |
 | `remove <name>` | Uninstall; drop from the lock; GC the store. |
 | **INSPECT** | |
-| `list` / `status` / `info` | Inspect installed skills and per-agent health. |
+| `list` / `info` | Inspect installed skills, their status, and per-agent health. |
 | `search` | Search skills in a source, GitHub owner, or configured repos (alias: `find`). |
 | `outdated` | Show available updates (`--exit-code` → 8). |
 | **PROJECT** | |
