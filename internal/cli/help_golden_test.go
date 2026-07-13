@@ -26,7 +26,6 @@ var helpPages = []struct {
 	{"remove", []string{"remove"}},
 
 	{"list", []string{"list"}},
-	{"status", []string{"status"}},
 	{"info", []string{"info"}},
 	{"search", []string{"search"}},
 	{"outdated", []string{"outdated"}},
@@ -58,7 +57,7 @@ var helpPages = []struct {
 // + spec 011 onboard).
 var visibleTopLevel = []string{
 	"init", "add", "onboard", "install", "update", "remove",
-	"list", "status", "info", "search", "outdated",
+	"list", "info", "search", "outdated",
 	"project",
 	"source", "cache", "config", "unlink", "doctor", "dashboard", "completion", "version",
 }
@@ -121,8 +120,9 @@ func TestRootHelp_GroupedSections(t *testing.T) {
 		}
 	}
 	// The regrouped maintenance commands must not appear as top-level entries
-	// (FR-004); they live under `project` and as hidden aliases only.
-	for _, old := range []string{"sync", "repair", "lock", "verify", "check", "diff"} {
+	// (FR-004); they live under `project` and as hidden aliases only. `status`
+	// joins this list as a hidden alias of `list` (spec 013 FR-006).
+	for _, old := range []string{"sync", "repair", "lock", "verify", "check", "diff", "status"} {
 		re := regexp.MustCompile(`(?m)^\s{2,4}` + old + `\b`)
 		if re.MatchString(stdout) {
 			t.Errorf("root help lists hidden alias %q as a top-level entry", old)

@@ -59,38 +59,33 @@ func renderAligned(st tui.Theme, headers []string, rows [][]string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// renderListStyled renders `gskill list` for a TTY.
+// renderListStyled renders `gskill list` for a TTY, including the
+// active-layer and per-agent health columns that `gskill status` used to
+// show on its own (spec 013).
 func renderListStyled(skills []app.ListedSkill) string {
 	if len(skills) == 0 {
-		return "No skills installed."
+		return noSkillsInstalled
 	}
 	st := tui.DefaultTheme()
 	rows := make([][]string, 0, len(skills))
 	for _, s := range skills {
 		rows = append(rows, []string{
 			st.Accent.Render(s.Name), s.Version, st.Subtitle.Render(s.Source), st.StatusCell(s.Status),
+			st.HealthCell(s.Active), agentHealthCellStyled(st, s.AgentHealth),
 		})
 	}
-	return renderAligned(st, []string{"NAME", "VERSION", "SOURCE", "STATUS"}, rows)
+	return renderAligned(st, []string{"NAME", "VERSION", "SOURCE", "STATUS", "ACTIVE", "AGENTS"}, rows)
 }
 
-// renderStatusStyled renders `gskill status` for a TTY.
-func renderStatusStyled(report app.StatusReport) string {
-	if len(report.Skills) == 0 {
-		return "0 skill(s)"
+// agentHealthCellStyled renders one row's AGENTS cell: each agent as
+// "id health", styled, joined by two spaces — the exact format
+// `renderStatusStyled` used before the merge.
+func agentHealthCellStyled(st tui.Theme, agents []app.AgentHealthEntry) string {
+	cells := make([]string, 0, len(agents))
+	for _, ag := range agents {
+		cells = append(cells, st.Subtitle.Render(ag.ID)+" "+st.HealthCell(ag.Health))
 	}
-	st := tui.DefaultTheme()
-	rows := make([][]string, 0, len(report.Skills))
-	for _, s := range report.Skills {
-		agents := make([]string, 0, len(s.Agents))
-		for _, ag := range s.Agents {
-			agents = append(agents, st.Subtitle.Render(ag.ID)+" "+st.HealthCell(ag.Health))
-		}
-		rows = append(rows, []string{
-			st.Accent.Render(s.Name), st.HealthCell(s.Active), strings.Join(agents, "  "),
-		})
-	}
-	return renderAligned(st, []string{"NAME", "ACTIVE", "AGENTS"}, rows)
+	return strings.Join(cells, "  ")
 }
 
 // renderInfoStyled renders `gskill info` for a TTY.

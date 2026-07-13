@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,11 +18,22 @@ func stripAnsi(s string) string { return ansiRE.ReplaceAllString(s, "") }
 func TestRenderListStyled_ColumnsAndGlyphs(t *testing.T) {
 	t.Parallel()
 	skills := []app.ListedSkill{
-		{Name: "tui-design", Version: "1.0.1", Source: "acme/skills", Status: "installed"},
-		{Name: "deploy", Version: "0.9.2", Source: "corp/devops", Status: "missing"},
+		{
+			Name: "tui-design", Version: "1.0.1", Source: "acme/skills", Status: "installed",
+			Active: "ok", AgentHealth: []app.AgentHealthEntry{
+				{ID: "claude", Health: "ok-symlink"}, {ID: "codex", Health: "ok-symlink"},
+			},
+		},
+		{
+			Name: "deploy", Version: "0.9.2", Source: "corp/devops", Status: "missing",
+			Active: "ok", AgentHealth: []app.AgentHealthEntry{{ID: "claude", Health: "missing"}},
+		},
 	}
 	got := renderListStyled(skills)
-	for _, want := range []string{"NAME", "VERSION", "SOURCE", "STATUS", "●", "✗", "tui-design", "corp/devops"} {
+	for _, want := range []string{
+		"NAME", "VERSION", "SOURCE", "STATUS", "ACTIVE", "AGENTS", "●", "✗",
+		"tui-design", "corp/devops", "claude", "ok-symlink", "missing",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("styled list missing %q:\n%s", want, got)
 		}
@@ -32,12 +44,76 @@ func TestRenderListStyled_ColumnsAndGlyphs(t *testing.T) {
 		!strings.Contains(lines[1][idx:], "1.0.1") {
 		t.Errorf("VERSION column not aligned:\n%s", got)
 	}
+	// The ACTIVE column aligns: both data rows place their active glyph at the
+	// header's ACTIVE offset.
+	if idx := strings.Index(lines[0], "ACTIVE"); idx <= 0 ||
+		!strings.HasPrefix(strings.TrimLeft(lines[1][idx:], " "), "●") {
+		t.Errorf("ACTIVE column not aligned:\n%s", got)
+	}
 }
 
 func TestRenderListStyled_Empty(t *testing.T) {
 	t.Parallel()
-	if got := renderListStyled(nil); got != "No skills installed." {
+	if got := renderListStyled(nil); got != noSkillsInstalled {
 		t.Errorf("empty styled list = %q", got)
+	}
+}
+
+func TestRenderListStyled_EmptyAgentHealth(t *testing.T) {
+	t.Parallel()
+	got := renderListStyled([]app.ListedSkill{
+		{Name: "solo", Version: "1.0.0", Source: "acme/skills", Status: "installed", Active: "ok"},
+	})
+	if !strings.Contains(got, "solo") {
+		t.Errorf("styled list missing row for empty-AgentHealth skill:\n%s", got)
+	}
+}
+
+func TestRenderListTable_ActiveAndAgentHealthColumns(t *testing.T) {
+	t.Parallel()
+	skills := []app.ListedSkill{
+		{
+			Name: "tui-design", Version: "1.0.1", Source: "acme/skills", Status: "installed",
+			Active: "ok", AgentHealth: []app.AgentHealthEntry{
+				{ID: "claude", Health: "ok-symlink"}, {ID: "codex", Health: "missing"},
+			},
+		},
+	}
+	got := renderListTable(skills)
+
+	// The four pre-existing columns keep their current NAME/STATUS/VERSION/
+	// SOURCE positional order and values (contracts/list-command.md §2) —
+	// ACTIVE/AGENTS are appended, not inserted, so this prefix must be
+	// unchanged from before the merge.
+	lines := strings.Split(got, "\n")
+	if len(lines) != 1 {
+		t.Fatalf("want 1 line, got %d:\n%s", len(lines), got)
+	}
+	wantPrefix := fmt.Sprintf("%-24s %-10s %-14s", "tui-design", "installed", "1.0.1")
+	if !strings.HasPrefix(lines[0], wantPrefix) {
+		t.Errorf("plain list column order changed, want prefix %q:\n%q", wantPrefix, lines[0])
+	}
+	for _, want := range []string{"acme/skills", "ok", "claude", "ok-symlink", "codex", "missing"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plain list missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderListTable_EmptyAgentHealth(t *testing.T) {
+	t.Parallel()
+	got := renderListTable([]app.ListedSkill{
+		{Name: "solo", Version: "1.0.0", Source: "acme/skills", Status: "installed", Active: "ok"},
+	})
+	if !strings.Contains(got, "solo") {
+		t.Errorf("plain list missing row for empty-AgentHealth skill:\n%s", got)
+	}
+}
+
+func TestRenderListTable_Empty(t *testing.T) {
+	t.Parallel()
+	if got := renderListTable(nil); got != noSkillsInstalled {
+		t.Errorf("empty plain list = %q", got)
 	}
 }
 
@@ -48,38 +124,6 @@ func TestRenderInfoStyled_Fields(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("styled info missing %q:\n%s", want, got)
 		}
-	}
-}
-
-func TestRenderStatusStyled_ColumnsAndGlyphs(t *testing.T) {
-	t.Parallel()
-	report := app.StatusReport{Skills: []app.SkillStatus{
-		{Name: "audience-ingestion", Active: "ok", Agents: []app.AgentStatus{
-			{ID: "claude", Health: "ok-symlink"}, {ID: "codex", Health: "ok-symlink"},
-		}},
-		{Name: "event-ingestion", Active: "ok", Agents: []app.AgentStatus{
-			{ID: "claude", Health: "missing"},
-		}},
-	}}
-	got := renderStatusStyled(report)
-	for _, want := range []string{"NAME", "ACTIVE", "AGENTS", "●", "✗", "audience-ingestion", "claude", "ok-symlink", "missing"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("styled status missing %q:\n%s", want, got)
-		}
-	}
-	// The ACTIVE column aligns: both data rows place their active glyph at the
-	// header's ACTIVE offset.
-	lines := strings.Split(got, "\n")
-	if idx := strings.Index(lines[0], "ACTIVE"); idx <= 0 ||
-		!strings.HasPrefix(strings.TrimLeft(lines[1][idx:], " "), "●") {
-		t.Errorf("ACTIVE column not aligned:\n%s", got)
-	}
-}
-
-func TestRenderStatusStyled_Empty(t *testing.T) {
-	t.Parallel()
-	if got := renderStatusStyled(app.StatusReport{}); got != "0 skill(s)" {
-		t.Errorf("empty styled status = %q", got)
 	}
 }
 

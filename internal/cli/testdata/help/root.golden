@@ -36,10 +36,7 @@ CORE
 
 INSPECT
   list [flags]
-    List installed skills and their status.
-
-  status [flags]
-    Show installed skills, their agents, modes, and per-target health.
+    List installed skills, their status, and per-agent health.
 
   info <name> [flags]
     Show details for one skill.

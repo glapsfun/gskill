@@ -155,7 +155,7 @@ Install all declared skills (additive, idempotent).
 
 ## `list`
 
-List installed skills and their status.
+List installed skills, their status, and per-agent health.
 
 
 ## `onboard`
@@ -285,11 +285,6 @@ List all skills discovered in a source.
 | `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
 | `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
 | `--ref` | string | Branch or tag to scan. |
-
-
-## `status`
-
-Show installed skills, their agents, modes, and per-target health.
 
 
 ## `unlink`

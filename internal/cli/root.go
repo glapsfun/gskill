@@ -40,18 +40,21 @@ type rootCLI struct {
 	Update  updateCmd  `cmd:"" group:"core" help:"Advance skills within their version constraints."`
 	Remove  removeCmd  `cmd:"" group:"core" help:"Uninstall skills and clean up."`
 
-	List     listCmd     `cmd:"" group:"inspect" help:"List installed skills and their status."`
-	Status   statusCmd   `cmd:"" group:"inspect" help:"Show installed skills, their agents, modes, and per-target health."`
+	List     listCmd     `cmd:"" group:"inspect" help:"List installed skills, their status, and per-agent health."`
 	Info     infoCmd     `cmd:"" group:"inspect" help:"Show details for one skill."`
 	Search   searchCmd   `cmd:"" group:"inspect" aliases:"find" help:"Search for skills in a source, a GitHub owner, or configured repositories."`
 	Outdated outdatedCmd `cmd:"" group:"inspect" help:"Show skills with newer versions available."`
 
-	// Hidden aliases of the regrouped maintenance commands (see aliasTable).
-	// They reuse the same command structs as the project group, so behavior is
-	// identical by construction; the group tag keeps them out of kong's
-	// ungrouped "Commands:" bucket, hidden keeps them out of every help
-	// listing, and declaring them before Project keeps the section's spacing
-	// clean (kong emits an entry separator only after visible nodes).
+	// Hidden aliases of the regrouped maintenance commands, plus `status`
+	// (see aliasTable). Each reuses the same command struct as its canonical
+	// form, so behavior is identical by construction; the group tag keeps
+	// them out of kong's ungrouped "Commands:" bucket, hidden keeps them out
+	// of every help listing, and declaring them here — before Project, all
+	// tagged group:"project" regardless of their canonical command's own
+	// group — keeps the section's spacing clean (kong emits an entry
+	// separator only after visible nodes, and a hidden node's own group tag
+	// still affects that spacing).
+	Status listCmd   `cmd:"" hidden:"" group:"project" help:"List installed skills, their status, and per-agent health."`
 	Sync   syncCmd   `cmd:"" hidden:"" group:"project" help:"Reconcile disk to the lock's declared state (--prune removes managed orphans)."`
 	Repair repairCmd `cmd:"" hidden:"" group:"project" help:"Re-materialize broken installs and clean up staging."`
 	Verify verifyCmd `cmd:"" hidden:"" group:"project" help:"Re-hash installed content against the lockfile."`

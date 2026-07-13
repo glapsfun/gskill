@@ -1,6 +1,6 @@
 Usage: gskill list [flags]
 
-List installed skills and their status.
+List installed skills, their status, and per-agent health.
 
 Examples:
 

@@ -12,16 +12,33 @@ import (
 	"github.com/glapsfun/gskill/internal/integrity"
 )
 
-// ListedSkill is one row of `gskill list`.
+// ListedSkill is one row of `gskill list`. It carries every field `gskill
+// status` used to carry (Commit, ContentHash, Active, AgentHealth) alongside
+// list's own drift Status, so the two commands' data are now one shape
+// (spec 013).
 type ListedSkill struct {
-	Name    string
-	Source  string
-	Version string
-	Status  string
-	Agents  []string
+	Name        string
+	Source      string
+	Version     string
+	Status      string
+	Agents      []string
+	Commit      string
+	ContentHash string
+	Active      string
+	AgentHealth []AgentHealthEntry
 }
 
-// List returns every locked skill with its drift status.
+// AgentHealthEntry is one agent's install mode and health for a skill.
+type AgentHealthEntry struct {
+	ID     string `json:"id"`
+	Mode   string `json:"mode"`
+	Health string `json:"health"`
+}
+
+// List returns every locked skill with its drift status, active-layer
+// health, and per-agent health — the union of what `list` and `status` used
+// to report separately (spec 013 FR-001). Health is evaluated with the same
+// non-hash-verifying call `status` used, so this adds no new I/O-heavy work.
 func (a *App) List(_ context.Context, root string) ([]ListedSkill, error) {
 	p := openProject(root)
 	lf, err := loadOrNewLock(p.lockPath)
@@ -29,15 +46,37 @@ func (a *App) List(_ context.Context, root string) ([]ListedSkill, error) {
 		return nil, err
 	}
 
+	health, err := a.healthByName(p, lf, false)
+	if err != nil {
+		return nil, err
+	}
+
 	var out []ListedSkill
 	for _, name := range sortedKeys(lf.Skills) {
 		locked := lf.Skills[name]
+		h := health[name]
+		// Iterate locked.Installation.Agents (not sortedKeys(h.Agents)) so
+		// AgentHealth lines up index-for-index with the Agents field above:
+		// h.Agents/h.Modes are keyed by the same agent IDs, but insertion
+		// order (Agents) and alphabetical map order (sortedKeys) can differ.
+		agentHealth := make([]AgentHealthEntry, 0, len(locked.Installation.Agents))
+		for _, id := range locked.Installation.Agents {
+			agentHealth = append(agentHealth, AgentHealthEntry{
+				ID:     id,
+				Mode:   h.Modes[id],
+				Health: string(h.Agents[id]),
+			})
+		}
 		out = append(out, ListedSkill{
-			Name:    name,
-			Status:  string(classifySkill(root, name, lf)),
-			Source:  locked.Source.Original,
-			Version: displayVersion(locked.Resolved),
-			Agents:  locked.Installation.Agents,
+			Name:        name,
+			Status:      string(classifySkill(root, name, lf)),
+			Source:      locked.Source.Original,
+			Version:     displayVersion(locked.Resolved),
+			Agents:      locked.Installation.Agents,
+			Commit:      locked.Resolved.Commit,
+			ContentHash: locked.Resolved.ContentHash,
+			Active:      string(h.ActiveState),
+			AgentHealth: agentHealth,
 		})
 	}
 	return out, nil
