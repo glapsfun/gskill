@@ -1,305 +1,218 @@
-# gskill
+# GSKILL
+Reproducible package management for AI agent skills.
 
+[![CI](https://github.com/glapsfun/gskill/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/glapsfun/gskill/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/glapsfun/gskill)](https://github.com/glapsfun/gskill/releases/latest)
+[![Go](https://img.shields.io/github/go-mod/go-version/glapsfun/gskill)](go.mod)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20amd64%20%7C%20arm64-blue)](#project-status-and-compatibility)
+[![License](https://img.shields.io/github/license/glapsfun/gskill)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/glapsfun/gskill/badge)](https://scorecard.dev/viewer/?uri=github.com/glapsfun/gskill)
+[![Go Report Card](https://goreportcard.com/badge/github.com/glapsfun/gskill)](https://goreportcard.com/report/github.com/glapsfun/gskill)
+[![Downloads](https://img.shields.io/github/downloads/glapsfun/gskill/total)](https://github.com/glapsfun/gskill/releases)
 
-**GSKILL** is a reproducible package manager for agentic AI skills — it installs,
-versions, locks, verifies, and restores SKILL.md-based skill environments across
-AI coding agents, developer machines, and CI. Commit `skills-lock.json`; teammates and
-`skills-lock.json`, and reproduce a byte-identical skill environment anywhere.
+GSKILL installs, versions, locks, verifies, and restores `SKILL.md`-based AI agent
+skills across Claude Code, Codex, Cursor, Gemini CLI, developer machines, and CI.
+Commit `skills-lock.json`; teammates and CI reproduce a byte-identical skill
+environment anywhere with `gskill install --frozen-lockfile`.
 
-> **Status:** the v1 engine is implemented test-first behind the quality harness
-> below. `init`, `add`, `install` (incl. `--frozen-lockfile`/`--offline`),
-> `verify`, `check`, `outdated`, `update`, `lock`, `remove`, `sync`, `repair`,
-> `list`, `info`, `diff`, `doctor`, `cache`, `config`, `completion`, and `tui`
-> all work against Git and local sources for Claude Code, Codex, Cursor, and
-> Gemini CLI.
+## Why GSKILL
 
----
+AI agent skills — `SKILL.md` instruction bundles — are usually installed by hand:
+cloned into a dotfile directory, copied between projects, upgraded whenever someone
+remembers. That leaves no record of what's installed, no way to verify it wasn't
+tampered with, and no way to reproduce it on a second machine or in CI. GSKILL
+treats skills like dependencies: resolved, content-hashed, locked, and restorable
+byte-for-byte from a single committed file.
 
-## Installation
+## Key features
 
-gskill ships for **Linux and macOS** on **amd64 (x86_64)** and **arm64**. Windows is not
-supported.
+- **Reproducible installs** — `skills-lock.json` records intent and resolved
+  reality together; `--frozen-lockfile` restores exactly, or fails closed.
+- **Verified integrity** — every install is checked against a recorded content
+  hash; `gskill verify` re-checks on demand; skill content is never executed.
+- **Multi-agent, one store** — a skill is resolved and stored once and shared by
+  every agent that targets it, via symlinks (or copies where unsupported).
+- **Scriptable** — every capability is reachable from the CLI, with `--json`
+  output and documented exit codes for CI.
+- **Signed releases** — checksummed, cosign-signed archives with SBOMs and
+  build-provenance attestations.
 
-**Install script** (downloads the right archive and verifies its checksum):
+## Supported agents and platforms
+
+| Agent | Agent ID | Marker |
+| --- | --- | --- |
+| Claude Code | `claude` | `.claude/` |
+| Codex | `codex` | `.codex/` |
+| Cursor | `cursor` | `.cursor/` |
+| Gemini CLI | `gemini-cli` | `.gemini/` |
+
+gskill ships for **Linux and macOS** on **amd64** and **arm64**. Windows is not
+supported. See [Supported agents](docs/reference/agents.md) for detection and
+scope details.
+
+## Quick start
+
+**Install** (pick one):
 
 ```bash
+# Install script — downloads the right archive and verifies its checksum
 curl -sSfL https://raw.githubusercontent.com/glapsfun/gskill/main/scripts/install.sh | sh
-```
 
-Override the version or install directory with env vars:
-`VERSION=v0.4.0 INSTALL_DIR="$HOME/.local/bin" sh -c "$(curl -sSfL https://raw.githubusercontent.com/glapsfun/gskill/main/scripts/install.sh)"`.
-
-**Homebrew** (macOS and Linux):
-
-```bash
+# Homebrew (macOS and Linux)
 brew install glapsfun/tap/gskill
-```
 
-**Go** (requires a Go toolchain):
-
-```bash
+# Go (requires a Go toolchain)
 go install github.com/glapsfun/gskill/cmd/gskill@latest
 ```
 
-Verify the install with `gskill version`. Release artifacts are checksummed and
-cosign-signed with SBOMs and build-provenance attestations; see
-[docs/how-to/releasing.md](docs/how-to/releasing.md) to verify them.
+Verify the install with `gskill version`.
 
----
-
-## Usage
+**Use it:**
 
 ```bash
-gskill init                               # prepare .gskill/ + .agents/skills/
-gskill add github.com/owner/repo/skill    # resolve, install, lock
-                                          # (on a terminal, add opens a guided
-                                          #  wizard: search/select skills, pick a
-                                          #  version and agents, review, approve)
-gskill onboard                            # guided install without a source in hand
-gskill add github.com/owner/repo --dry-run     # print the plan, write nothing
-gskill add ./local/skill --agent codex    # install a local skill into one agent
-gskill add github.com/openai/skills --skill code-review   # pick one of many
-gskill add github.com/openai/skills --skill '*'           # install all valid skills
-gskill add github.com/openai/skills --list                # list skills, install nothing
-gskill source list github.com/openai/skills   # enumerate skills in a source
-gskill source check github.com/openai/skills  # report invalid/duplicate skills (exit 3)
-gskill search kubernetes --owner glapsfun        # search a GitHub owner's repos
-gskill install --frozen-lockfile          # reproduce exactly from skills-lock.json
-gskill project verify                             # re-hash installed content vs the lock
-gskill project check --fail-on-drift              # fast CI drift gate
-gskill outdated --exit-code               # exit 8 if updates are available
-gskill update [skill...]                  # advance within constraints, rewrite lock
-gskill add github.com/owner/repo --skill argocd --agent codex  # share an installed skill with another agent
-gskill project sync                               # reconcile disk to the lock (--prune removes managed orphans)
-gskill unlink argocd --agent codex        # detach one agent (--prune drops the last)
-gskill remove <skill>                     # uninstall + GC the store
-gskill list --json                        # machine-readable inventory, incl. per-skill, per-agent install health
+gskill init                                                      # prepare .gskill/ + .agents/skills/
+gskill add github.com/owner/repo --skill example --agent claude  # resolve, install, lock
+gskill install --frozen-lockfile                                 # reproduce exactly elsewhere
+gskill verify                                                    # re-hash installed content vs the lock
 ```
 
-Commit `gskill.toml` (intent) and `skills-lock.json` (resolved reality); reproduce a
-byte-identical environment anywhere with `gskill install --frozen-lockfile`.
+Commit `skills-lock.json` — it's the only project state file GSKILL writes; it
+records both what you asked for and what was resolved, so anyone can reproduce it
+with `gskill install --frozen-lockfile`.
 
-### Install once, share across agents
+## Core workflow
 
-A skill is resolved and stored **once** and shared by every agent that targets it,
-via three layers (all but `skills-lock.json` are gitignored and regenerated by
-`gskill project sync`):
+GSKILL's lifecycle is discover → add → lock → install → verify → update.
 
-```
-.gskill/store/<algo>/<hash>   immutable canonical content — one physical copy
-        ▲ symlink (copy fallback)
-.agents/skills/<name>          active project skill — one entry per installed skill
-        ▲ symlink (copy fallback)
-.claude/skills/<name>  .codex/skills/<name>  …   per-agent targets
-```
+### 1. Discover
 
-Adding an agent to a skill creates only the missing agent link — no re-download,
-no duplicate content. Each entry records its agents in `skills-lock.json`; run
-`gskill project sync`, or add them imperatively:
+Search for available skills:
 
-```toml
-[skills.argocd]
-source = "github.com/org/repo"
-agents = ["claude", "codex"]
+```bash
+gskill search kubernetes
 ```
 
-Install mode is chosen with `--symlink`, `--copy`, or `--auto` (the default:
-prefer a symlink, fall back to a copy where symlinks are unsupported).
+### 2. Add
 
-### Command reference
+Resolve, install, and record a skill:
 
-`gskill --help` groups the surface into four sections; the long-tail
-maintenance commands live under the `project` noun. Every pre-existing flat
-invocation (`sync`, `verify`, `check`, `lock`, `diff`, `repair`, `find`, `tui`,
-`status`) still works as a silent alias of its canonical form.
+```bash
+gskill add github.com/example/skills --skill kubernetes --agent claude
+```
 
-| Command | Purpose |
-| --- | --- |
-| **CORE** | |
-| `init` | Prepare the `.gskill/` state dir, `.agents/skills/` layer, and gitignore hints. |
-| `add <source>` | Resolve, install, and record a new skill (guided wizard on a terminal). |
-| `onboard` | Guided skill installation without a predefined source. |
-| `install` | Materialize all declared skills (additive, idempotent). |
-| `update [name]` | Advance resolutions within constraints; rewrite the lock. |
-| `remove <name>` | Uninstall; drop from the lock; GC the store. |
-| **INSPECT** | |
-| `list` / `info` | Inspect installed skills, their status, and per-agent health. |
-| `search` | Search skills in a source, GitHub owner, or configured repos (alias: `find`). |
-| `outdated` | Show available updates (`--exit-code` → 8). |
-| **PROJECT** | |
-| `project sync` | Reconcile disk to the lock's declared state (`--prune` removes managed orphans). |
-| `project repair` | Re-materialize broken installs; clean orphaned staging. |
-| `project verify` | Re-hash installed content against the lock (fail-closed). |
-| `project check` | Fast metadata drift report (`--fail-on-drift`). |
-| `project diff` | Show lock/disk differences. |
-| **MORE** | |
-| `source` | Inspect a source (list/inspect/check) without installing. |
-| `unlink <name>` | Detach one agent from a skill (`--prune` drops it when the last agent goes). |
-| `doctor` | Check git, detected agents, and declared requirements. |
-| `cache` / `config` / `completion` | Cache, configuration, and shell completion. |
-| `dashboard` | Interactive dashboard with a sanitized SKILL.md preview (alias: `tui`). |
+### 3. Lock
 
-### Exit codes
+Every `add`/`install`/`update` writes the resolution to `skills-lock.json`
+automatically — there's no separate lock step to remember.
 
-| Code | Meaning | Code | Meaning |
-| --- | --- | --- | --- |
-| 0 | success | 7 | drift detected (`--fail-on-drift`) |
-| 1 | generic error | 8 | update available (`outdated --exit-code`) |
-| 2 | usage error | 9 | unsupported / undetected agent |
-| 3 | invalid or missing skills-lock.json | 10 | partial installation |
-| 4 | lockfile mismatch (`--frozen-lockfile`) | 11 | authentication failure |
-| 5 | source unavailable / network | 12 | cache / lock failure |
-| 6 | integrity failure (checksum) | | |
+### 4. Install
 
----
+Reproduce a locked environment elsewhere, exactly:
+
+```bash
+gskill install --frozen-lockfile
+```
+
+### 5. Verify
+
+Re-hash installed content against the lock:
+
+```bash
+gskill verify
+```
+
+### 6. Update
+
+Advance within your version constraints and re-lock:
+
+```bash
+gskill update
+```
+
+## Common examples
+
+**Install a skill for one agent:**
+
+```bash
+gskill add github.com/example/skills --skill security-review --agent claude
+```
+
+**Install for multiple agents:**
+
+```bash
+gskill add github.com/example/skills --skill security-review --agent claude,codex
+```
+
+**Restore a cloned project:**
+
+```bash
+gskill install --frozen-lockfile
+```
+
+**Preview changes:**
+
+```bash
+gskill install --dry-run
+```
+
+**Check project health:**
+
+```bash
+gskill status
+gskill verify
+```
+
+**Update skills:**
+
+```bash
+gskill outdated
+gskill update
+```
 
 ## Documentation
 
 Full documentation lives in [`docs/`](docs/README.md), organized by the
 [Diátaxis](https://diataxis.fr/) framework:
 
-- **[Tutorial](docs/tutorials/getting-started.md)** — learn GSKILL from an empty
-  directory to a reproducible skill environment.
-- **[How-to guides](docs/how-to/index.md)** — task-focused recipes with examples,
-  one per feature.
-- **[Reference](docs/README.md#reference)** — commands, flags, exit codes, and the
-  lockfile/frontmatter schemas. The command and exit-code references are
-  generated from the CLI (`go run ./cmd/gen-reference`) and kept in lockstep by a
-  golden test.
+- **[Tutorial: Getting started](docs/tutorials/getting-started.md)** — from an
+  empty directory to a reproducible skill environment.
+- **[How-to guides](docs/how-to/index.md)** — task-focused recipes.
+- **[Reference](docs/README.md#reference)** — commands, exit codes, configuration,
+  and the lockfile/frontmatter schemas.
 - **[Explanation](docs/README.md#explanation)** — the reproducibility model,
-  integrity & trust, the store vs the cache, and multi-agent installs.
+  integrity and trust, the store, and multi-agent installs.
+- **[Contributing](docs/contributing/development.md)** — the TDD workflow and
+  quality gate for anyone changing GSKILL itself.
 
----
+## Project status and compatibility
 
-## TDD & Quality Harness
+GSKILL is under active development. The current release is `v0.2.0` (pre-1.0). It
+supports Linux and macOS on amd64 and arm64; Windows is not currently supported. It
+targets Claude Code, Codex, Cursor, and Gemini CLI. The lockfile format
+(`skills-lock.json`) is versioned; breaking CLI or schema changes may occur before
+v1.0 and are documented in release notes.
 
-Every change to GSKILL is built test-first and must pass a **single quality gate**.
-That gate is enforced identically in three places, so nothing slips through:
+`init`, `add`, `onboard`, `install` (incl. `--frozen-lockfile`/`--offline`),
+`verify`, `check`, `outdated`, `update`, `remove`, `sync`, `repair`, `list`,
+`info`, `search`, `diff`, `doctor`, `cache`, `config`, `completion`, and `dashboard`
+(`tui`) all work today against Git and local sources.
 
-| Layer | Mechanism | When it runs |
-| --- | --- | --- |
-| Developer / AI agent | `scripts/verify.sh` | On demand — the definition of done |
-| Git hooks | `pre-commit` framework | Fast checks on commit, full gate on push |
-| CI (source of truth) | `.github/workflows/ci.yml` | Every push to `main` and every PR |
+## Security and integrity
 
-All three run the **same shell scripts**, so a green local gate and a green CI run
-mean the same thing. The harness deliberately has **no Makefile** — the scripts in
-`scripts/` are the batch layer.
+Every install is verified against a recorded content hash before it's written; a
+mismatch aborts rather than partially installing. Skill content is data, never
+executed. Release artifacts are checksummed, cosign-signed, and shipped with SBOMs
+and build-provenance attestations — see
+[Cut and verify a release](docs/how-to/releasing.md) to verify them yourself. Read
+[Integrity and trust](docs/explanation/integrity-and-trust.md) for the full model.
 
-### Quick start
+## Contributing
 
-```bash
-# 1. One-time: install pinned dev tools into ./bin and activate git hooks
-./scripts/bootstrap.sh
+GSKILL is developed test-first behind a single quality gate
+(`./scripts/verify.sh`), enforced identically for local development, git hooks,
+and CI. See [docs/contributing/development.md](docs/contributing/development.md)
+for the full workflow, one-time setup, and script reference.
 
-# 2. Run the gate — exit 0 means the work is correct ("definition of done")
-./scripts/verify.sh
-```
+## License
 
-`bootstrap.sh` is reproducible: it installs each tool at the exact version pinned
-in `.config/tool-versions` into a project-local `./bin` (gitignored), so your
-machine, the AI agent, the git hooks, and CI all run byte-identical tool versions.
-
-### The gate
-
-`scripts/verify.sh` runs these checks in order and stops at the first failure:
-
-1. **`go mod tidy` check** — fails if `go.mod`/`go.sum` are not tidy
-2. **format check** — `golangci-lint fmt --diff` (gofmt + gofumpt)
-3. **lint** — `go vet` + `golangci-lint run` (40 linters via `.golangci.yml`)
-4. **tests** — `go test -race -shuffle=on` with a coverage profile
-5. **coverage floor** — total coverage must be ≥ `COVERAGE_MIN` (default `0`)
-6. **vulnerabilities** — `govulncheck` on called code paths
-7. **secrets** — `gitleaks` scan of the working tree
-
-### Scripts reference
-
-Each script is independently runnable, sources `scripts/lib.sh`, and resolves
-tools from `./bin` first.
-
-| Script | Purpose | Notable flags |
-| --- | --- | --- |
-| `scripts/bootstrap.sh` | Install pinned tools into `./bin`; install git hooks | — |
-| `scripts/verify.sh` | The full gate / definition of done | — |
-| `scripts/tdd.sh` | Watch `*.go` and re-run tests on change (inner TDD loop) | — |
-| `scripts/fmt.sh` | Format Go code | `--check` (no writes; for CI/hooks) |
-| `scripts/lint.sh` | `go vet` + `golangci-lint` | passes args through (e.g. `--fix`) |
-| `scripts/test.sh` | Race + coverage tests → `coverage.out` | `--short` (fast, no race/coverage) |
-| `scripts/cover.sh` | Enforce `COVERAGE_MIN` against the profile | reads `COVERAGE_MIN` env |
-| `scripts/vuln.sh` | `govulncheck` | — |
-| `scripts/secrets.sh` | `gitleaks` secret scan | — |
-
-### TDD workflow (red → green → refactor)
-
-1. **Red** — write the smallest failing test for the next behavior. Run
-   `scripts/test.sh` (or `scripts/tdd.sh` to watch) and see it fail.
-2. **Green** — write the minimal code to pass; run the tests again.
-3. **Refactor** — clean up with tests green.
-4. **Done** — only when `scripts/verify.sh` exits `0`.
-
-More detail (including guidance for AI agents) is in
-[`docs/tdd-workflow.md`](docs/tdd-workflow.md).
-
-### Pinned tooling
-
-Versions live in **`.config/tool-versions`** — the single source of truth read by
-both `bootstrap.sh` and CI:
-
-| Tool | What it does |
-| --- | --- |
-| `golangci-lint` (v2) | Lint + bundled formatters (gofmt, gofumpt) |
-| `govulncheck` | Known-vulnerability scanning |
-| `gitleaks` | Secret detection |
-
-`shellcheck` is provided by the pre-commit hook, not installed into `./bin`.
-
-### Git hooks (pre-commit framework)
-
-`.pre-commit-config.yaml` wires the framework to the harness scripts (logic lives
-in one place, not duplicated in YAML):
-
-- **on commit (fast):** format check, lint, `go test --short`, secret scan, plus
-  stock hooks (trailing whitespace, end-of-file, YAML/TOML checks, merge-conflict
-  and large-file guards) and `shellcheck` on `scripts/*.sh`.
-- **on push:** the full `scripts/verify.sh`.
-
-`bootstrap.sh` installs the hooks automatically (`pre-commit` must be installed).
-
-### Continuous integration
-
-`.github/workflows/ci.yml` checks out the repo, sets up Go 1.26 with module
-caching, runs `scripts/bootstrap.sh`, then runs `scripts/verify.sh` — the same
-gate you run locally — and uploads the coverage profile as an artifact.
-`.github/dependabot.yml` keeps Go modules and GitHub Actions up to date weekly.
-
----
-
-## Project layout
-
-```
-cmd/gskill/             # CLI entrypoint (prints version for now)
-internal/version/       # version package + proof test (the first red→green unit)
-scripts/                # the batch layer: bootstrap, verify, and per-check scripts
-docs/tdd-workflow.md    # red-green-refactor + definition-of-done
-.config/tool-versions   # pinned dev-tool versions (single source of truth)
-.golangci.yml           # lint + formatter configuration (40 linters)
-.gitleaks.toml          # secret-scan config (allowlists non-committed tooling dirs)
-.shellcheckrc           # shellcheck configuration for the scripts
-.pre-commit-config.yaml # git-hook wiring → harness scripts
-.github/workflows/ci.yml# CI gate
-bin/                    # gitignored; pinned tools land here after bootstrap
-```
-
-## Requirements
-
-- **Go 1.26+**
-- **[pre-commit](https://pre-commit.com)** (for git hooks)
-- A `git` binary
-
-## Building
-
-```bash
-go build ./...     # build everything
-go run ./cmd/gskill # prints: gskill dev
-```
+[MIT](LICENSE)
