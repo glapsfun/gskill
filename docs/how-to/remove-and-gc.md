@@ -16,7 +16,7 @@ gskill remove <name>
 ## Expected result
 
 - The skill is uninstalled from every agent directory it was in.
-- Its entry is removed from both `gskill.toml` and `skills-lock.json`.
+- Its entry is removed from `skills-lock.json`.
 - Store content no longer referenced by any skill is garbage-collected to reclaim space.
 - `gskill remove` exits `0`.
 

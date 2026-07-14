@@ -5,7 +5,7 @@ available. GSKILL is non-interactive by default, so these commands are CI-safe o
 
 ## Before you start
 
-- A committed `gskill.toml` and `skills-lock.json`.
+- A committed `skills-lock.json`.
 - A CI job that checks out the repo and has `gskill` available.
 
 ## Recipe 1 — Fail on drift

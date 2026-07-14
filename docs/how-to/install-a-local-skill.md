@@ -22,8 +22,8 @@ gskill list                      # confirm it installed
 
 - The skill is installed into your detected agent's directory, e.g.
   `.claude/skills/<name>/SKILL.md`.
-- `gskill.toml` gains a `[skills.<name>]` entry (intent); `skills-lock.json` records the resolved content
-  hash and targets (reality).
+- `skills-lock.json` gains an entry recording both intent (source, constraint, agents) and resolved
+  reality (content hash, targets).
 - `gskill add` prints `Added <name> (<content-hash>) into N agent(s)` and exits `0`.
 - Re-running `gskill install` reports **no changes** — installs are idempotent.
 

@@ -4,7 +4,7 @@ Advance skills to newer versions within their declared constraints, and recomput
 
 ## Before you start
 
-- A committed `gskill.toml` and `skills-lock.json`.
+- A committed `skills-lock.json`.
 
 ## Update within constraints
 

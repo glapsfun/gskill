@@ -29,7 +29,7 @@ gskill project diff              # all skills
 gskill project diff <name>       # one skill
 ```
 
-**Expected:** the differences between `gskill.toml` (intent), `skills-lock.json` (reality), and what's
+**Expected:** the differences between `skills-lock.json` (intent + resolved reality) and what's
 actually installed — so you can see exactly what a `sync`, `update`, or `install` would change.
 
 ## See also

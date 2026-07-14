@@ -5,7 +5,7 @@ lockfile is never modified. This is the command CI and teammates should use.
 
 ## Before you start
 
-- A committed `gskill.toml` and `skills-lock.json` (see the [tutorial](../tutorials/getting-started.md)).
+- A committed `skills-lock.json` (see the [tutorial](../tutorials/getting-started.md)).
 - The project checked out (the lockfile present at the project root).
 
 ## Steps

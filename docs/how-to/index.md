@@ -45,4 +45,4 @@ GSKILL? Start with the [tutorial](../tutorials/getting-started.md) first.
 ### Not yet supported
 
 The following commands appear in the long-term design but are **not implemented yet**, so they have no
-guide: `search`, `export`, and `import`. They are documented here only so you know they are planned.
+guide: `export` and `import`. They are documented here only so you know they are planned.

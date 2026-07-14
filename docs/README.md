@@ -2,8 +2,8 @@
 
 **GSKILL** is a reproducible package manager for agentic AI skills. It installs, versions, locks,
 verifies, and restores `SKILL.md` instruction bundles across AI coding agents, developer machines, and
-CI. Commit `gskill.toml` (intent) and `skills-lock.json` (resolved reality), and reproduce a byte-identical
-skill environment anywhere with `gskill install --frozen-lockfile`.
+CI. Commit `skills-lock.json` — the single file that records both intent and resolved reality — and
+reproduce a byte-identical skill environment anywhere with `gskill install --frozen-lockfile`.
 
 This documentation follows the [Diátaxis](https://diataxis.fr/) framework — four kinds of docs, each
 with one job.
