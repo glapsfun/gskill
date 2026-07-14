@@ -33,7 +33,7 @@ type addCmd struct {
 	Ref     string   `help:"Branch or tag to track."`
 	Commit  string   `help:"Explicit commit SHA to pin."`
 	Exact   bool     `help:"Pin to the exact resolved version."`
-	Agent   []string `help:"Target agent ID (repeatable)."`
+	Agent   []string `help:"Target agent ID (repeatable). Additive: adds to, never replaces, a skill's already-installed agents. To replace a skill's agent set outright, use 'gskill install --agent'."`
 	Force   bool     `help:"Overwrite an existing declaration and re-resolve."`
 	Global  bool     `help:"Install into the user-global location."`
 	Project bool     `help:"Install into the project (default)."`

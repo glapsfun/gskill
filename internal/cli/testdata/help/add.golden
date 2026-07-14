@@ -37,7 +37,10 @@ Flags:
       --ref=STRING             Branch or tag to track.
       --commit=STRING          Explicit commit SHA to pin.
       --exact                  Pin to the exact resolved version.
-      --agent=AGENT,...        Target agent ID (repeatable).
+      --agent=AGENT,...        Target agent ID (repeatable). Additive: adds to,
+                               never replaces, a skill's already-installed
+                               agents. To replace a skill's agent set outright,
+                               use 'gskill install --agent'.
       --force                  Overwrite an existing declaration and re-resolve.
       --global                 Install into the user-global location.
       --project                Install into the project (default).

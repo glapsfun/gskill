@@ -23,6 +23,10 @@ import (
 type LockWizardSkill struct {
 	Name   string
 	Source string
+	// Agents is the entry's currently recorded gskill.agents (nil for a raw,
+	// unmanaged entry), used to compute the kept/added/removed plan the
+	// preview screen shows before the user confirms (spec 013 FR-006).
+	Agents []string
 }
 
 // LockWizardPhases are the app-layer use-cases the flow drives, injected by
@@ -211,16 +215,15 @@ func (m *lockWizardModel) buildForm() {
 		}
 		opts = append(opts, huh.NewOption(label, i).Selected(c.Preselected))
 	}
+	// No minimum-selection validation: confirming with zero agents selected is
+	// a deliberate, allowed narrowing to "remove every managed target for
+	// this project" (spec 013 FR-012/FR-017) — distinct from the separate
+	// lockStepNoAgents state (reached when there are no choices to select
+	// from at all, i.e. no agents were detected on this machine).
 	ms := huh.NewMultiSelect[int]().
 		Title("").
 		Options(opts...).
 		Filterable(true).
-		Validate(func(v []int) error {
-			if len(v) == 0 {
-				return errors.New("select at least one agent (space toggles)")
-			}
-			return nil
-		}).
 		Value(pick)
 	m.pick = pick
 	m.form = huh.NewForm(huh.NewGroup(ms)).
@@ -339,16 +342,81 @@ func (m lockWizardModel) viewAgents() string {
 	return b.String()
 }
 
-// viewPreview shows the installation plan and asks for approval.
+// viewPreview shows the installation plan and asks for approval. Per skill it
+// renders which agents are kept/added, which managed targets will be
+// removed, and the resulting before/after lock value (spec 013 FR-006), so
+// agent removal — including narrowing to zero agents (FR-012/FR-017) — is
+// never a silent side effect of confirming.
 func (m lockWizardModel) viewPreview() string {
 	var b strings.Builder
 	b.WriteString(m.header("Installation plan"))
-	fmt.Fprintf(&b, "Install %d skill(s) for: %s\n\n", len(m.cfg.Skills), Sanitize(strings.Join(m.agentIDs, ", ")))
+	installFor := strings.Join(m.agentIDs, ", ")
+	if installFor == "" {
+		installFor = "(none)"
+	}
+	fmt.Fprintf(&b, "Install for: %s\n\n", Sanitize(installFor))
 	for _, s := range m.cfg.Skills {
-		fmt.Fprintf(&b, "  + %s — %s\n", Sanitize(s.Name), Sanitize(s.Source))
+		fmt.Fprintf(&b, "  %s — %s\n", Sanitize(s.Name), Sanitize(s.Source))
+		for _, line := range lockPreviewPlanLines(s.Agents, m.agentIDs) {
+			fmt.Fprintf(&b, "    %s\n", Sanitize(line))
+		}
 	}
 	b.WriteString(m.hintLine("enter/y approve · esc back · q cancel (nothing written yet)"))
 	return b.String()
+}
+
+// lockPreviewPlanLines formats one skill's kept/added/removed agent plan for
+// the preview screen, per contracts/cli-install-agent-replace.md's "TUI
+// contract" and "Explicit empty selection" sections.
+func lockPreviewPlanLines(prior, requested []string) []string {
+	kept := intersectStrings(prior, requested)
+	added := subtractStrings(requested, prior)
+	removed := subtractStrings(prior, requested)
+	var lines []string
+	// Kept and added are reported on separate lines, not merged, so the
+	// screen actually distinguishes "already installed, left alone" from
+	// "newly installed" per FR-006 — a merged line can't tell the user
+	// which of the listed agents are getting a fresh install.
+	if len(kept) > 0 {
+		lines = append(lines, "keep: "+strings.Join(kept, ", "))
+	}
+	if len(added) > 0 {
+		lines = append(lines, "add: "+strings.Join(added, ", "))
+	}
+	if len(removed) > 0 {
+		lines = append(lines, "Remove managed targets from: "+strings.Join(removed, ", "))
+	}
+	return lines
+}
+
+// intersectStrings returns the values present in both a and b, in a's order.
+func intersectStrings(a, b []string) []string {
+	set := make(map[string]bool, len(b))
+	for _, v := range b {
+		set[v] = true
+	}
+	var out []string
+	for _, v := range a {
+		if set[v] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// subtractStrings returns the values in a that are not in b.
+func subtractStrings(a, b []string) []string {
+	exclude := make(map[string]bool, len(b))
+	for _, v := range b {
+		exclude[v] = true
+	}
+	var out []string
+	for _, v := range a {
+		if !exclude[v] {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // viewSummary reports per-skill outcomes.

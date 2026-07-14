@@ -21,8 +21,11 @@ Flags:
   -v, --verbose            Enable verbose diagnostics.
   -C, --dir=STRING         Run as if gskill started in this directory.
 
-      --agent=AGENT,...    Target agent(s); repeatable or comma-separated (spec
-                           012 FR-012).
+      --agent=AGENT,...    Target agent(s); repeatable or comma-separated.
+                           This is the exact desired set: it replaces (not
+                           merges with) each skill's currently recorded agents
+                           — list every agent you want kept, not just the one
+                           being added.
       --copy               Copy instead of symlinking (deprecated alias for
                            --install-mode copy).
       --install-mode=auto|symlink|copy

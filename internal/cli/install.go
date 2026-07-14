@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/app"
@@ -15,7 +16,7 @@ var runLockWizardFn = tui.RunLockWizard
 
 // installCmd restores the environment declared in skills-lock.json.
 type installCmd struct {
-	Agent          []string `sep:"," help:"Target agent(s); repeatable or comma-separated (spec 012 FR-012)."`
+	Agent          []string `sep:"," help:"Target agent(s); repeatable or comma-separated. This is the exact desired set: it replaces (not merges with) each skill's currently recorded agents — list every agent you want kept, not just the one being added."`
 	Copy           bool     `help:"Copy instead of symlinking (deprecated alias for --install-mode copy)."`
 	InstallMode    string   `name:"install-mode" placeholder:"auto|symlink|copy" help:"How skills are placed into agent directories."`
 	Force          bool     `help:"Accept changed upstream content: reinstall and rewrite the recorded computedHash."`
@@ -46,6 +47,17 @@ func (c installCmd) validateFlags() error {
 	}
 	if !installModes[c.InstallMode] {
 		return fmt.Errorf("%w: invalid --install-mode %q (want auto, symlink, or copy)", errs.ErrUsage, c.InstallMode)
+	}
+	if c.Agent != nil && len(c.Agent) == 0 {
+		// Kong parses a bare `--agent=` into a non-nil, empty []string —
+		// indistinguishable at the app layer from a deliberate TUI
+		// zero-agent narrowing (spec 013 FR-012), which removes every
+		// managed target for every skill with no confirmation outside the
+		// wizard. The CLI has no syntax for that explicit-empty selection;
+		// reject it here instead of silently wiping the project.
+		return errs.WithHint(
+			fmt.Errorf("%w: --agent requires at least one agent ID", errs.ErrUsage),
+			"to remove every agent from a skill, use the interactive wizard (run 'gskill install' with no --agent)")
 	}
 	return nil
 }
@@ -115,7 +127,10 @@ func (c installCmd) runLockDirect(ctx context.Context, out *Output, a *app.App, 
 		// the error alone instead of a misleading empty summary.
 		return err
 	}
-	if renderErr := renderLockInstall(out, res); renderErr != nil {
+	// An explicit --agent selection (c.Agent != nil) is what makes the run's
+	// kept/added/removed agent breakdown meaningful (spec 013 FR-014); with
+	// no --agent flag it stays unreported, matching req.Agents == nil.
+	if renderErr := renderLockInstall(out, res, c.Agent != nil); renderErr != nil {
 		return renderErr
 	}
 	return err
@@ -127,7 +142,7 @@ func (c installCmd) runLockDirect(ctx context.Context, out *Output, a *app.App, 
 func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, root string, preview app.LockPreview, g Globals) error {
 	skills := make([]tui.LockWizardSkill, 0, len(preview.Skills))
 	for _, s := range preview.Skills {
-		skills = append(skills, tui.LockWizardSkill{Name: s.Name, Source: s.Source})
+		skills = append(skills, tui.LockWizardSkill{Name: s.Name, Source: s.Source, Agents: s.Agents})
 	}
 	cfg := tui.LockWizardConfig{
 		LockPath: preview.Path,
@@ -155,7 +170,9 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 			fmt.Errorf("%w: no supported agents detected", errs.ErrUnsupportedAgent),
 			"pass --agent <id>[,<id>...] to install for a specific agent")
 	case outcome.Executed:
-		if renderErr := renderLockInstall(out, outcome.Result); renderErr != nil {
+		// The wizard's confirmed agent selection is always explicit (spec 013
+		// FR-005/FR-006), including a zero-agent narrowing (FR-012/FR-017).
+		if renderErr := renderLockInstall(out, outcome.Result, true); renderErr != nil {
 			return renderErr
 		}
 		return outcome.Err
@@ -165,21 +182,20 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 }
 
 // renderLockInstall prints the install summary on the plain streams (so it
-// survives the alternate screen) and the --json document.
-func renderLockInstall(out *Output, res app.InstallFromLockResult) error {
+// survives the alternate screen) and the --json document. explicit reports
+// whether the run had an explicit agent selection (--agent or a TUI
+// confirmation, spec 013 FR-014) — it gates the per-skill agentsKept/
+// agentsAdded/agentsRemoved JSON fields and the "removed for" / dry-run plan
+// lines, all three emitted together (never one dropped for being empty) so a
+// plain `gskill install` run's output is unaffected (contracts/
+// cli-install-agent-replace.md).
+func renderLockInstall(out *Output, res app.InstallFromLockResult, explicit bool) error {
 	skills := make([]map[string]any, 0, len(res.Skills))
 	var names []string
 	installed, failed, planned := 0, 0, 0
 	for _, s := range res.Skills {
-		entry := map[string]any{
-			"name":         s.Name,
-			"source":       s.Source,
-			"status":       s.Status,
-			"computedHash": s.ComputedHash,
-		}
-		if s.Err != nil {
-			entry["error"] = s.Err.Error()
-		}
+		entry := lockSkillJSONEntry(s, explicit)
+		reportLockSkillAgentDiag(out, s, explicit)
 		skills = append(skills, entry)
 		names = append(names, s.Name)
 		switch s.Status {
@@ -212,4 +228,93 @@ func renderLockInstall(out *Output, res app.InstallFromLockResult) error {
 		"skills":      skills,
 		"pruned":      res.Pruned,
 	})
+}
+
+// lockSkillJSONEntry builds one skill's --json entry, including the
+// agentsKept/agentsAdded/agentsRemoved fields when explicit (spec 013
+// FR-014).
+func lockSkillJSONEntry(s app.LockSkillResult, explicit bool) map[string]any {
+	entry := map[string]any{
+		"name":         s.Name,
+		"source":       s.Source,
+		"status":       s.Status,
+		"computedHash": s.ComputedHash,
+	}
+	if s.Err != nil {
+		entry["error"] = s.Err.Error()
+	}
+	// A failed skill's AgentsKept/Added/Removed describe intent, not outcome
+	// (removeDroppedAgents' two-phase check guarantees nothing was actually
+	// removed when a skill fails) — omit rather than report values a
+	// consumer could mistake for what happened.
+	if explicit && s.Status != app.LockSkillFailed {
+		entry["agentsKept"] = nonNilStrings(s.AgentsKept)
+		entry["agentsAdded"] = nonNilStrings(s.AgentsAdded)
+		entry["agentsRemoved"] = nonNilStrings(s.AgentsRemoved)
+	}
+	return entry
+}
+
+// reportLockSkillAgentDiag writes the human-readable "removed for" note and,
+// for a --dry-run plan, the keep/add/remove/lock preview lines — both gated
+// on an explicit agent selection.
+func reportLockSkillAgentDiag(out *Output, s app.LockSkillResult, explicit bool) {
+	if !explicit || s.Status == app.LockSkillFailed {
+		// A failed skill's AgentsKept/Added/Removed describe what was
+		// intended, not what happened — the two-phase removal in
+		// removeDroppedAgents guarantees nothing was actually removed when
+		// the skill fails, so reporting "removed for" here would tell the
+		// user something was deleted when it wasn't.
+		return
+	}
+	if len(s.AgentsRemoved) > 0 {
+		out.Info("%s: removed for %s", s.Name, strings.Join(s.AgentsRemoved, ", "))
+	}
+	if s.Status != app.LockSkillPlanned {
+		return
+	}
+	for _, line := range lockAgentPlanLines(s.Name, s.AgentsKept, s.AgentsAdded, s.AgentsRemoved) {
+		out.Info("%s", line)
+	}
+}
+
+// nonNilStrings returns s unchanged, or an empty (non-nil) slice for nil —
+// so a JSON-encoded "kept"/"added"/"removed" field is always "[]", never
+// "null", for a skill whose diff on that axis happens to be empty.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+// lockAgentPlanLines formats one skill's --dry-run agent plan, per
+// contracts/cli-install-agent-replace.md's "--dry-run output" section: which
+// agents are kept/added/removed, and the resulting before/after lock value.
+func lockAgentPlanLines(name string, kept, added, removed []string) []string {
+	before := sortedUnion(kept, removed)
+	after := sortedUnion(kept, added)
+	lines := []string{name}
+	if len(kept) > 0 {
+		lines = append(lines, "  keep:    "+strings.Join(kept, ", "))
+	}
+	if len(added) > 0 {
+		lines = append(lines, "  add:     "+strings.Join(added, ", "))
+	}
+	if len(removed) > 0 {
+		lines = append(lines, "  remove:  "+strings.Join(removed, ", "))
+	}
+	lines = append(lines, fmt.Sprintf("  lock:    agents [%s] -> [%s]",
+		strings.Join(before, ", "), strings.Join(after, ", ")))
+	return lines
+}
+
+// sortedUnion returns the sorted union of a and b (a and b are already
+// disjoint by construction — kept/added/removed partition the before/after
+// agent sets).
+func sortedUnion(a, b []string) []string {
+	out := append([]string{}, a...)
+	out = append(out, b...)
+	sort.Strings(out)
+	return out
 }

@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
@@ -15,7 +18,14 @@ import (
 // two entries point at a local source tree (offline-friendly).
 func lockOnlyProject(t *testing.T) (dir string) {
 	t.Helper()
-	src := addSourceTree(t, "alpha", "beta")
+	return lockOnlyProjectFromSource(t, addSourceTree(t, "alpha", "beta"))
+}
+
+// lockOnlyProjectFromSource is lockOnlyProject, but against a caller-supplied
+// source tree — so two independent project directories can share identical
+// entries (source, computedHash) for cross-path parity comparisons.
+func lockOnlyProjectFromSource(t *testing.T, src string) (dir string) {
+	t.Helper()
 	dir = t.TempDir()
 	entry := func(name string) string {
 		hash, err := integrity.CompatHash(filepath.Join(src, "skills", name))
@@ -44,6 +54,21 @@ func agentDirsExist(t *testing.T, dir string, agents ...string) {
 				t.Errorf("target %s/%s missing: %v", ag, skill, err)
 			}
 		}
+	}
+}
+
+// TestInstallCmd_RequestAgentsNilWhenFlagAbsent (research.md Decision 6): the
+// nil-vs-explicit-empty distinction that FR-012/FR-017 depend on starts at
+// the CLI boundary — Kong must leave Agent nil (not an empty slice) when
+// --agent is not passed, since app.InstallFromLockRequest.Agents == nil is
+// how "no explicit selection" (FR-002a) is told apart from an explicit empty
+// selection (FR-012, TUI-only).
+func TestInstallCmd_RequestAgentsNilWhenFlagAbsent(t *testing.T) {
+	t.Parallel()
+	var c installCmd
+	req := c.request("/tmp/does-not-matter", Globals{})
+	if req.Agents != nil {
+		t.Fatalf("Agents = %#v, want nil when --agent is not passed", req.Agents)
 	}
 }
 
@@ -142,6 +167,296 @@ func TestInstall_DryRunWritesNothing(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(dir, skillslock.FileName)) //nolint:gosec // test-controlled temp path
 	if string(before) != string(after) {
 		t.Error("dry-run modified the lock")
+	}
+}
+
+// TestInstall_AgentNarrowsAndReportsDiff (spec 013 FR-001/FR-014/FR-019): an
+// explicit --agent selection narrows the project and the CLI reports the
+// exact narrowed top-level agent set plus per-skill kept/added/removed.
+func TestInstall_AgentNarrowsAndReportsDiff(t *testing.T) {
+	t.Parallel()
+	dir := lockOnlyProject(t)
+	if _, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude,codex,cursor"); code != 0 {
+		t.Fatalf("baseline install: code %d, stderr %q", code, stderr)
+	}
+	agentDirsExist(t, dir, "claude", "codex", "cursor")
+
+	stdout, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude", "--json")
+	if code != 0 {
+		t.Fatalf("narrow install: code %d, stderr %q", code, stderr)
+	}
+	var doc struct {
+		Agents []string `json:"agents"`
+		Skills []struct {
+			Name          string   `json:"name"`
+			AgentsKept    []string `json:"agentsKept"`
+			AgentsAdded   []string `json:"agentsAdded"`
+			AgentsRemoved []string `json:"agentsRemoved"`
+		} `json:"skills"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("stdout is not the JSON contract: %v\n%s", err, stdout)
+	}
+	if len(doc.Agents) != 1 || doc.Agents[0] != "claude" {
+		t.Errorf("top-level agents = %v, want [claude] (not the pre-narrowing union)", doc.Agents)
+	}
+	for _, s := range doc.Skills {
+		if len(s.AgentsKept) != 1 || s.AgentsKept[0] != "claude" {
+			t.Errorf("%s agentsKept = %v, want [claude]", s.Name, s.AgentsKept)
+		}
+		if s.AgentsAdded == nil || len(s.AgentsAdded) != 0 {
+			t.Errorf("%s agentsAdded = %v, want [] (present, not omitted)", s.Name, s.AgentsAdded)
+		}
+		if len(s.AgentsRemoved) != 2 {
+			t.Errorf("%s agentsRemoved = %v, want [codex cursor]", s.Name, s.AgentsRemoved)
+		}
+	}
+	assertAgentTargetsRemoved(t, dir, []string{".codex", ".cursor"}, []string{"alpha", "beta"})
+}
+
+// assertAgentTargetsRemoved checks that none of the given agent markers has
+// a target for any of the given skills.
+func assertAgentTargetsRemoved(t *testing.T, dir string, markers, skills []string) {
+	t.Helper()
+	for _, marker := range markers {
+		for _, skill := range skills {
+			if _, err := os.Stat(filepath.Join(dir, marker, "skills", skill)); err == nil {
+				t.Errorf("%s/%s not removed after narrowing", marker, skill)
+			}
+		}
+	}
+}
+
+// TestInstall_DryRunNarrowShowsAgentPlan (contracts/cli-install-agent-
+// replace.md "--dry-run output"): a narrowing dry-run reports the
+// keep/remove/lock plan without writing anything.
+func TestInstall_DryRunNarrowShowsAgentPlan(t *testing.T) {
+	t.Parallel()
+	dir := lockOnlyProject(t)
+	if _, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude,codex"); code != 0 {
+		t.Fatalf("baseline install: code %d, stderr %q", code, stderr)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude", "--dry-run")
+	if code != 0 {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	for _, want := range []string{"keep:", "remove:", "lock:", "codex"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("dry-run diagnostics missing %q:\n%s", want, stderr)
+		}
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if string(before) != string(after) {
+		t.Error("dry-run narrowing modified the lock")
+	}
+	agentDirsExist(t, dir, "claude", "codex") // nothing actually removed
+}
+
+// TestInstall_FrozenAgentMismatchErrorFormat (contracts/cli-install-agent-
+// replace.md "--frozen-lockfile interaction"): the error names the skill and
+// both the locked and requested agent sets.
+func TestInstall_FrozenAgentMismatchErrorFormat(t *testing.T) {
+	t.Parallel()
+	dir := lockOnlyProject(t)
+	if _, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude,codex"); code != 0 {
+		t.Fatalf("baseline install: code %d, stderr %q", code, stderr)
+	}
+
+	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude", "--frozen-lockfile")
+	if code != 4 {
+		t.Fatalf("code = %d, want 4 (CodeLockMismatch)", code)
+	}
+	for _, want := range []string{"locked:", "requested:", "claude", "codex"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
+// TestInstall_CLIAndWizardExecuteProduceIdenticalOutcome (spec 013 SC-005):
+// the CLI direct path and the wizard's Execute callback both funnel through
+// the same app.InstallFromLock construction (research.md Decision 5) — this
+// proves it end-to-end from two identical starting fixtures, not just by
+// code inspection. The "TUI path" here is the exact request construction
+// runLockWizard's Execute closure uses, bypassing only terminal rendering.
+func TestInstall_CLIAndWizardExecuteProduceIdenticalOutcome(t *testing.T) {
+	t.Parallel()
+	src := addSourceTree(t, "alpha", "beta")
+	dirCLI := lockOnlyProjectFromSource(t, src)
+	dirWizard := lockOnlyProjectFromSource(t, src)
+
+	for _, dir := range []string{dirCLI, dirWizard} {
+		if _, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude,codex,cursor"); code != 0 {
+			t.Fatalf("baseline install (%s): code %d, stderr %q", dir, code, stderr)
+		}
+	}
+
+	if _, stderr, code := runCLI(t, newTestApp(), "-C", dirCLI, "install", "--agent", "claude"); code != 0 {
+		t.Fatalf("CLI narrow: code %d, stderr %q", code, stderr)
+	}
+
+	c := installCmd{}
+	req := c.request(dirWizard, Globals{})
+	req.Agents = []string{"claude"}
+	if _, err := newTestApp().InstallFromLock(context.Background(), req); err != nil {
+		t.Fatalf("wizard-equivalent narrow: %v", err)
+	}
+
+	assertIdenticalNarrowOutcome(t, dirCLI, dirWizard, []string{"claude"}, []string{".codex", ".cursor"})
+}
+
+// TestInstall_CLIAndWizardExecuteAgreeOnZeroAgents (spec 013 SC-005/FR-012):
+// the same parity check for the zero-agent narrowing case, reachable in
+// production only through the TUI.
+func TestInstall_CLIAndWizardExecuteAgreeOnZeroAgents(t *testing.T) {
+	t.Parallel()
+	src := addSourceTree(t, "alpha", "beta")
+	dirA := lockOnlyProjectFromSource(t, src)
+	dirB := lockOnlyProjectFromSource(t, src)
+
+	for _, dir := range []string{dirA, dirB} {
+		if _, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude"); code != 0 {
+			t.Fatalf("baseline install (%s): code %d, stderr %q", dir, code, stderr)
+		}
+	}
+
+	// Path A: InstallFromLock called directly with an explicit empty set.
+	if _, err := newTestApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: dirA, Agents: []string{},
+	}); err != nil {
+		t.Fatalf("direct zero-agent narrow: %v", err)
+	}
+	// Path B: the wizard's Execute-callback construction with a confirmed
+	// zero-length (non-nil) selection.
+	c := installCmd{}
+	req := c.request(dirB, Globals{})
+	req.Agents = []string{}
+	if _, err := newTestApp().InstallFromLock(context.Background(), req); err != nil {
+		t.Fatalf("wizard-equivalent zero-agent narrow: %v", err)
+	}
+
+	assertIdenticalNarrowOutcome(t, dirA, dirB, nil, []string{"." + "claude"})
+}
+
+// assertIdenticalNarrowOutcome compares two projects' lock agent lists and
+// on-disk agent directories after independently applying what should be an
+// equivalent narrowing.
+func assertIdenticalNarrowOutcome(t *testing.T, dirA, dirB string, wantAgents, removedMarkers []string) {
+	t.Helper()
+	assertSameLockedAgents(t, dirA, dirB, wantAgents)
+	assertAgentTargetsRemoved(t, dirA, removedMarkers, []string{"alpha", "beta"})
+	assertAgentTargetsRemoved(t, dirB, removedMarkers, []string{"alpha", "beta"})
+}
+
+// assertSameLockedAgents checks that dirA's and dirB's lock entries record
+// the same (non-nil-normalized) agent set, and that it equals want.
+func assertSameLockedAgents(t *testing.T, dirA, dirB string, want []string) {
+	t.Helper()
+	lockA, err := skillslock.Load(filepath.Join(dirA, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockB, err := skillslock.Load(filepath.Join(dirB, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNorm := append([]string{}, want...)
+	for _, name := range []string{"alpha", "beta"} {
+		eA, _ := lockA.Entry(name)
+		eB, _ := lockB.Entry(name)
+		if eA.Ext == nil || eB.Ext == nil {
+			t.Fatalf("%s: missing gskill metadata (A=%v B=%v)", name, eA.Ext, eB.Ext)
+		}
+		gotA := append([]string{}, eA.Ext.Agents...)
+		gotB := append([]string{}, eB.Ext.Agents...)
+		if !reflect.DeepEqual(gotA, gotB) {
+			t.Errorf("%s agents diverge: dirA=%v dirB=%v", name, gotA, gotB)
+		}
+		if !reflect.DeepEqual(gotA, wantNorm) {
+			t.Errorf("%s agents = %v, want %v", name, gotA, wantNorm)
+		}
+	}
+}
+
+// TestInstall_AgentEqualsEmptyIsUsageError (code-review fix): `--agent=`
+// parses via Kong into a non-nil, empty []string — indistinguishable at the
+// app layer from a deliberate TUI zero-agent narrowing (FR-012), which
+// removes every managed target with no confirmation outside the wizard. The
+// CLI has no syntax for that explicit-empty selection, so it must be
+// rejected as a usage error instead of silently wiping the project.
+func TestInstall_AgentEqualsEmptyIsUsageError(t *testing.T) {
+	t.Parallel()
+	dir := lockOnlyProject(t)
+	if _, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude,codex"); code != 0 {
+		t.Fatalf("baseline install: code %d, stderr %q", code, stderr)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent=")
+	if code != 2 {
+		t.Fatalf("code = %d, want 2 (usage error)", code)
+	}
+	if !strings.Contains(stderr, "--agent") {
+		t.Errorf("stderr should mention --agent: %q", stderr)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if string(before) != string(after) {
+		t.Error("--agent= modified the lock despite being rejected")
+	}
+	agentDirsExist(t, dir, "claude", "codex")
+}
+
+// TestInstall_FailedSkillOmitsAgentDiffFields (code-review fix): a skill
+// whose removal step fails must not report agentsKept/Added/Removed or a
+// "removed for" diagnostic — those describe intent, and the two-phase
+// removal guarantees nothing was actually removed when a skill fails.
+func TestInstall_FailedSkillOmitsAgentDiffFields(t *testing.T) {
+	t.Parallel()
+	src := addSourceTree(t, "alpha")
+	dir := t.TempDir()
+	hash, err := integrity.CompatHash(filepath.Join(src, "skills", "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := `{"version":1,"skills":{"alpha":{"source":"` + strings.ReplaceAll(src, `\`, `\\`) + `","sourceType":"local","skillPath":"skills/alpha/SKILL.md","computedHash":"` + hash + `"}}}`
+	if err := os.WriteFile(filepath.Join(dir, skillslock.FileName), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude,codex", "--install-mode", "copy"); code != 0 {
+		t.Fatalf("baseline install: code %d, stderr %q", code, stderr)
+	}
+
+	// Hand-edit codex's copy-mode content so its removal fails.
+	target := filepath.Join(dir, ".codex", "skills", "alpha", "SKILL.md")
+	if err := os.WriteFile(target, []byte("---\nname: alpha\ndescription: hand-edited\n---\n# mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude", "--json")
+	if code == 0 {
+		t.Fatalf("narrow over foreign-modified content succeeded, want failure; stdout=%s stderr=%s", stdout, stderr)
+	}
+	if strings.Contains(stderr, "removed for") {
+		t.Errorf("stderr falsely claims something was removed: %q", stderr)
+	}
+	var doc struct {
+		Skills []map[string]any `json:"skills"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("stdout is not the JSON contract: %v\n%s", err, stdout)
+	}
+	for _, s := range doc.Skills {
+		if _, present := s["agentsRemoved"]; present {
+			t.Errorf("failed skill JSON entry has agentsRemoved: %+v", s)
+		}
 	}
 }
 

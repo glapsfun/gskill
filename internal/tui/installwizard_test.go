@@ -224,6 +224,144 @@ func TestLockWizard_NoAgentsDetected(t *testing.T) {
 	}
 }
 
+// TestLockWizard_PreviewShowsKeptAddedRemoved (spec 013 FR-006): deselecting
+// a previously recorded agent shows it under "remove" in the preview.
+func TestLockWizard_PreviewShowsKeptAddedRemoved(t *testing.T) {
+	t.Parallel()
+	choices := []app.AgentChoice{
+		{ID: "claude", DisplayName: "Claude Code", Detected: true, Preselected: true},
+		{ID: "codex", DisplayName: "Codex CLI", Detected: true, Preselected: true},
+	}
+	cfg := LockWizardConfig{
+		LockPath: "skills-lock.json",
+		Skills: []LockWizardSkill{
+			{Name: "deploy-to-vercel", Source: "vercel-labs/agent-skills", Agents: []string{"claude", "codex"}},
+		},
+		Phases: LockWizardPhases{
+			Agents: func(context.Context) ([]app.AgentChoice, error) { return choices, nil },
+			Execute: func(_ context.Context, ids []string) (app.InstallFromLockResult, error) {
+				return app.InstallFromLockResult{Agents: ids}, nil
+			},
+		},
+	}
+	m := lockDrive(t, newLockWizardModel(context.Background(), cfg), lockAgentsDoneMsg{choices: choices})
+
+	// Deselect codex (down to it, space to toggle off), keep claude, submit.
+	m = lockDrive(t, m, lockKey("down"), lockKey(" "), lockKey("enter"))
+	if m.step != lockStepPreview {
+		t.Fatalf("step = %v, want preview", m.step)
+	}
+	view := m.View()
+	for _, want := range []string{"claude", "Remove managed targets from", "codex"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("preview missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// TestLockWizard_PreviewDistinguishesKeptFromAdded (code-review fix, FR-006):
+// when a skill's plan has both kept and newly-added agents, the preview must
+// show them on separate lines, not merged into one undifferentiated line —
+// otherwise the user can't tell which agents are getting a fresh install.
+func TestLockWizard_PreviewDistinguishesKeptFromAdded(t *testing.T) {
+	t.Parallel()
+	choices := []app.AgentChoice{
+		{ID: "claude", DisplayName: "Claude Code", Detected: true, Preselected: true},
+		{ID: "cursor", DisplayName: "Cursor", Detected: true},
+	}
+	cfg := LockWizardConfig{
+		LockPath: "skills-lock.json",
+		Skills: []LockWizardSkill{
+			{Name: "deploy-to-vercel", Source: "vercel-labs/agent-skills", Agents: []string{"claude"}},
+		},
+		Phases: LockWizardPhases{
+			Agents: func(context.Context) ([]app.AgentChoice, error) { return choices, nil },
+			Execute: func(_ context.Context, ids []string) (app.InstallFromLockResult, error) {
+				return app.InstallFromLockResult{Agents: ids}, nil
+			},
+		},
+	}
+	m := lockDrive(t, newLockWizardModel(context.Background(), cfg), lockAgentsDoneMsg{choices: choices})
+
+	// claude stays preselected (kept); select cursor too (added).
+	m = lockDrive(t, m, lockKey("down"), lockKey(" "), lockKey("enter"))
+	if m.step != lockStepPreview {
+		t.Fatalf("step = %v, want preview", m.step)
+	}
+	view := m.View()
+	keepLine := "keep: claude"
+	addLine := "add: cursor"
+	if !strings.Contains(view, keepLine) {
+		t.Errorf("preview missing separate %q line:\n%s", keepLine, view)
+	}
+	if !strings.Contains(view, addLine) {
+		t.Errorf("preview missing separate %q line:\n%s", addLine, view)
+	}
+	if strings.Contains(view, "keep/add") {
+		t.Errorf("preview merges kept and added into one undifferentiated line:\n%s", view)
+	}
+}
+
+// TestLockWizard_ZeroSelectionShowsRemoveAllAndSucceeds (spec 013 FR-012/
+// FR-017): deselecting every preselected agent and confirming is allowed
+// (not blocked by "select at least one"), renders the destructive
+// remove-everything plan, and calls Execute with a non-nil empty slice.
+func TestLockWizard_ZeroSelectionShowsRemoveAllAndSucceeds(t *testing.T) {
+	t.Parallel()
+	choices := []app.AgentChoice{
+		{ID: "claude", DisplayName: "Claude Code", Detected: true, Preselected: true},
+	}
+	var executedIDs []string
+	var executedCalled bool
+	cfg := LockWizardConfig{
+		LockPath: "skills-lock.json",
+		Skills: []LockWizardSkill{
+			{Name: "deploy-to-vercel", Source: "vercel-labs/agent-skills", Agents: []string{"claude"}},
+		},
+		Phases: LockWizardPhases{
+			Agents: func(context.Context) ([]app.AgentChoice, error) { return choices, nil },
+			Execute: func(_ context.Context, ids []string) (app.InstallFromLockResult, error) {
+				executedIDs = ids
+				executedCalled = true
+				return app.InstallFromLockResult{Agents: ids}, nil
+			},
+		},
+	}
+	m := lockDrive(t, newLockWizardModel(context.Background(), cfg), lockAgentsDoneMsg{choices: choices})
+
+	// Deselect the only (preselected) agent, then submit with zero selected.
+	m = lockDrive(t, m, lockKey(" "), lockKey("enter"))
+	if m.step != lockStepPreview {
+		t.Fatalf("step = %v, want preview (zero selection must not be blocked)", m.step)
+	}
+	if len(m.agentIDs) != 0 {
+		t.Fatalf("agentIDs = %v, want empty", m.agentIDs)
+	}
+	view := m.View()
+	for _, want := range []string{"(none)", "Remove managed targets from", "claude"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("preview missing %q:\n%s", want, view)
+		}
+	}
+
+	// Cancelling here must not execute anything.
+	cancelled := lockDrive(t, m, lockKey("q"))
+	if !cancelled.Outcome().Cancelled || executedCalled {
+		t.Fatalf("cancel outcome = %+v, executedCalled=%v, want cancelled with no Execute call", cancelled.Outcome(), executedCalled)
+	}
+
+	m = lockDrive(t, m, lockKey("enter")) // approve
+	if m.step != lockStepSummary {
+		t.Fatalf("step = %v, want summary", m.step)
+	}
+	if !executedCalled {
+		t.Fatal("Execute was not called")
+	}
+	if executedIDs == nil || len(executedIDs) != 0 {
+		t.Errorf("Execute ids = %#v, want a non-nil empty slice", executedIDs)
+	}
+}
+
 // TestLockWizard_ExecFailureShowsError: a failed execution surfaces the error
 // and reports it in the outcome.
 func TestLockWizard_ExecFailureShowsError(t *testing.T) {

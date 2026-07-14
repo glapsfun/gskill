@@ -32,7 +32,7 @@ Add and install a new skill.
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--agent` | []string | Target agent ID (repeatable). |
+| `--agent` | []string | Target agent ID (repeatable). Additive: adds to, never replaces, a skill's already-installed agents. To replace a skill's agent set outright, use 'gskill install --agent'. |
 | `--all` | bool | Select every valid discovered skill. |
 | `--auto` | bool | Prefer a symlink, fall back to a copy (default). |
 | `--commit` | string | Explicit commit SHA to pin. |
@@ -144,7 +144,7 @@ Install all declared skills (additive, idempotent).
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--agent` | []string | Target agent(s); repeatable or comma-separated (spec 012 FR-012). |
+| `--agent` | []string | Target agent(s); repeatable or comma-separated. This is the exact desired set: it replaces (not merges with) each skill's currently recorded agents — list every agent you want kept, not just the one being added. |
 | `--copy` | bool | Copy instead of symlinking (deprecated alias for --install-mode copy). |
 | `--force` | bool | Accept changed upstream content: reinstall and rewrite the recorded computedHash. |
 | `--frozen-lockfile` | bool | Restore exactly from the lockfile; never modify it. |

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -20,19 +21,26 @@ import (
 	"github.com/glapsfun/gskill/internal/source"
 )
 
-// InstallFromLockRequest describes an install (spec 012 US1/US2): restore
-// every skill declared in skills-lock.json for its declared agents, unioned
-// with any explicit --agent override.
+// InstallFromLockRequest describes an install (spec 012 US1/US2, spec 013):
+// restore every skill declared in skills-lock.json for its declared agents.
+// An explicit --agent selection (spec 013) is the exact, authoritative
+// target set for the run, replacing each entry's declared set outright.
 type InstallFromLockRequest struct {
-	Root        string
-	Agents      []string // explicit agent IDs; unioned into each entry's declared set
-	InstallMode string   // auto | symlink | copy ("" = per-entry gskill.installMode)
-	NoInit      bool     // refuse instead of auto-initializing
-	Force       bool     // accept changed upstream content, rewrite computedHash
-	DryRun      bool     // report the plan, write nothing
-	Offline     bool     // restore from local store/cache only
-	Frozen      bool     // never modify the lock file; fail closed on drift
-	Prune       bool     // afterwards, remove managed installs the lock no longer declares
+	Root string
+	// Agents distinguishes "no explicit selection" (nil — FR-002a: use each
+	// entry's recorded gskill.agents unchanged) from "explicit selection"
+	// (non-nil, including a non-nil empty slice — FR-001/FR-002/FR-012: the
+	// exact target set for every processed entry, replacing what's recorded).
+	// This nil-vs-empty distinction is load-bearing; do not normalize it away
+	// with a len()==0 check (research.md Decision 6).
+	Agents      []string
+	InstallMode string // auto | symlink | copy ("" = per-entry gskill.installMode)
+	NoInit      bool   // refuse instead of auto-initializing
+	Force       bool   // accept changed upstream content, rewrite computedHash
+	DryRun      bool   // report the plan, write nothing
+	Offline     bool   // restore from local store/cache only
+	Frozen      bool   // never modify the lock file; fail closed on drift
+	Prune       bool   // afterwards, remove managed installs the lock no longer declares
 }
 
 // sourceTypeGitHub is the shared lock's GitHub sourceType value.
@@ -53,7 +61,13 @@ type LockSkillResult struct {
 	Source       string
 	Status       string
 	ComputedHash string
-	Err          error
+	// AgentsKept, AgentsAdded, AgentsRemoved are populated only when the run
+	// had an explicit agent selection (req.Agents != nil) — never based on
+	// whether the resulting slice happens to be non-empty (spec 013 FR-014).
+	AgentsKept    []string
+	AgentsAdded   []string
+	AgentsRemoved []string
+	Err           error
 }
 
 // InstallFromLockResult is the run summary.
@@ -68,10 +82,10 @@ type InstallFromLockResult struct {
 // InstallFromLock implements the install pipeline: locate and validate
 // skills-lock.json, auto-initialize local state (FR-019/FR-020), then per
 // entry resolve, verify the npx-compatible computedHash before activation,
-// install for the entry's declared agents (unioned with any --agent
-// override), and record the namespaced gskill metadata (FR-016). Failures are
-// isolated per skill: verified successes stay installed and recorded
-// (FR-016a).
+// install for the entry's target agents (the entry's declared set, or the
+// exact explicit --agent override when one is given — spec 013), and record
+// the namespaced gskill metadata (FR-016). Failures are isolated per skill:
+// verified successes stay installed and recorded (FR-016a).
 func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (InstallFromLockResult, error) {
 	p := openProject(req.Root)
 	var res InstallFromLockResult
@@ -118,14 +132,18 @@ func entryAgents(e skillslock.Entry) []string {
 	return e.Ext.Agents
 }
 
-// runAgents reports the run's overall agent set: the explicit override plus
-// every declared per-entry agent.
+// runAgents reports the run's top-level agent set. An explicit selection
+// (req.Agents != nil) reports exactly that normalized set — never unioned
+// with what any entry currently records, or the summary would silently stay
+// stale after a narrowing run (spec 013 FR-019, research.md Decision 8). With
+// no explicit selection it reports the union of every declared per-entry
+// agent, as before.
 func runAgents(l *skillslock.Lock, explicit []string) []string {
-	out := append([]string(nil), explicit...)
-	seen := make(map[string]bool, len(out))
-	for _, id := range out {
-		seen[id] = true
+	if explicit != nil {
+		return normalizeAgentIDs(explicit)
 	}
+	var out []string
+	seen := make(map[string]bool)
 	for _, name := range l.Names() {
 		e, _ := l.Entry(name)
 		for _, id := range entryAgents(e) {
@@ -140,23 +158,149 @@ func runAgents(l *skillslock.Lock, explicit []string) []string {
 
 // checkFrozenAgents rejects an explicit --agent override that contradicts the
 // locked metadata under --frozen-lockfile: the flags demand a state the lock
-// does not declare, so the whole run fails before anything is touched.
-// Per-entry agent problems (raw entries, empty declared sets) are handled with
-// per-skill failure isolation in installOneLockEntry instead.
+// does not declare, so the whole run fails before anything is touched. The
+// guard only engages for an explicit selection (req.Agents != nil, including
+// a non-nil empty slice — spec 013 FR-009/FR-012); a nil Agents ("no
+// explicit selection", FR-002a) never triggers it. Per-entry agent problems
+// (raw entries, empty declared sets) are handled with per-skill failure
+// isolation in installOneLockEntry instead.
 func checkFrozenAgents(l *skillslock.Lock, req InstallFromLockRequest) error {
-	if !req.Frozen || len(req.Agents) == 0 {
+	if !req.Frozen || req.Agents == nil {
 		return nil
 	}
+	requested := normalizeAgentIDs(req.Agents)
 	for _, name := range sortedLockNames(l) {
 		e, _ := l.Entry(name)
 		if e.Ext == nil {
 			continue // reported per-skill during the run
 		}
-		if extra := subtract(req.Agents, entryAgents(e)); len(extra) > 0 {
-			return fmt.Errorf("%w: --agent %s conflicts with skill %q's locked agents (%s) under --frozen-lockfile",
-				errs.ErrLockMismatch, strings.Join(extra, ","), name, strings.Join(entryAgents(e), ","))
+		locked := entryAgents(e)
+		if len(subtract(requested, locked)) > 0 || len(subtract(locked, requested)) > 0 {
+			return errs.WithHint(
+				fmt.Errorf("%w: --agent %s conflicts with the locked agents for %q:\nlocked: %s\nrequested: %s",
+					errs.ErrLockMismatch, strings.Join(requested, ","), name,
+					strings.Join(locked, ", "), strings.Join(requested, ", ")),
+				"remove --frozen-lockfile to update the agent selection")
 		}
 	}
+	return nil
+}
+
+// normalizeAgentIDs deduplicates and deterministically sorts agent IDs
+// (spec 013 FR-016) so an explicit --agent/TUI selection serializes
+// identically regardless of input order or duplicates. A non-nil input
+// (including empty) always yields a non-nil output, preserving the
+// nil-vs-explicit-empty distinction callers rely on.
+func normalizeAgentIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sameStringSet reports whether a and b contain the same values, ignoring order.
+func sameStringSet(a, b []string) bool {
+	return len(subtract(a, b)) == 0 && len(subtract(b, a)) == 0
+}
+
+// intersectStrings returns the values present in both a and b, in a's order.
+func intersectStrings(a, b []string) []string {
+	set := make(map[string]bool, len(b))
+	for _, v := range b {
+		set[v] = true
+	}
+	var out []string
+	for _, v := range a {
+		if set[v] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// agentDiff computes the kept/added/removed agent IDs for one entry relative
+// to its currently recorded installation state, gated on whether the run had
+// an explicit agent selection (spec 013 FR-014). Returns nil,nil,nil when no
+// explicit selection was made, so non-`--agent` runs are unaffected.
+func agentDiff(lf *skillslock.State, name string, ids []string, explicit bool) (kept, added, removed []string) {
+	if !explicit {
+		return nil, nil, nil
+	}
+	var prior []string
+	if rec, ok := lf.Skills[name]; ok {
+		prior = rec.Installation.Agents
+	}
+	return intersectStrings(prior, ids), subtract(ids, prior), subtract(prior, ids)
+}
+
+// removeDroppedAgents removes every currently-installed target for the given
+// agent IDs and updates the entry's Targets/Modes/Agents bookkeeping. This
+// always uses prune=false semantics (research.md Decision 2/6): the lock
+// entry itself, and the canonical store/active content, are never touched
+// here — only the per-agent managed targets. Actual pruning of the lock
+// entry remains exclusively gskill unlink --prune's / --prune's job
+// (spec 013 FR-003/FR-012/FR-013).
+//
+// Every target is verified removable (checkSafeTargetRemoval) before any of
+// them are actually removed, and the entry's Targets/Modes maps are only
+// mutated on cloned copies, never the live lf.Skills[name] maps in place —
+// Targets/Modes are reference types, so mutating them directly would leak a
+// partial removal into the lock even without reaching the final write-back
+// below. A single foreign-modified target therefore aborts the whole batch
+// with zero changes (disk or lock), rather than leaving some agents' files
+// deleted while the lock still records them as installed (spec 013 FR-011).
+func (a *App) removeDroppedAgents(p *project, lf *skillslock.State, name string, removedIDs []string) error {
+	if len(removedIDs) == 0 {
+		return nil
+	}
+	locked, ok := lf.Skills[name]
+	if !ok {
+		return nil
+	}
+	// Phase 1: verify every removal is safe before touching anything, and
+	// capture the confined, adapter-resolved path checkSafeTargetRemoval
+	// derived — not the raw recorded string, which may be relative to the
+	// project root rather than the process's current working directory.
+	resolved := make(map[string]string, len(removedIDs))
+	for _, id := range removedIDs {
+		recorded, hasTarget := locked.Installation.Targets[id]
+		if !hasTarget {
+			continue
+		}
+		target, safe, err := a.checkSafeTargetRemoval(p, locked.Installation.Scope, id, name, recorded, locked.Resolved.ContentHash)
+		if err != nil {
+			return fmt.Errorf("remove %s target: %w", id, err)
+		}
+		if safe {
+			resolved[id] = target
+		}
+	}
+
+	// Phase 2: every check passed — perform the removals using the resolved
+	// paths from phase 1.
+	for _, id := range removedIDs {
+		if target, ok := resolved[id]; ok {
+			if err := os.RemoveAll(target); err != nil {
+				return fmt.Errorf("remove %s target: %w", id, err)
+			}
+		}
+	}
+	targets := maps.Clone(locked.Installation.Targets)
+	modes := maps.Clone(locked.Installation.Modes)
+	for _, id := range removedIDs {
+		delete(targets, id)
+		delete(modes, id)
+	}
+	locked.Installation.Targets = targets
+	locked.Installation.Modes = modes
+	locked.Installation.Agents = subtract(locked.Installation.Agents, removedIDs)
+	lf.Skills[name] = locked
 	return nil
 }
 
@@ -216,6 +360,10 @@ type LockPreview struct {
 type LockPreviewSkill struct {
 	Name   string
 	Source string
+	// Agents is the entry's currently recorded gskill.agents (nil for a raw,
+	// unmanaged entry) — used by the TUI to compute the kept/added/removed
+	// plan before the user confirms an agent selection (spec 013 FR-006).
+	Agents []string
 }
 
 // PreviewLock loads and validates the shared lock for display. found=false
@@ -235,7 +383,7 @@ func (a *App) PreviewLock(root string) (LockPreview, bool, error) {
 	pv := LockPreview{Path: skillslock.FileName}
 	for _, name := range l.Names() {
 		e, _ := l.Entry(name)
-		pv.Skills = append(pv.Skills, LockPreviewSkill{Name: name, Source: e.Source})
+		pv.Skills = append(pv.Skills, LockPreviewSkill{Name: name, Source: e.Source, Agents: entryAgents(e)})
 	}
 	return pv, true, nil
 }
@@ -325,11 +473,55 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 		return r
 	}
 
+	explicit := req.Agents != nil
+	ids := agentIDs(agents)
+	kept, added, removed := agentDiff(lf, name, ids, explicit)
+	r.AgentsKept, r.AgentsAdded, r.AgentsRemoved = kept, added, removed
+
+	if explicit && len(ids) == 0 && len(removed) > 0 {
+		// Genuine narrow-to-zero (FR-012).
+		return a.narrowEntryToZeroAgents(p, lf, name, req.DryRun, removed, r)
+	}
+
 	// Idempotency fast path (FR-017): recorded state matches the lock and the
 	// store — skip downloads and store writes, repair only missing links, and
 	// leave the entry (and therefore the lock file) untouched.
 	if r2, handled := a.lockEntryUpToDate(ctx, p, lf, name, e, agents, req); handled {
+		r2.AgentsKept, r2.AgentsAdded, r2.AgentsRemoved = kept, added, removed
 		return r2
+	}
+
+	return a.stageAndActivateLockEntry(ctx, p, lf, name, e, req, agents, removed, r)
+}
+
+// narrowEntryToZeroAgents removes every managed target for an entry that has
+// been explicitly narrowed to zero agents (FR-012). Nothing new is being
+// installed, so staging/Install is skipped entirely — no source resolution,
+// fetch, or hash re-verification, and no network access even with a cold
+// cache (FR-018; research.md Decision 7).
+func (a *App) narrowEntryToZeroAgents(p *project, lf *skillslock.State, name string, dryRun bool, removed []string, r LockSkillResult) LockSkillResult {
+	if dryRun {
+		r.Status = LockSkillPlanned
+		r.Err = nil
+		return r
+	}
+	if err := a.removeDroppedAgents(p, lf, name, removed); err != nil {
+		r.Err = fmt.Errorf("skill %q: %w", name, err)
+		return r
+	}
+	r.Status = LockSkillRepaired
+	r.Err = nil
+	return r
+}
+
+// stageAndActivateLockEntry resolves, verifies, and installs one entry for
+// its target agents, removes any dropped agents' managed targets (FR-003 —
+// Install only activates staged.ireq.Agents and never proactively removes
+// agents outside that list), and records the resulting lock entry.
+func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest, agents []agent.Agent, removed []string, r LockSkillResult) LockSkillResult {
+	fail := func(err error) LockSkillResult {
+		r.Err = fmt.Errorf("skill %q: %w", name, err)
+		return r
 	}
 
 	staged, err := a.stageAndVerifyLockEntry(ctx, p, lf, name, e, req)
@@ -362,6 +554,12 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 		return fail(err)
 	}
 
+	if len(removed) > 0 {
+		if err := a.removeDroppedAgents(p, lf, name, removed); err != nil {
+			return fail(err)
+		}
+	}
+
 	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result,
 		requestedForEntry(lf, name, e, staged.rev))
 	if err != nil {
@@ -376,12 +574,16 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 	return r
 }
 
-// lockEntryTargets resolves the agents one entry installs for — the declared
-// gskill.agents unioned with the explicit override (an explicit --agent is
-// additive; nothing is ever uninstalled by an install). done=true means the
-// entry's processing ends here: r already carries the per-skill outcome
-// (frozen raw entry, agentless managed skip, raw entry with no selection, or
-// an unknown agent).
+// lockEntryTargets resolves the agents one entry installs for. With no
+// explicit selection (req.Agents == nil, FR-002a) this is the declared
+// gskill.agents, unchanged. With an explicit selection (req.Agents != nil,
+// including a non-nil empty slice) this is the exact, normalized requested
+// set, replacing the declared set outright (spec 013 FR-001/FR-002/FR-016).
+// done=true means the entry's processing ends here: r already carries the
+// per-skill outcome (frozen raw entry, agentless managed skip, raw entry
+// with no selection, or an unknown agent). done=false with a nil/empty
+// agents slice means a genuine explicit narrow-to-zero (FR-012): the caller
+// falls through to the removal path instead of treating it as a no-op.
 func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req InstallFromLockRequest) ([]agent.Agent, bool) {
 	fail := func(err error) ([]agent.Agent, bool) {
 		r.Status = LockSkillFailed
@@ -394,19 +596,39 @@ func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req Insta
 				errs.ErrLockMismatch),
 			"run 'gskill install' without --frozen-lockfile once to record it"))
 	}
-	ids := unionStrings(entryAgents(e), req.Agents)
+
+	explicit := req.Agents != nil
+	ids := entryAgents(e)
+	if explicit {
+		ids = normalizeAgentIDs(req.Agents)
+	}
+
 	if len(ids) == 0 {
-		if e.Ext != nil {
-			// Managed but declared for no agents (e.g. every agent was
-			// unlinked without --prune): nothing to materialize.
+		if !explicit {
+			if e.Ext != nil {
+				// Managed but declared for no agents (e.g. every agent was
+				// unlinked without --prune): nothing to materialize.
+				r.Status = LockSkillUpToDate
+				r.Err = nil
+				return nil, true
+			}
+			return fail(errs.WithHint(
+				fmt.Errorf("%w: no target agents selected", errs.ErrUsage),
+				"pass --agent <id>[,<id>...] (the lock entry declares none)"))
+		}
+		if e.Ext == nil || len(entryAgents(e)) == 0 {
+			// Explicit empty selection, but nothing was ever installed for
+			// this entry: trivially satisfied, nothing to remove.
 			r.Status = LockSkillUpToDate
 			r.Err = nil
 			return nil, true
 		}
-		return fail(errs.WithHint(
-			fmt.Errorf("%w: no target agents selected", errs.ErrUsage),
-			"pass --agent <id>[,<id>...] (the lock entry declares none)"))
+		// Explicit empty selection on an entry with a non-empty recorded
+		// set: a genuine narrow-to-zero (FR-012). Fall through with no
+		// resolved agents so the caller's removal path handles it.
+		return nil, false
 	}
+
 	agents, err := a.agentsByID(ids)
 	if err != nil {
 		return fail(err)
@@ -529,8 +751,17 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		return LockSkillResult{}, false
 	}
 	ids := agentIDs(agents)
-	if len(subtract(ids, prior.Installation.Agents)) > 0 {
-		return LockSkillResult{}, false // new agents requested: full path
+	if !sameStringSet(ids, prior.Installation.Agents) {
+		// The requested set differs from what's recorded — added or removed
+		// agents both fall through to the full path (spec 013 FR-007). This
+		// check is intentionally independent of agentDiff's kept/added/
+		// removed (computed by the caller): agentDiff only runs when
+		// req.Agents is explicit, but `ids` here can still diverge from
+		// `prior.Installation.Agents` with no explicit selection at all —
+		// e.g. skills-lock.json's gskill.agents was hand-edited since the
+		// last install. Do not "simplify" this into reusing agentDiff's
+		// output; that would silently stop catching that drift.
+		return LockSkillResult{}, false
 	}
 	if !p.store.Has(prior.Resolved.ContentHash) {
 		return LockSkillResult{}, false

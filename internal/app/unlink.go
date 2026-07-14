@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/glapsfun/gskill/internal/skillslock"
 
@@ -61,10 +62,20 @@ func (a *App) unlinkOne(p *project, lf *skillslock.State, skill, agentID string,
 			"run 'gskill status' to see each skill's agents")
 	}
 
-	// Remove the agent's recorded target (confined), then drop it from the lock.
-	if target, ok := locked.Installation.Targets[agentID]; ok {
-		if _, rmErr := a.removeSafeTarget(p, locked.Installation.Scope, agentID, skill, target); rmErr != nil {
-			return fmt.Errorf("remove %s target: %w", agentID, rmErr)
+	// Remove the agent's recorded target (confined, and — for a real
+	// copy-mode directory — ownership-checked so foreign-modified content
+	// is never silently deleted, matching the guarantee spec 013's
+	// install-narrowing path enforces via the same primitive), then drop it
+	// from the lock.
+	if recorded, ok := locked.Installation.Targets[agentID]; ok {
+		target, safe, chkErr := a.checkSafeTargetRemoval(p, locked.Installation.Scope, agentID, skill, recorded, locked.Resolved.ContentHash)
+		if chkErr != nil {
+			return fmt.Errorf("remove %s target: %w", agentID, chkErr)
+		}
+		if safe {
+			if rmErr := os.RemoveAll(target); rmErr != nil {
+				return fmt.Errorf("remove %s target: %w", agentID, rmErr)
+			}
 		}
 	}
 	delete(locked.Installation.Targets, agentID)

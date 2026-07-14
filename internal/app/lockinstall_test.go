@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -712,10 +714,12 @@ func simulateExternalUpdate(t *testing.T, repo, root string) (newHash string) {
 	return newHash
 }
 
-// TestInstallAgentUnionPersists: --agent on an enriched lock is a union — the
-// new agent is added to each skill's persisted gskill.agents and existing
-// agents keep their installs (nothing is uninstalled by an install).
-func TestInstallAgentUnionPersists(t *testing.T) {
+// TestInstallAgentExactSetReplacesLockedAgents (FR-001/FR-002): an explicit
+// --agent selection is the exact, authoritative target set for the run — it
+// replaces, rather than unions with, each entry's currently recorded
+// gskill.agents. (Formerly TestInstallAgentUnionPersists, which asserted the
+// old additive behavior this feature fixes.)
+func TestInstallAgentExactSetReplacesLockedAgents(t *testing.T) {
 	t.Parallel()
 	repo, _, _ := lockRepo(t)
 	root := t.TempDir()
@@ -724,26 +728,319 @@ func TestInstallAgentUnionPersists(t *testing.T) {
 		t.Fatalf("enrich install: %v", err)
 	}
 
-	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
 		Root: root, Agents: []string{"codex"},
-	})
-	if err != nil {
-		t.Fatalf("union install: %v", err)
+	}); err != nil {
+		t.Fatalf("exact-set install: %v", err)
 	}
-	_ = res
 	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"alpha", "beta"} {
 		e, _ := l.Entry(name)
-		if e.Ext == nil || len(e.Ext.Agents) != 2 || e.Ext.Agents[0] != testAgent || e.Ext.Agents[1] != "codex" {
-			t.Errorf("%s agents = %+v, want [claude codex]", name, e.Ext)
+		if e.Ext == nil || len(e.Ext.Agents) != 1 || e.Ext.Agents[0] != "codex" {
+			t.Errorf("%s agents = %+v, want [codex]", name, e.Ext)
 		}
-		for _, marker := range []string{"." + testAgent, ".codex"} {
-			if _, statErr := os.Stat(filepath.Join(root, marker, "skills", name)); statErr != nil {
-				t.Errorf("%s target for %s missing: %v", name, marker, statErr)
+		if _, statErr := os.Stat(filepath.Join(root, ".codex", "skills", name)); statErr != nil {
+			t.Errorf("%s codex target missing: %v", name, statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(root, "."+testAgent, "skills", name)); !os.IsNotExist(statErr) {
+			t.Errorf("%s claude target still present, want removed (err=%v)", name, statErr)
+		}
+	}
+}
+
+// TestInstallFromLock_AgentNarrowsToExactSet (US1 Scenario 1, FR-001/FR-002):
+// narrowing an already 3-agent-installed project to one agent removes the
+// dropped agents' targets and rewrites gskill.agents to exactly the new set.
+func TestInstallFromLock_AgentNarrowsToExactSet(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{"claude", "codex", "cursor"},
+	}); err != nil {
+		t.Fatalf("baseline install: %v", err)
+	}
+
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent},
+	}); err != nil {
+		t.Fatalf("narrow install: %v", err)
+	}
+
+	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		e, _ := l.Entry(name)
+		if e.Ext == nil || len(e.Ext.Agents) != 1 || e.Ext.Agents[0] != testAgent {
+			t.Errorf("%s agents = %+v, want [claude]", name, e.Ext)
+		}
+		if _, statErr := os.Stat(filepath.Join(root, "."+testAgent, "skills", name)); statErr != nil {
+			t.Errorf("%s claude target missing: %v", name, statErr)
+		}
+		for _, marker := range []string{".codex", ".cursor"} {
+			if _, statErr := os.Stat(filepath.Join(root, marker, "skills", name)); !os.IsNotExist(statErr) {
+				t.Errorf("%s %s target still present, want removed (err=%v)", name, marker, statErr)
 			}
+		}
+	}
+}
+
+// TestInstallFromLock_AgentNarrowIsIdempotent (US1 Scenario 4, FR-007): a
+// second identical --agent narrowing run makes no further changes.
+func TestInstallFromLock_AgentNarrowIsIdempotent(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{"claude", "codex", "cursor"},
+	}); err != nil {
+		t.Fatalf("baseline install: %v", err)
+	}
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent},
+	}); err != nil {
+		t.Fatalf("first narrow: %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent},
+	})
+	if err != nil {
+		t.Fatalf("second narrow: %v", err)
+	}
+	if res.Changed {
+		t.Error("Changed = true on a repeated identical narrowing")
+	}
+	after, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
+	if string(before) != string(after) {
+		t.Errorf("repeated narrowing changed the lock:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
+// TestInstallFromLock_FrozenAgentMismatchFailsBothDirections (FR-009): a
+// frozen restore whose explicit --agent set differs from the locked set —
+// in either direction, including an explicit empty selection — fails closed,
+// and neither the lock nor the filesystem is touched.
+func TestInstallFromLock_FrozenAgentMismatchFailsBothDirections(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{"claude", "codex"},
+	}); err != nil {
+		t.Fatalf("baseline install: %v", err)
+	}
+	lockPath := filepath.Join(root, skillslock.FileName)
+	before, err := os.ReadFile(lockPath) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		agents []string
+	}{
+		{"fewer than locked", []string{"claude"}},
+		{"more than locked", []string{"claude", "codex", "cursor"}},
+		{"explicit empty (C2 conflation)", []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+				Root: root, Agents: tc.agents, Frozen: true,
+			})
+			if !errors.Is(err, errs.ErrLockMismatch) {
+				t.Fatalf("err = %v, want ErrLockMismatch", err)
+			}
+			if !strings.Contains(err.Error(), "locked:") || !strings.Contains(err.Error(), "requested:") {
+				t.Errorf("error %v should report both the locked and requested sets", err)
+			}
+			after, _ := os.ReadFile(lockPath) //nolint:gosec // test-controlled temp path
+			if string(before) != string(after) {
+				t.Errorf("frozen mismatch (%s) modified the lock", tc.name)
+			}
+		})
+	}
+}
+
+// TestInstallFromLock_ExplicitEmptyAgentsRemovesEverythingButRetainsRecord
+// (FR-012/FR-017/FR-018): an explicit, non-nil empty agent selection (as the
+// TUI produces when every agent is deselected) removes every managed target
+// for the skill, empties its recorded gskill.agents, retains the lock entry
+// and canonical store content, and requires no staging/network access at
+// all — proven here by deleting the fixture's source repo after the
+// baseline install: if staging were attempted, it would fail.
+func TestInstallFromLock_ExplicitEmptyAgentsRemovesEverythingButRetainsRecord(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{"claude", "codex", "cursor"},
+	}); err != nil {
+		t.Fatalf("baseline install: %v", err)
+	}
+
+	// Nothing new can be installed after this — staging/fetch must not be
+	// attempted for a pure narrow-to-zero (FR-018).
+	if err := os.RemoveAll(repo); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{}, Offline: true,
+	})
+	if err != nil {
+		t.Fatalf("explicit-empty narrow: %v", err)
+	}
+	assertNoSkillReportsUpToDateOrFailed(t, res)
+
+	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		e, _ := l.Entry(name)
+		if e.Ext == nil {
+			t.Fatalf("%s lock entry was removed, want retained with empty agents", name)
+		}
+		if len(e.Ext.Agents) != 0 {
+			t.Errorf("%s agents = %v, want []", name, e.Ext.Agents)
+		}
+		assertNoAgentTargets(t, root, name, "."+testAgent, ".codex", ".cursor")
+	}
+	storeEntries, _ := os.ReadDir(filepath.Join(root, ".gskill", "store"))
+	if len(storeEntries) == 0 {
+		t.Error("store appears empty after narrowing to zero agents — canonical content should be retained")
+	}
+}
+
+// assertNoSkillReportsUpToDateOrFailed checks that every skill in res changed
+// (not up-to-date) and none failed.
+func assertNoSkillReportsUpToDateOrFailed(t *testing.T, res app.InstallFromLockResult) {
+	t.Helper()
+	for _, s := range res.Skills {
+		if s.Status == app.LockSkillUpToDate {
+			t.Errorf("%s reported up-to-date despite removing every agent", s.Name)
+		}
+		if s.Err != nil {
+			t.Errorf("%s failed: %v", s.Name, s.Err)
+		}
+	}
+}
+
+// assertNoAgentTargets checks that none of the given agent markers has a
+// target for the named skill.
+func assertNoAgentTargets(t *testing.T, root, name string, markers ...string) {
+	t.Helper()
+	for _, marker := range markers {
+		if _, statErr := os.Stat(filepath.Join(root, marker, "skills", name)); !os.IsNotExist(statErr) {
+			t.Errorf("%s %s target still present, want removed (err=%v)", name, marker, statErr)
+		}
+	}
+}
+
+// TestInstallFromLock_TopLevelAgentsReflectsNarrowedSet (FR-019): the run's
+// top-level reported agent set must equal the exact requested set — not a
+// union with agents recorded before the run.
+func TestInstallFromLock_TopLevelAgentsReflectsNarrowedSet(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{"claude", "codex", "cursor"},
+	}); err != nil {
+		t.Fatalf("baseline install: %v", err)
+	}
+
+	res, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent},
+	})
+	if err != nil {
+		t.Fatalf("narrow install: %v", err)
+	}
+	if len(res.Agents) != 1 || res.Agents[0] != testAgent {
+		t.Errorf("res.Agents = %v, want exactly [claude], not a union with codex/cursor", res.Agents)
+	}
+}
+
+// TestInstallFromLock_AgentAddedWithoutChurningKeptAgent (US3 Scenarios 1-2,
+// FR-002/FR-003): listing an already-installed agent alongside a new one
+// keeps it untouched; omitting a previously installed agent removes it.
+func TestInstallFromLock_AgentAddedWithoutChurningKeptAgent(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{testAgent},
+	}); err != nil {
+		t.Fatalf("baseline install: %v", err)
+	}
+
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{"claude", "codex"},
+	}); err != nil {
+		t.Fatalf("add codex: %v", err)
+	}
+	assertLockAgentsExactly(t, root, "alpha", "claude", "codex")
+	assertLockAgentsExactly(t, root, "beta", "claude", "codex")
+	assertAgentTargetsFor(t, root, ".codex", "alpha", "beta")
+	assertAgentTargets(t, root, "alpha", "beta") // claude, unchurned
+
+	if _, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: root, Agents: []string{"codex"},
+	}); err != nil {
+		t.Fatalf("omit claude: %v", err)
+	}
+	assertLockAgentsExactly(t, root, "alpha", "codex")
+	assertLockAgentsExactly(t, root, "beta", "codex")
+	assertNoAgentTargets(t, root, "alpha", "."+testAgent)
+	assertNoAgentTargets(t, root, "beta", "."+testAgent)
+	assertAgentTargetsFor(t, root, ".codex", "alpha", "beta")
+}
+
+// assertLockAgentsExactly checks that a lock entry's recorded agents equal
+// exactly the given set (order-insensitive).
+func assertLockAgentsExactly(t *testing.T, root, name string, want ...string) {
+	t.Helper()
+	l, err := skillslock.Load(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := l.Entry(name)
+	if e.Ext == nil {
+		t.Fatalf("%s has no gskill metadata", name)
+	}
+	got := append([]string(nil), e.Ext.Agents...)
+	sort.Strings(got)
+	wantSorted := append([]string(nil), want...)
+	sort.Strings(wantSorted)
+	if !reflect.DeepEqual(got, wantSorted) {
+		t.Errorf("%s agents = %v, want %v", name, got, wantSorted)
+	}
+}
+
+// assertAgentTargetsFor checks that marker's target exists for every named skill.
+func assertAgentTargetsFor(t *testing.T, root, marker string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		if _, statErr := os.Stat(filepath.Join(root, marker, "skills", name)); statErr != nil {
+			t.Errorf("%s target for %s missing: %v", name, marker, statErr)
 		}
 	}
 }
