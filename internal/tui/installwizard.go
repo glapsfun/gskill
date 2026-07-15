@@ -369,9 +369,9 @@ func (m lockWizardModel) viewPreview() string {
 // the preview screen, per contracts/cli-install-agent-replace.md's "TUI
 // contract" and "Explicit empty selection" sections.
 func lockPreviewPlanLines(prior, requested []string) []string {
-	kept := intersectStrings(prior, requested)
-	added := subtractStrings(requested, prior)
-	removed := subtractStrings(prior, requested)
+	kept := app.IntersectStrings(prior, requested)
+	added := app.Subtract(requested, prior)
+	removed := app.Subtract(prior, requested)
 	var lines []string
 	// Kept and added are reported on separate lines, not merged, so the
 	// screen actually distinguishes "already installed, left alone" from
@@ -387,36 +387,6 @@ func lockPreviewPlanLines(prior, requested []string) []string {
 		lines = append(lines, "Remove managed targets from: "+strings.Join(removed, ", "))
 	}
 	return lines
-}
-
-// intersectStrings returns the values present in both a and b, in a's order.
-func intersectStrings(a, b []string) []string {
-	set := make(map[string]bool, len(b))
-	for _, v := range b {
-		set[v] = true
-	}
-	var out []string
-	for _, v := range a {
-		if set[v] {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-// subtractStrings returns the values in a that are not in b.
-func subtractStrings(a, b []string) []string {
-	exclude := make(map[string]bool, len(b))
-	for _, v := range b {
-		exclude[v] = true
-	}
-	var out []string
-	for _, v := range a {
-		if !exclude[v] {
-			out = append(out, v)
-		}
-	}
-	return out
 }
 
 // viewSummary reports per-skill outcomes.

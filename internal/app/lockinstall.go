@@ -90,23 +90,30 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 	p := openProject(req.Root)
 	var res InstallFromLockResult
 
-	l, err := a.loadSharedLock(p)
-	if err != nil {
-		return res, err
-	}
-
 	initialized, err := a.ensureLocalState(ctx, p, req)
 	if err != nil {
 		return res, err
 	}
 	res.Initialized = initialized
 
-	if err := checkFrozenAgents(l, req); err != nil {
-		return res, err
-	}
-	res.Agents = runAgents(l, req.Agents)
-
 	installErr := a.withLock(ctx, p, func() error {
+		// Loaded here, under the same lock installAllLockEntries uses to load
+		// lf, so lockEntryTargets' narrow-to-zero detection (which reads l)
+		// and agentDiff's removal computation (which reads lf) always see a
+		// consistent snapshot. Loading l before the lock (as before) left a
+		// window where a concurrent mutation (e.g. `unlink --prune`) could
+		// make the two disagree about whether a zero-agent narrow is genuine,
+		// misrouting it onto the network-requiring resolve path and
+		// violating the zero-network guarantee for narrow-to-zero (FR-018).
+		l, err := a.loadSharedLock(p)
+		if err != nil {
+			return err
+		}
+		if err := checkFrozenAgents(l, req); err != nil {
+			return err
+		}
+		res.Agents = runAgents(l, req.Agents)
+
 		lf, err := a.installAllLockEntries(ctx, p, l, req, &res)
 		if err != nil {
 			return err
@@ -175,7 +182,7 @@ func checkFrozenAgents(l *skillslock.Lock, req InstallFromLockRequest) error {
 			continue // reported per-skill during the run
 		}
 		locked := entryAgents(e)
-		if len(subtract(requested, locked)) > 0 || len(subtract(locked, requested)) > 0 {
+		if len(Subtract(requested, locked)) > 0 || len(Subtract(locked, requested)) > 0 {
 			return errs.WithHint(
 				fmt.Errorf("%w: --agent %s conflicts with the locked agents for %q:\nlocked: %s\nrequested: %s",
 					errs.ErrLockMismatch, strings.Join(requested, ","), name,
@@ -206,11 +213,11 @@ func normalizeAgentIDs(ids []string) []string {
 
 // sameStringSet reports whether a and b contain the same values, ignoring order.
 func sameStringSet(a, b []string) bool {
-	return len(subtract(a, b)) == 0 && len(subtract(b, a)) == 0
+	return len(Subtract(a, b)) == 0 && len(Subtract(b, a)) == 0
 }
 
-// intersectStrings returns the values present in both a and b, in a's order.
-func intersectStrings(a, b []string) []string {
+// IntersectStrings returns the values present in both a and b, in a's order.
+func IntersectStrings(a, b []string) []string {
 	set := make(map[string]bool, len(b))
 	for _, v := range b {
 		set[v] = true
@@ -236,7 +243,31 @@ func agentDiff(lf *skillslock.State, name string, ids []string, explicit bool) (
 	if rec, ok := lf.Skills[name]; ok {
 		prior = rec.Installation.Agents
 	}
-	return intersectStrings(prior, ids), subtract(ids, prior), subtract(prior, ids)
+	return IntersectStrings(prior, ids), Subtract(ids, prior), Subtract(prior, ids)
+}
+
+// verifyDroppedAgentsRemovable checks — without deleting anything — that
+// every removedIDs target for name may safely be removed, so a --dry-run
+// plan fails the same way a real removal would (foreign-modified content)
+// instead of promising a change the real run then refuses to make.
+func (a *App) verifyDroppedAgentsRemovable(p *project, lf *skillslock.State, name string, removedIDs []string) error {
+	if len(removedIDs) == 0 {
+		return nil
+	}
+	locked, ok := lf.Skills[name]
+	if !ok {
+		return nil
+	}
+	for _, id := range removedIDs {
+		recorded, hasTarget := locked.Installation.Targets[id]
+		if !hasTarget {
+			continue
+		}
+		if _, _, err := a.checkSafeTargetRemoval(p, locked.Installation.Scope, id, name, recorded, locked.Resolved.ContentHash); err != nil {
+			return fmt.Errorf("remove %s target: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // removeDroppedAgents removes every currently-installed target for the given
@@ -283,12 +314,24 @@ func (a *App) removeDroppedAgents(p *project, lf *skillslock.State, name string,
 	}
 
 	// Phase 2: every check passed — perform the removals using the resolved
-	// paths from phase 1.
+	// paths from phase 1. Each target is re-verified immediately before its
+	// own deletion: phase 1 alone leaves a window, spanning every other
+	// target's check plus the start of phase 2, during which content could
+	// be swapped in for a target already marked safe; re-checking narrows
+	// that window down to just this one target's check-to-delete gap.
 	for _, id := range removedIDs {
-		if target, ok := resolved[id]; ok {
-			if err := os.RemoveAll(target); err != nil {
-				return fmt.Errorf("remove %s target: %w", id, err)
-			}
+		target, ok := resolved[id]
+		if !ok {
+			continue
+		}
+		recorded := locked.Installation.Targets[id]
+		if _, safe, err := a.checkSafeTargetRemoval(p, locked.Installation.Scope, id, name, recorded, locked.Resolved.ContentHash); err != nil {
+			return fmt.Errorf("remove %s target: %w", id, err)
+		} else if !safe {
+			continue
+		}
+		if err := os.RemoveAll(target); err != nil {
+			return fmt.Errorf("remove %s target: %w", id, err)
 		}
 	}
 	targets := maps.Clone(locked.Installation.Targets)
@@ -299,7 +342,7 @@ func (a *App) removeDroppedAgents(p *project, lf *skillslock.State, name string,
 	}
 	locked.Installation.Targets = targets
 	locked.Installation.Modes = modes
-	locked.Installation.Agents = subtract(locked.Installation.Agents, removedIDs)
+	locked.Installation.Agents = Subtract(locked.Installation.Agents, removedIDs)
 	lf.Skills[name] = locked
 	return nil
 }
@@ -501,6 +544,13 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 // cache (FR-018; research.md Decision 7).
 func (a *App) narrowEntryToZeroAgents(p *project, lf *skillslock.State, name string, dryRun bool, removed []string, r LockSkillResult) LockSkillResult {
 	if dryRun {
+		// Verify (without deleting) that the real run would succeed, so a
+		// clean plan isn't shown for a target whose content is foreign-
+		// modified and would actually fail the removal.
+		if err := a.verifyDroppedAgentsRemovable(p, lf, name, removed); err != nil {
+			r.Err = fmt.Errorf("skill %q: %w", name, err)
+			return r
+		}
 		r.Status = LockSkillPlanned
 		r.Err = nil
 		return r
@@ -530,6 +580,14 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 	}
 
 	if req.DryRun {
+		// Verify (without deleting) that any dropped agents' targets would
+		// really be removable, so the plan doesn't promise a narrowing that
+		// the real run would then refuse (foreign-modified content).
+		if len(removed) > 0 {
+			if err := a.verifyDroppedAgentsRemovable(p, lf, name, removed); err != nil {
+				return fail(err)
+			}
+		}
 		r.Status = LockSkillPlanned
 		r.Err = nil
 		return r
@@ -554,18 +612,24 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 		return fail(err)
 	}
 
-	if len(removed) > 0 {
-		if err := a.removeDroppedAgents(p, lf, name, removed); err != nil {
-			return fail(err)
-		}
-	}
-
 	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result,
 		requestedForEntry(lf, name, e, staged.rev))
 	if err != nil {
 		return fail(err)
 	}
 	ls.Resolved.CompatHash = staged.compat
+
+	// Only after the new lock entry is fully built (so a buildLockEntry
+	// failure leaves lf untouched by the removal side) do dropped agents'
+	// targets get removed — otherwise a failure here would still leave
+	// removeDroppedAgents' deletion and lf mutation persisted by the run's
+	// unconditional end-of-run saveLock, despite this skill being reported
+	// Failed.
+	if len(removed) > 0 {
+		if err := a.removeDroppedAgents(p, lf, name, removed); err != nil {
+			return fail(err)
+		}
+	}
 	lf.Skills[name] = ls
 
 	r.ComputedHash = staged.compat

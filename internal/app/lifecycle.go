@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/glapsfun/gskill/internal/skillslock"
 
@@ -155,8 +156,18 @@ func (a *App) removeSkills(p *project, lf *skillslock.State, names []string, out
 		}
 		scope := locked.Installation.Scope
 		for _, id := range sortedKeys(locked.Installation.Targets) {
-			if _, err := a.removeSafeTarget(p, scope, id, name, locked.Installation.Targets[id]); err != nil {
-				return fmt.Errorf("remove target for %q: %w", name, err)
+			// Ownership-checked (not the bare confined-path deletion): a
+			// copy-mode target whose content no longer matches what gskill
+			// installed fails closed here too, matching the guarantee
+			// unlink and install --agent narrowing already enforce.
+			target, safe, chkErr := a.checkSafeTargetRemoval(p, scope, id, name, locked.Installation.Targets[id], locked.Resolved.ContentHash)
+			if chkErr != nil {
+				return fmt.Errorf("remove target for %q: %w", name, chkErr)
+			}
+			if safe {
+				if rmErr := os.RemoveAll(target); rmErr != nil {
+					return fmt.Errorf("remove target for %q: %w", name, rmErr)
+				}
 			}
 		}
 		if err := active.Remove(p.root, name); err != nil {

@@ -216,6 +216,11 @@ func renderLockInstall(out *Output, res app.InstallFromLockResult, explicit bool
 		human = fmt.Sprintf("Installed %d skill(s), %d failed", installed, failed)
 	case !res.Changed:
 		human = fmt.Sprintf("Up to date (%d skill(s), no changes)", len(res.Skills))
+	case explicit && installed > 0 && len(res.Agents) == 0:
+		// A genuine narrow-to-zero (spec 013 FR-012/FR-017): every managed
+		// target was removed, nothing was installed, so "Installed ... for 0
+		// agent(s)" would read as self-contradictory.
+		human = fmt.Sprintf("Removed all agents from %d skill(s)", installed)
 	}
 	for _, p := range res.Pruned {
 		out.Info("pruned: %s", p)

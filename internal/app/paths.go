@@ -45,22 +45,6 @@ func (a *App) safeTargetForRemoval(p *project, scope, agentID, name, recorded st
 	return expected, true
 }
 
-// removeSafeTarget deletes an agent target only when it is the confined,
-// adapter-derived path; otherwise it skips and warns (never deletes an arbitrary
-// path). It reports whether a deletion happened.
-func (a *App) removeSafeTarget(p *project, scope, agentID, name, recorded string) (bool, error) {
-	target, ok := a.safeTargetForRemoval(p, scope, agentID, name, recorded)
-	if !ok {
-		a.log.Warn("skipping removal of out-of-bounds or mismatched target",
-			"skill", name, "agent", agentID, "recorded", recorded)
-		return false, nil
-	}
-	if err := os.RemoveAll(target); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 // checkSafeTargetRemoval verifies — without deleting anything — that an
 // agent's target may safely be removed: confined to its expected,
 // adapter-derived path, and — for a real (copy-mode) directory — still
@@ -92,7 +76,9 @@ func (a *App) checkSafeTargetRemoval(p *project, scope, agentID, name, recorded,
 			"skill", name, "agent", agentID, "recorded", recorded)
 		return "", false, nil
 	}
-	if info, statErr := os.Lstat(target); statErr == nil && info.Mode()&os.ModeSymlink == 0 {
+	info, statErr := os.Lstat(target)
+	switch {
+	case statErr == nil && info.Mode()&os.ModeSymlink == 0:
 		roots := []string{p.store.Root(), active.Dir(p.root)}
 		if !active.Owned(target, roots, contentHash) {
 			return "", false, errs.WithHint(
@@ -100,6 +86,12 @@ func (a *App) checkSafeTargetRemoval(p *project, scope, agentID, name, recorded,
 					errs.ErrInvalidLock, agentID, name),
 				"the content differs from what gskill installed; resolve it manually before narrowing this skill's agents")
 		}
+	case statErr != nil && !os.IsNotExist(statErr):
+		// A target that genuinely doesn't exist needs no check, but any other
+		// stat failure (e.g. a permission error, or a symlink cycle) must not
+		// silently fall through as "safe to remove without checking" — that
+		// would skip the ownership check for a reason other than absence.
+		return "", false, fmt.Errorf("stat %s target for skill %q: %w", agentID, name, statErr)
 	}
 	return target, true, nil
 }

@@ -221,7 +221,7 @@ func disqualifiesLocalAdd(req AddRequest) bool {
 // anyNewAgent reports whether any target skill gains a not-yet-installed agent.
 func anyNewAgent(lf *skillslock.State, targets, reqIDs []string) bool {
 	for _, name := range targets {
-		if len(subtract(reqIDs, lf.Skills[name].Installation.Agents)) > 0 {
+		if len(Subtract(reqIDs, lf.Skills[name].Installation.Agents)) > 0 {
 			return true
 		}
 	}
@@ -251,7 +251,7 @@ func (a *App) materializeLocalAgentAdd(ctx context.Context, p *project, targets,
 // the lock (no resolve) and merges the result into the lock entry.
 func (a *App) relinkAgents(ctx context.Context, p *project, lf *skillslock.State, name string, reqIDs []string, res *AddResult) error {
 	locked := lf.Skills[name]
-	newIDs := subtract(reqIDs, locked.Installation.Agents)
+	newIDs := Subtract(reqIDs, locked.Installation.Agents)
 	if len(newIDs) == 0 {
 		return nil
 	}
@@ -480,7 +480,7 @@ func (a *App) planAdd(lf *skillslock.State, external map[string]bool, id string,
 	}
 
 	current := existing.Installation.Agents
-	newOnes := subtract(reqIDs, current)
+	newOnes := Subtract(reqIDs, current)
 	if len(newOnes) == 0 {
 		return addPlan{}, conflictErr(id)
 	}
@@ -848,8 +848,8 @@ func unionStrings(a, b []string) []string {
 	return out
 }
 
-// subtract returns the values in a that are not in b.
-func subtract(a, b []string) []string {
+// Subtract returns the values in a that are not in b.
+func Subtract(a, b []string) []string {
 	exclude := make(map[string]bool, len(b))
 	for _, v := range b {
 		exclude[v] = true

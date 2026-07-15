@@ -80,7 +80,7 @@ func (a *App) unlinkOne(p *project, lf *skillslock.State, skill, agentID string,
 	}
 	delete(locked.Installation.Targets, agentID)
 	delete(locked.Installation.Modes, agentID)
-	remaining := subtract(current, []string{agentID})
+	remaining := Subtract(current, []string{agentID})
 	locked.Installation.Agents = remaining
 	out.RemainingAgents = remaining
 
