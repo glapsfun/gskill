@@ -100,6 +100,10 @@ type AddRequest struct {
 	// and returns the chosen subset. The CLI wires this to the TUI picker; the
 	// app stays independent of the view layer (FR-021).
 	Chooser func([]discovery.DiscoveredSkill) ([]discovery.DiscoveredSkill, error)
+
+	// Progress, when non-nil, receives install lifecycle events (spec 014,
+	// contracts/install-progress-events.md); nil keeps the run unobserved.
+	Progress func(InstallProgressEvent)
 }
 
 // InstalledSkill reports one installed skill in a (possibly multi-skill) add.
@@ -170,7 +174,7 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	if err != nil {
 		return AddResult{}, err
 	}
-	return a.ExecutePlan(ctx, plan, nil)
+	return a.ExecutePlan(ctx, plan, req.Progress)
 }
 
 // tryLocalAgentAdd handles a pure agent-add — adding agents to one or more
@@ -366,13 +370,21 @@ func (a *App) chooseInteractive(req AddRequest, candidates []discovery.Discovere
 // conflicts, and the same name from a different source is a collision (FR-029).
 // It stages and activates each skill, rolling back already-activated targets on
 // any failure, and commits the lock only after all succeed.
-// progress, when non-nil, receives a per-skill event before ("install") and
-// after ("record") each skill's placement (spec 011 progress UI).
-func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, ref source.Ref, rev resolver.Revision, ireq installer.Request, inst *installer.Installer, selected []discovery.DiscoveredSkill, warnings []string, progress func(ProgressEvent)) (AddResult, error) {
-	emit := func(skill, stage string) {
-		if progress != nil {
-			progress(ProgressEvent{Skill: skill, Stage: stage})
+// progress, when non-nil, receives install lifecycle events (spec 014): a
+// running storing event before each skill's placement and one terminal
+// installed event after it records, plus a run-scoped locking event before
+// the lock write.
+func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, ref source.Ref, rev resolver.Revision, ireq installer.Request, inst *installer.Installer, selected []discovery.DiscoveredSkill, warnings []string, progress func(InstallProgressEvent)) (AddResult, error) {
+	emit := func(index int, skill string, phase InstallPhase, status InstallStatus) {
+		if progress == nil {
+			return
 		}
+		progress(InstallProgressEvent{
+			SkillIndex: index, SkillTotal: len(selected), SkillName: skill,
+			Source: ref.Original, SourceType: string(ref.Type),
+			Version: rev.Version, Ref: rev.Tag, Commit: rev.Commit,
+			Phase: phase, Status: status,
+		})
 	}
 	res := AddResult{Warnings: append([]string(nil), warnings...)}
 	reqIDs := agentIDs(ireq.Agents)
@@ -392,15 +404,17 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 			}
 		}
 
-		for _, s := range selected {
+		for k, s := range selected {
 			// Honor interruption between skills: an interrupted multi-skill add
 			// rolls back what it activated instead of committing a partial set
-			// (spec 011 FR-020, SC-006 interrupt class).
+			// (spec 011 FR-020, SC-006 interrupt class). The cancellation is
+			// wrapped in ErrCancelled so the CLI reports it plainly with exit
+			// 130 (spec 014 FR-025) instead of a generic error.
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				rollback()
-				return ctxErr
+				return fmt.Errorf("%w: %w", errs.ErrCancelled, ctxErr)
 			}
-			emit(s.ID, "install")
+			emit(k+1, s.ID, InstallPhaseStoring, InstallStatusRunning)
 			plan, planErr := a.planAdd(lf, external, s.ID, req, reqIDs)
 			if planErr != nil {
 				rollback()
@@ -431,9 +445,10 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 				Name: s.ID, Path: s.RepoPath, ContentHash: result.ContentHash, Targets: result.Targets,
 			})
 			res.Warnings = append(res.Warnings, result.Warnings...)
-			emit(s.ID, "record")
+			emit(k+1, s.ID, InstallPhaseComplete, InstallStatusInstalled)
 		}
 
+		emitRunPhase(progress, InstallPhaseLocking, len(selected))
 		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
 			rollback()
 			return saveErr

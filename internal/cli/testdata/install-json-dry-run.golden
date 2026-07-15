@@ -1,0 +1,36 @@
+{
+  "agents": [
+    "claude"
+  ],
+  "changed": false,
+  "initialized": false,
+  "pruned": null,
+  "skills": [
+    {
+      "computedHash": "",
+      "name": "fresh",
+      "plannedAction": "would-install",
+      "source": "",
+      "status": "planned"
+    },
+    {
+      "computedHash": "",
+      "name": "rewrite",
+      "plannedAction": "would-update-lock",
+      "source": "",
+      "status": "planned"
+    }
+  ],
+  "status": "planned",
+  "summary": {
+    "cancelled": 0,
+    "failed": 0,
+    "installed": 0,
+    "notAttempted": 0,
+    "planned": 2,
+    "repaired": 0,
+    "skipped": 0,
+    "total": 2,
+    "upToDate": 0
+  }
+}

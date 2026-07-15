@@ -734,20 +734,15 @@ func (m wizardModel) versionDisplay() string {
 func (m wizardModel) viewProgress() string {
 	var b strings.Builder
 	b.WriteString(m.header("Installing"))
-	done := map[string]bool{}
-	for _, e := range m.events {
-		if e.Stage == "record" {
-			done[e.Skill] = true
-		}
+	b.WriteString(m.prog.View())
+	if m.cancelling {
+		// Acknowledge the cancel immediately; the pipeline is rolling back
+		// and reports through executeDoneMsg (spec 014 US4).
+		b.WriteString("\n" + m.st.Warning.Render("cancelling — rolling back this run…") + "\n")
+		b.WriteString(m.hintLine("finishing up"))
+		return b.String()
 	}
-	for _, s := range m.session.Selected {
-		mark := m.st.Hint.Render("…")
-		if done[s.ID] {
-			mark = m.st.Success.Render("✓")
-		}
-		fmt.Fprintf(&b, "  %s %s\n", mark, Sanitize(s.ID))
-	}
-	b.WriteString(m.hintLine("installing — please wait"))
+	b.WriteString(m.hintLine("esc cancel"))
 	return b.String()
 }
 
@@ -755,8 +750,11 @@ func (m wizardModel) viewProgress() string {
 
 func (m wizardModel) viewSummary() string {
 	var b strings.Builder
-	b.WriteString(m.header("Installed successfully"))
-	fmt.Fprintf(&b, "%s\n\n", m.st.Success.Render(fmt.Sprintf("✓ %d skill(s) installed", len(m.result.Installed))))
+	// The shared result component (built once in onExecuteDone) renders the
+	// headline and counters (spec 014 US2); the add flow keeps its per-skill
+	// target paths and next steps.
+	b.WriteString(m.execResults.View())
+	b.WriteString("\n")
 	for _, s := range m.result.Installed {
 		fmt.Fprintf(&b, "  %s %s %s\n", m.st.Success.Render("✓"), Sanitize(s.Name), m.st.Subtitle.Render("("+Sanitize(m.versionDisplay())+")"))
 		targets := make([]string, 0, len(s.Targets))

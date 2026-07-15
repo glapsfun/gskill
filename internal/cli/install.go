@@ -14,6 +14,14 @@ import (
 // runLockWizardFn is swapped in tests.
 var runLockWizardFn = tui.RunLockWizard
 
+// reportedError marks an error whose story the interactive UI already told
+// (the wizard's result screen). Run maps it to its exit code without printing
+// the generic "error: …" line a second time (spec 014 FR-020).
+type reportedError struct{ err error }
+
+func (e reportedError) Error() string { return e.err.Error() }
+func (e reportedError) Unwrap() error { return e.err }
+
 // installCmd restores the environment declared in skills-lock.json.
 type installCmd struct {
 	Agent          []string `sep:"," help:"Target agent(s); repeatable or comma-separated. This is the exact desired set: it replaces (not merges with) each skill's currently recorded agents — list every agent you want kept, not just the one being added."`
@@ -118,9 +126,11 @@ func (c installCmd) wizardEligible(out *Output, g Globals) bool {
 
 // runLockDirect executes the non-interactive install.
 func (c installCmd) runLockDirect(ctx context.Context, out *Output, a *app.App, root string, g Globals) error {
-	ctx, done := out.withFetchProgress(ctx)
+	ctx, events, done := out.withInstallProgress(ctx)
 	defer done()
-	res, err := a.InstallFromLock(ctx, c.request(root, g))
+	req := c.request(root, g)
+	req.Progress = events
+	res, err := a.InstallFromLock(ctx, req)
 	done()
 	if err != nil && len(res.Skills) == 0 {
 		// Nothing ran (missing/invalid lock, agent selection failed): report
@@ -151,9 +161,10 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 			Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
 				return a.AgentChoices(ctx, root)
 			},
-			Execute: func(ctx context.Context, agentIDs []string) (app.InstallFromLockResult, error) {
+			Execute: func(ctx context.Context, agentIDs []string, progress func(app.InstallProgressEvent)) (app.InstallFromLockResult, error) {
 				req := c.request(root, g)
 				req.Agents = agentIDs
+				req.Progress = progress
 				return a.InstallFromLock(ctx, req)
 			},
 		},
@@ -170,72 +181,136 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 			fmt.Errorf("%w: no supported agents detected", errs.ErrUnsupportedAgent),
 			"pass --agent <id>[,<id>...] to install for a specific agent")
 	case outcome.Executed:
-		// The wizard's confirmed agent selection is always explicit (spec 013
-		// FR-005/FR-006), including a zero-agent narrowing (FR-012/FR-017).
-		if renderErr := renderLockInstall(out, outcome.Result, true); renderErr != nil {
-			return renderErr
+		// The wizard's result screen already showed the detailed summary and
+		// failure table (spec 014 FR-020): never print the generic summary
+		// again. Two facts the screen does NOT carry are still reported on
+		// stderr: pruned entries, and the spec-013 "removed for" notes — a
+		// narrow-to-zero run deletes managed targets while its entries land
+		// as "repaired", so without these lines a destructive run would read
+		// as a plain repair.
+		for _, p := range outcome.Result.Pruned {
+			out.Info("pruned: %s", p)
 		}
-		return outcome.Err
+		for _, s := range outcome.Result.Skills {
+			reportLockSkillAgentDiag(out, s, true)
+		}
+		if outcome.Err != nil {
+			// The result table has no hint column; the remediation hint lives
+			// only in the drill-down detail view, so persist it on stderr.
+			if hint := errs.HintOf(outcome.Err); hint != "" {
+				out.Hint("→ %s", hint)
+			}
+			return reportedError{err: outcome.Err}
+		}
+		return nil
 	default:
 		return outcome.Err
 	}
 }
 
-// renderLockInstall prints the install summary on the plain streams (so it
-// survives the alternate screen) and the --json document. explicit reports
-// whether the run had an explicit agent selection (--agent or a TUI
-// confirmation, spec 013 FR-014) — it gates the per-skill agentsKept/
-// agentsAdded/agentsRemoved JSON fields and the "removed for" / dry-run plan
-// lines, all three emitted together (never one dropped for being empty) so a
-// plain `gskill install` run's output is unaffected (contracts/
-// cli-install-agent-replace.md).
+// renderLockInstall prints the install result on the plain streams and the
+// --json document (spec 014 US3): a summary whose counters always sum to the
+// total (FR-015/FR-016), one block per unsuccessful skill with equivalent
+// failure information (FR-021), and the additively-extended stable JSON
+// shape (contracts/install-result-json.md). explicit reports whether the run
+// had an explicit agent selection (spec 013 FR-014) — it gates the per-skill
+// agentsKept/agentsAdded/agentsRemoved JSON fields and the "removed for" /
+// dry-run agent plan lines.
 func renderLockInstall(out *Output, res app.InstallFromLockResult, explicit bool) error {
+	sum := app.Aggregate(res.Skills)
 	skills := make([]map[string]any, 0, len(res.Skills))
-	var names []string
-	installed, failed, planned := 0, 0, 0
 	for _, s := range res.Skills {
-		entry := lockSkillJSONEntry(s, explicit)
 		reportLockSkillAgentDiag(out, s, explicit)
-		skills = append(skills, entry)
-		names = append(names, s.Name)
-		switch s.Status {
-		case app.LockSkillFailed:
-			failed++
-		case app.LockSkillInstalled, app.LockSkillRepaired:
-			installed++
-		case app.LockSkillPlanned:
-			planned++
-		}
-	}
-	human := fmt.Sprintf("Installed %d skill(s) for %d agent(s)", installed, len(res.Agents))
-	switch {
-	case planned > 0:
-		human = fmt.Sprintf("Plan: would install %d skill(s) (%s) — nothing written (--dry-run)",
-			planned, strings.Join(names, ", "))
-	case failed > 0:
-		human = fmt.Sprintf("Installed %d skill(s), %d failed", installed, failed)
-	case !res.Changed:
-		human = fmt.Sprintf("Up to date (%d skill(s), no changes)", len(res.Skills))
-	case explicit && installed > 0 && len(res.Agents) == 0:
-		// A genuine narrow-to-zero (spec 013 FR-012/FR-017): every managed
-		// target was removed, nothing was installed, so "Installed ... for 0
-		// agent(s)" would read as self-contradictory.
-		human = fmt.Sprintf("Removed all agents from %d skill(s)", installed)
+		skills = append(skills, lockSkillJSONEntry(s, explicit))
 	}
 	for _, p := range res.Pruned {
 		out.Info("pruned: %s", p)
 	}
-	human = out.summary(human)
-	return out.Result(human, map[string]any{
+	doc := map[string]any{
 		"changed":     res.Changed,
 		"initialized": res.Initialized,
 		"agents":      res.Agents,
+		"status":      string(sum.Outcome),
+		"summary":     summaryJSON(sum),
 		"skills":      skills,
 		"pruned":      res.Pruned,
-	})
+	}
+	return out.Result(humanLockInstall(res, sum), doc)
 }
 
-// lockSkillJSONEntry builds one skill's --json entry, including the
+// summaryJSON serializes the counters; every counter is always present so
+// consumers can rely on the keys (the planned counter appears only for dry
+// runs, per the contract).
+func summaryJSON(sum app.InstallSummary) map[string]any {
+	m := map[string]any{
+		"total":        sum.Total,
+		"installed":    sum.Installed,
+		"repaired":     sum.Repaired,
+		"upToDate":     sum.UpToDate,
+		"skipped":      sum.Skipped,
+		"failed":       sum.Failed,
+		"cancelled":    sum.Cancelled,
+		"notAttempted": sum.NotAttempted,
+	}
+	if sum.Planned > 0 {
+		m["planned"] = sum.Planned
+	}
+	return m
+}
+
+// humanLockInstall renders the plain result: headline, counters, per-failure
+// blocks, and the dry-run plan list. Unknown values render — (FR-014); all
+// untrusted text is sanitized (FR-028). The string carries no trailing
+// newline (Result appends one).
+func humanLockInstall(res app.InstallFromLockResult, sum app.InstallSummary) string {
+	var b strings.Builder
+	b.WriteString(tui.InstallHeadline(sum) + "\n")
+	fmt.Fprintf(&b, "%d skills processed", sum.Total)
+	if line := tui.InstallCounterLine(sum); line != "" {
+		b.WriteString("\n" + line)
+	}
+	for _, s := range res.Skills {
+		switch app.InstallStatus(s.Status) { //nolint:exhaustive // successful statuses render as counters only (clarification #2)
+		case app.InstallStatusFailed, app.InstallStatusCancelled, app.InstallStatusNotAttempted:
+			b.WriteString("\n\n" + failureBlock(s))
+		default:
+		}
+	}
+	if sum.Planned > 0 {
+		b.WriteString("\n")
+		for _, s := range res.Skills {
+			if s.Status == app.LockSkillPlanned {
+				fmt.Fprintf(&b, "\n%-20s %s", tui.PlannedTitle(s.PlannedAction), tui.Sanitize(s.Name))
+			}
+		}
+		b.WriteString("\nnothing written (--dry-run)")
+	}
+	return b.String()
+}
+
+// failureBlock renders one unsuccessful skill's equivalent information
+// (FR-021): status, skill, source, version, phase, reason, and hint.
+func failureBlock(s app.LockSkillResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s  %s\n", strings.ToUpper(s.Status), tui.Sanitize(s.Name))
+	fmt.Fprintf(&b, "  Source:   %s\n", tui.OrDash(s.Source))
+	fmt.Fprintf(&b, "  Version:  %s\n", tui.OrDash(s.ResolvedVersion))
+	fmt.Fprintf(&b, "  Phase:    %s", tui.OrDash(string(s.Phase)))
+	if f := s.Failure; f != nil {
+		fmt.Fprintf(&b, "\n  Category: %s", tui.Sanitize(string(f.Category)))
+		fmt.Fprintf(&b, "\n  Reason:   %s", tui.OrDash(f.Message))
+		if f.Hint != "" {
+			fmt.Fprintf(&b, "\n  Hint:     %s", tui.Sanitize(f.Hint))
+		}
+	} else if s.Err != nil {
+		fmt.Fprintf(&b, "\n  Reason:   %s", tui.Sanitize(s.Err.Error()))
+	}
+	return b.String()
+}
+
+// lockSkillJSONEntry builds one skill's --json entry: the frozen legacy
+// fields, the spec 014 additive provenance/failure fields (unknown scalars
+// omitted, never fabricated — FR-014's JSON analogue), and the
 // agentsKept/agentsAdded/agentsRemoved fields when explicit (spec 013
 // FR-014).
 func lockSkillJSONEntry(s app.LockSkillResult, explicit bool) map[string]any {
@@ -248,11 +323,46 @@ func lockSkillJSONEntry(s app.LockSkillResult, explicit bool) map[string]any {
 	if s.Err != nil {
 		entry["error"] = s.Err.Error()
 	}
-	// A failed skill's AgentsKept/Added/Removed describe intent, not outcome
-	// (removeDroppedAgents' two-phase check guarantees nothing was actually
-	// removed when a skill fails) — omit rather than report values a
-	// consumer could mistake for what happened.
-	if explicit && s.Status != app.LockSkillFailed {
+	putIf := func(key, val string) {
+		if val != "" {
+			entry[key] = val
+		}
+	}
+	putIf("sourceType", s.SourceType)
+	putIf("skillPath", s.SkillPath)
+	putIf("requestedRef", s.RequestedRef)
+	putIf("resolvedVersion", s.ResolvedVersion)
+	putIf("resolvedRef", s.ResolvedRef)
+	putIf("commit", s.Commit)
+	putIf("installMode", s.InstallMode)
+	putIf("phase", string(s.Phase))
+	putIf("plannedAction", s.PlannedAction)
+	if len(s.Agents) > 0 {
+		entry["agents"] = s.Agents
+	}
+	if f := s.Failure; f != nil {
+		fj := map[string]any{
+			"category": string(f.Category),
+			"message":  f.Message,
+		}
+		if f.Phase != "" {
+			fj["phase"] = string(f.Phase)
+		}
+		if f.Hint != "" {
+			fj["hint"] = f.Hint
+		}
+		if f.Expected != "" || f.Actual != "" {
+			fj["expected"] = f.Expected
+			fj["actual"] = f.Actual
+		}
+		entry["failure"] = fj
+	}
+	// An unsuccessful skill's AgentsKept/Added/Removed describe intent, not
+	// outcome (removeDroppedAgents' two-phase check guarantees nothing was
+	// actually removed when a skill fails, and a cancelled/not-attempted
+	// entry never reached the removal at all) — omit rather than report
+	// values a consumer could mistake for what happened.
+	if explicit && agentDiffReportable(s.Status) {
 		entry["agentsKept"] = nonNilStrings(s.AgentsKept)
 		entry["agentsAdded"] = nonNilStrings(s.AgentsAdded)
 		entry["agentsRemoved"] = nonNilStrings(s.AgentsRemoved)
@@ -260,16 +370,31 @@ func lockSkillJSONEntry(s app.LockSkillResult, explicit bool) map[string]any {
 	return entry
 }
 
+// agentDiffReportable reports whether a status means the skill's agent diff
+// actually happened: only statuses that completed their pipeline qualify.
+// failed, cancelled, and not-attempted entries carry the diff as unexecuted
+// intent (spec 014 review C7).
+func agentDiffReportable(status string) bool {
+	switch app.InstallStatus(status) { //nolint:exhaustive // pending/running never appear in final results
+	case app.InstallStatusInstalled, app.InstallStatusRepaired,
+		app.InstallStatusUpToDate, app.InstallStatusSkipped, app.InstallStatusPlanned:
+		return true
+	default:
+		return false
+	}
+}
+
 // reportLockSkillAgentDiag writes the human-readable "removed for" note and,
 // for a --dry-run plan, the keep/add/remove/lock preview lines — both gated
 // on an explicit agent selection.
 func reportLockSkillAgentDiag(out *Output, s app.LockSkillResult, explicit bool) {
-	if !explicit || s.Status == app.LockSkillFailed {
-		// A failed skill's AgentsKept/Added/Removed describe what was
+	if !explicit || !agentDiffReportable(s.Status) {
+		// An unsuccessful skill's AgentsKept/Added/Removed describe what was
 		// intended, not what happened — the two-phase removal in
 		// removeDroppedAgents guarantees nothing was actually removed when
-		// the skill fails, so reporting "removed for" here would tell the
-		// user something was deleted when it wasn't.
+		// the skill fails (or is cancelled before reaching it), so reporting
+		// "removed for" here would tell the user something was deleted when
+		// it wasn't.
 		return
 	}
 	if len(s.AgentsRemoved) > 0 {

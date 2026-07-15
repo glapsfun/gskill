@@ -1,0 +1,71 @@
+{
+  "agents": [
+    "claude"
+  ],
+  "changed": true,
+  "initialized": false,
+  "pruned": null,
+  "skills": [
+    {
+      "commit": "a1b2c3d4e5f6",
+      "computedHash": "",
+      "name": "alpha",
+      "resolvedVersion": "1.2.3",
+      "source": "github.com/acme/skills",
+      "sourceType": "github",
+      "status": "installed"
+    },
+    {
+      "commit": "a1b2c3d4e5f6",
+      "computedHash": "",
+      "name": "beta",
+      "resolvedVersion": "1.2.3",
+      "source": "github.com/acme/skills",
+      "sourceType": "github",
+      "status": "repaired"
+    },
+    {
+      "computedHash": "",
+      "error": "computedHash mismatch: lock records sha256:03e0, source content is sha256:94ab",
+      "failure": {
+        "category": "integrity",
+        "hint": "re-run with --force to accept the changed upstream content",
+        "message": "computedHash mismatch: lock records sha256:03e0, source content is sha256:94ab",
+        "phase": "verifying"
+      },
+      "name": "gke-scaling",
+      "phase": "verifying",
+      "resolvedVersion": "v1.4.2",
+      "skillPath": "skills/gke-scaling",
+      "source": "glapsfun/cloud-native-skills",
+      "sourceType": "github",
+      "status": "failed"
+    },
+    {
+      "computedHash": "",
+      "error": "destination already exists and is not managed by gskill",
+      "failure": {
+        "category": "foreign-content",
+        "message": "destination already exists and is not managed by gskill",
+        "phase": "linking"
+      },
+      "name": "k8s-debug",
+      "phase": "linking",
+      "skillPath": "skills/k8s-debug",
+      "source": "./local-skills",
+      "sourceType": "github",
+      "status": "failed"
+    }
+  ],
+  "status": "partial",
+  "summary": {
+    "cancelled": 0,
+    "failed": 2,
+    "installed": 1,
+    "notAttempted": 0,
+    "repaired": 1,
+    "skipped": 0,
+    "total": 4,
+    "upToDate": 0
+  }
+}

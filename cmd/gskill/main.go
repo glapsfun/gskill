@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
@@ -33,6 +35,16 @@ func main() {
 		Agents: agent.NewDefaultRegistry(),
 	})
 
-	code := cli.Run(context.Background(), os.Args[1:], os.Stdout, os.Stderr, application)
+	// SIGINT/SIGTERM cancel the run context so non-wizard commands stop
+	// gracefully (spec 014 FR-024): the install loop halts between skills,
+	// completed work is persisted to the lockfile, and the process exits 130.
+	// (Inside the wizards, Bubble Tea's raw mode turns ctrl+c into a key
+	// event instead of a signal.) After the run, stop restores the default
+	// disposition so a second signal can still kill a hung teardown; os.Exit
+	// makes a defer useless here.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+
+	code := cli.Run(ctx, os.Args[1:], os.Stdout, os.Stderr, application)
+	stop()
 	os.Exit(code)
 }

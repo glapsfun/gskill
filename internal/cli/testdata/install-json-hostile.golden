@@ -1,0 +1,36 @@
+{
+  "agents": null,
+  "changed": false,
+  "initialized": false,
+  "pruned": null,
+  "skills": [
+    {
+      "computedHash": "",
+      "error": "boom \u001b[31mred\u001b[0m",
+      "failure": {
+        "category": "unknown",
+        "hint": "hint\u001b]8;;x\u0007",
+        "message": "boom \u001b[31mred\u001b[0m",
+        "phase": "verifying"
+      },
+      "name": "evil\u001b]0;pwned\u0007",
+      "phase": "verifying",
+      "resolvedVersion": "v1\u001b[31m",
+      "skillPath": "skills/evil\u001b]0;pwned\u0007",
+      "source": "src\u001b[2Jwipe",
+      "sourceType": "github",
+      "status": "failed"
+    }
+  ],
+  "status": "failure",
+  "summary": {
+    "cancelled": 0,
+    "failed": 1,
+    "installed": 0,
+    "notAttempted": 0,
+    "repaired": 0,
+    "skipped": 0,
+    "total": 1,
+    "upToDate": 0
+  }
+}

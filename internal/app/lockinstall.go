@@ -41,6 +41,10 @@ type InstallFromLockRequest struct {
 	Offline     bool   // restore from local store/cache only
 	Frozen      bool   // never modify the lock file; fail closed on drift
 	Prune       bool   // afterwards, remove managed installs the lock no longer declares
+	// Progress, when non-nil, receives install lifecycle events synchronously
+	// and strictly sequentially (contracts/install-progress-events.md). A nil
+	// Progress makes the run behaviorally identical to an unobserved one.
+	Progress func(InstallProgressEvent)
 }
 
 // sourceTypeGitHub is the shared lock's GitHub sourceType value.
@@ -53,6 +57,15 @@ const (
 	LockSkillRepaired  = "repaired"
 	LockSkillFailed    = "failed"
 	LockSkillPlanned   = "planned" // dry-run only
+)
+
+// Planned actions distinguish what a dry-run entry would do (spec 014 FR-026).
+const (
+	PlannedWouldInstall      = "would-install"
+	PlannedWouldRepair       = "would-repair"
+	PlannedWouldRemoveTarget = "would-remove-target"
+	PlannedWouldUpdateLock   = "would-update-lock"
+	PlannedBlocked           = "blocked"
 )
 
 // LockSkillResult is one skill's outcome in an InstallFromLock run.
@@ -68,6 +81,22 @@ type LockSkillResult struct {
 	AgentsAdded   []string
 	AgentsRemoved []string
 	Err           error
+
+	// Provenance and failure detail (spec 014): populated for successes and
+	// failures alike whenever known; empty strings render as "—", never as
+	// fabricated data (FR-014). Failure is non-nil exactly when the entry
+	// failed (or was cancelled with a cause).
+	SourceType      string
+	SkillPath       string
+	RequestedRef    string
+	ResolvedVersion string
+	ResolvedRef     string
+	Commit          string
+	Agents          []string
+	InstallMode     string
+	Phase           InstallPhase
+	PlannedAction   string // dry-run only: would-install|would-repair|would-remove-target|would-update-lock|blocked
+	Failure         *InstallFailure
 }
 
 // InstallFromLockResult is the run summary.
@@ -89,6 +118,12 @@ type InstallFromLockResult struct {
 func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (InstallFromLockResult, error) {
 	p := openProject(req.Root)
 	var res InstallFromLockResult
+
+	// A run whose context is already cancelled fails fast with zero writes:
+	// no auto-init, no lock acquisition, nothing attempted (spec 014 FR-024).
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return res, fmt.Errorf("%w: %w", errs.ErrCancelled, ctxErr)
+	}
 
 	initialized, err := a.ensureLocalState(ctx, p, req)
 	if err != nil {
@@ -347,6 +382,91 @@ func (a *App) removeDroppedAgents(p *project, lf *skillslock.State, name string,
 	return nil
 }
 
+// skillEmitter emits install lifecycle events for one skill (spec 014,
+// contracts/install-progress-events.md). All methods are nil-receiver safe so
+// unobserved runs cost nothing. The template event accumulates identity facts
+// (commit, version) as deeper layers learn them, so later phase events and the
+// terminal event carry them.
+type skillEmitter struct {
+	emit        func(InstallProgressEvent)
+	ev          InstallProgressEvent
+	last        InstallPhase // last running phase, for failed terminal events
+	resolvedRef string       // tag or branch the resolution landed on
+}
+
+// newSkillEmitter builds the per-skill emitter; a nil emit yields a fully
+// inert (but non-nil-safe-to-call) emitter.
+func newSkillEmitter(emit func(InstallProgressEvent), index, total int, name string, e skillslock.Entry) *skillEmitter {
+	ref := e.Ref
+	if ref == "" && e.Ext != nil {
+		ref = e.Ext.Ref
+	}
+	return &skillEmitter{emit: emit, ev: InstallProgressEvent{
+		SkillIndex: index, SkillTotal: total, SkillName: name,
+		Source: e.Source, SourceType: e.SourceType, Ref: ref,
+	}}
+}
+
+// phase reports a running phase transition.
+func (s *skillEmitter) phase(p InstallPhase) {
+	if s == nil {
+		return
+	}
+	s.last = p
+	if s.emit == nil {
+		return
+	}
+	e := s.ev
+	e.Phase = p
+	e.Status = InstallStatusRunning
+	s.emit(e)
+}
+
+// resolved records revision facts so subsequent events carry them.
+func (s *skillEmitter) resolved(rev resolver.Revision) {
+	if s == nil {
+		return
+	}
+	s.ev.Commit = rev.Commit
+	s.ev.Version = rev.Version
+	switch {
+	case rev.Tag != "":
+		s.resolvedRef = rev.Tag
+	case rev.Branch != "":
+		s.resolvedRef = rev.Branch
+	}
+}
+
+// finish emits the skill's single terminal event from its result. Successful
+// outcomes report phase complete; failures report the phase that failed
+// (runOneLockEntry backfills r.Phase from the emitter before calling this,
+// so r.Phase is the single source of truth).
+func (s *skillEmitter) finish(r LockSkillResult) {
+	if s == nil || s.emit == nil {
+		return
+	}
+	e := s.ev
+	e.Status = InstallStatus(r.Status)
+	e.Phase = InstallPhaseComplete
+	if r.Err != nil {
+		e.Err = r.Err
+		if r.Phase != "" {
+			e.Phase = r.Phase
+		}
+	}
+	s.emit(e)
+}
+
+// emitRunPhase reports a run-scoped (not per-skill) phase such as locking;
+// contract guarantee 6: SkillName stays empty and consumers must not count it
+// toward any skill's progress.
+func emitRunPhase(emit func(InstallProgressEvent), p InstallPhase, total int) {
+	if emit == nil {
+		return
+	}
+	emit(InstallProgressEvent{SkillTotal: total, Phase: p, Status: InstallStatusRunning})
+}
+
 // installAllLockEntries runs the per-entry pipeline over every lock entry,
 // aggregating per-skill outcomes into partial-failure semantics (FR-016a):
 // mixed results return ErrPartialInstall, total failure returns the first
@@ -356,17 +476,32 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 	if err != nil {
 		return nil, err
 	}
-	var failures, healthy int
+	var failures, healthy, notAttempted int
+	var interrupted bool
 	var firstErr error
 	names := sortedLockNames(l)
 	for k, name := range names {
 		e, _ := l.Entry(name)
-		sctx := stampSkill(ctx, name, k+1, len(names))
-		r := a.installOneLockEntry(sctx, p, lf, name, e, req)
+		// Cancellation is guaranteed between skills (contract guarantee 4):
+		// once the context is cancelled no new skill starts; every remaining
+		// entry reports not-attempted with its own terminal event so the
+		// progress bar still reaches 100%.
+		if ctx.Err() != nil {
+			res.Skills = append(res.Skills, notAttemptedLockResult(req, k+1, len(names), name, e))
+			notAttempted++
+			continue
+		}
+		r := a.runOneLockEntry(ctx, p, lf, name, e, req, k+1, len(names))
 		res.Skills = append(res.Skills, r)
 		switch {
 		case r.Err != nil:
 			failures++
+			if r.Status == string(InstallStatusCancelled) {
+				// The in-flight skill aborted on the cancelled context: the
+				// whole run classifies as interrupted even when it was the
+				// last entry (exit 130, never a misleading generic failure).
+				interrupted = true
+			}
 			if firstErr == nil {
 				firstErr = r.Err
 			}
@@ -377,20 +512,92 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 			}
 		}
 	}
+	// Completed successes are persisted even when the run was interrupted:
+	// the lockfile stays valid and records exactly what was installed
+	// (FR-024, constitution I).
 	if !req.DryRun && !req.Frozen {
+		emitRunPhase(req.Progress, InstallPhaseLocking, len(names))
 		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
 			return nil, saveErr
 		}
 	}
+	return lf, lockRunError(notAttempted, len(names), failures, healthy, interrupted, firstErr)
+}
+
+// lockRunError maps a run's tallies onto its aggregate error: interruption
+// dominates (exit 130), then partial failure (exit 10), then the first cause.
+func lockRunError(notAttempted, total, failures, healthy int, interrupted bool, firstErr error) error {
 	switch {
+	case notAttempted > 0:
+		return fmt.Errorf("%w: installation interrupted: %d of %d skills not attempted",
+			errs.ErrCancelled, notAttempted, total)
+	case interrupted:
+		// The cancel landed on the in-flight last skill: nothing was left
+		// unattempted, so a "0 of N not attempted" count would contradict
+		// itself.
+		return fmt.Errorf("%w: installation interrupted", errs.ErrCancelled)
 	case failures > 0 && healthy > 0:
-		return lf, fmt.Errorf("%w: %d of %d skills failed",
+		return fmt.Errorf("%w: %d of %d skills failed",
 			errs.ErrPartialInstall, failures, failures+healthy)
 	case failures > 0:
-		return lf, firstErr
+		return firstErr
 	default:
-		return lf, nil
+		return nil
 	}
+}
+
+// notAttemptedLockResult builds (and emits the terminal event for) an entry
+// the cancelled run never started.
+func notAttemptedLockResult(req InstallFromLockRequest, index, total int, name string, e skillslock.Entry) LockSkillResult {
+	em := newSkillEmitter(req.Progress, index, total, name, e)
+	r := LockSkillResult{
+		Name: name, Source: e.Source, ComputedHash: e.ComputedHash,
+		Status: string(InstallStatusNotAttempted),
+	}
+	stampResultProvenance(&r, e, req)
+	em.finish(r)
+	return r
+}
+
+// runOneLockEntry wraps one entry's pipeline with its progress emitter: phase
+// events stream while the entry processes, the failing phase is backfilled
+// from the emitter when the pipeline didn't stamp one, and exactly one
+// terminal event closes the skill (contract guarantee 1).
+func (a *App) runOneLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest, index, total int) LockSkillResult {
+	em := newSkillEmitter(req.Progress, index, total, name, e)
+	sctx := stampSkill(ctx, name, index, total)
+	r := a.installOneLockEntry(sctx, p, lf, name, e, req, em)
+
+	// Backfill provenance the deeper layers learned (spec 014 FR-011): the
+	// emitter accumulated resolution facts even on paths that failed later.
+	if r.Commit == "" {
+		r.Commit = em.ev.Commit
+	}
+	if r.ResolvedVersion == "" {
+		r.ResolvedVersion = em.ev.Version
+	}
+	if r.ResolvedRef == "" {
+		r.ResolvedRef = em.resolvedRef
+	}
+	switch {
+	case r.Err != nil:
+		if r.Phase == "" {
+			r.Phase = em.last
+		}
+		r.Failure = classifyFailure(r.Phase, r.Err)
+		if r.Failure.Category == FailureCancelled {
+			// An in-flight ctx-aware operation aborted: the skill ended by
+			// cancellation, not by its own fault (contract guarantee 4).
+			r.Status = string(InstallStatusCancelled)
+		}
+		if req.DryRun {
+			r.PlannedAction = PlannedBlocked
+		}
+	default:
+		r.Phase = InstallPhaseComplete
+	}
+	em.finish(r)
+	return r
 }
 
 // LockPreview describes the shared lock for the interactive install flow.
@@ -499,16 +706,17 @@ var lockEntrySourceTypes = map[string]bool{sourceTypeGitHub: true, "git": true, 
 // FR-018a), install for the selected agents, and stage the lock record. All
 // failures are reported on the result, never returned, so one bad skill cannot
 // take down its siblings (FR-016a).
-func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest) LockSkillResult {
+func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest, em *skillEmitter) LockSkillResult {
 	r := LockSkillResult{Name: name, Source: e.Source, ComputedHash: e.ComputedHash, Status: LockSkillFailed}
+	stampResultProvenance(&r, e, req)
 	fail := func(err error) LockSkillResult {
 		r.Err = fmt.Errorf("skill %q: %w", name, err)
 		return r
 	}
 
 	if !lockEntrySourceTypes[e.SourceType] {
-		return fail(fmt.Errorf("%w: unsupported sourceType %q (supported: github, git, local)",
-			errs.ErrInvalidLock, e.SourceType))
+		return fail(fmt.Errorf("%w: %w: unsupported sourceType %q (supported: github, git, local)",
+			errs.ErrInvalidLock, errUnsupportedSourceType, e.SourceType))
 	}
 
 	agents, done := a.lockEntryTargets(&r, e, req)
@@ -518,6 +726,7 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 
 	explicit := req.Agents != nil
 	ids := agentIDs(agents)
+	r.Agents = ids
 	kept, added, removed := agentDiff(lf, name, ids, explicit)
 	r.AgentsKept, r.AgentsAdded, r.AgentsRemoved = kept, added, removed
 
@@ -534,7 +743,28 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 		return r2
 	}
 
-	return a.stageAndActivateLockEntry(ctx, p, lf, name, e, req, agents, removed, r)
+	return a.stageAndActivateLockEntry(ctx, p, lf, name, e, req, agents, removed, r, em)
+}
+
+// stampResultProvenance fills the entry-derived result facts (spec 014
+// FR-011) shared by every outcome: source type, skill path, requested ref,
+// and the effective install mode.
+func stampResultProvenance(r *LockSkillResult, e skillslock.Entry, req InstallFromLockRequest) {
+	r.SourceType = e.SourceType
+	r.SkillPath = e.SkillPath
+	r.RequestedRef = e.Ref
+	extMode := ""
+	if e.Ext != nil {
+		if r.RequestedRef == "" {
+			r.RequestedRef = e.Ext.Ref
+		}
+		extMode = e.Ext.InstallMode
+	}
+	if mode := modeOr(req.InstallMode, extMode); mode != "" {
+		r.InstallMode = mode
+	} else {
+		r.InstallMode = "auto"
+	}
 }
 
 // narrowEntryToZeroAgents removes every managed target for an entry that has
@@ -552,6 +782,7 @@ func (a *App) narrowEntryToZeroAgents(p *project, lf *skillslock.State, name str
 			return r
 		}
 		r.Status = LockSkillPlanned
+		r.PlannedAction = PlannedWouldRemoveTarget
 		r.Err = nil
 		return r
 	}
@@ -568,29 +799,19 @@ func (a *App) narrowEntryToZeroAgents(p *project, lf *skillslock.State, name str
 // its target agents, removes any dropped agents' managed targets (FR-003 —
 // Install only activates staged.ireq.Agents and never proactively removes
 // agents outside that list), and records the resulting lock entry.
-func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest, agents []agent.Agent, removed []string, r LockSkillResult) LockSkillResult {
+func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest, agents []agent.Agent, removed []string, r LockSkillResult, em *skillEmitter) LockSkillResult {
 	fail := func(err error) LockSkillResult {
 		r.Err = fmt.Errorf("skill %q: %w", name, err)
 		return r
 	}
 
-	staged, err := a.stageAndVerifyLockEntry(ctx, p, lf, name, e, req)
+	staged, err := a.stageAndVerifyLockEntry(ctx, p, lf, name, e, req, em)
 	if err != nil {
 		return fail(err)
 	}
 
 	if req.DryRun {
-		// Verify (without deleting) that any dropped agents' targets would
-		// really be removable, so the plan doesn't promise a narrowing that
-		// the real run would then refuse (foreign-modified content).
-		if len(removed) > 0 {
-			if err := a.verifyDroppedAgentsRemovable(p, lf, name, removed); err != nil {
-				return fail(err)
-			}
-		}
-		r.Status = LockSkillPlanned
-		r.Err = nil
-		return r
+		return a.planStagedEntry(p, lf, name, removed, r)
 	}
 
 	staged.ireq.Agents = agents
@@ -607,8 +828,14 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 		// store hash must still match what gets activated.
 		staged.ireq.ExpectContentHash = e.Ext.StoreHash
 	}
+	// Install writes the store and activates agent targets in one atomic step;
+	// storing is the phase announced up front, and a failure inside it is
+	// attributed to linking (the dominant fail-closed step: foreign content,
+	// unmanaged targets).
+	em.phase(InstallPhaseStoring)
 	result, err := a.installerForScope(p, string(staged.ireq.Scope)).Install(ctx, staged.ireq)
 	if err != nil {
+		r.Phase = InstallPhaseLinking
 		return fail(err)
 	}
 
@@ -634,6 +861,27 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 
 	r.ComputedHash = staged.compat
 	r.Status = LockSkillInstalled
+	r.Err = nil
+	return r
+}
+
+// planStagedEntry reports a staged entry's dry-run plan: would-install for a
+// fresh entry, would-update-lock for one already recorded (the run would
+// rewrite its record — agents, pins), after verifying (without deleting) that
+// any dropped agents' targets really are removable so the plan never promises
+// a narrowing the real run would refuse (foreign-modified content).
+func (a *App) planStagedEntry(p *project, lf *skillslock.State, name string, removed []string, r LockSkillResult) LockSkillResult {
+	if len(removed) > 0 {
+		if err := a.verifyDroppedAgentsRemovable(p, lf, name, removed); err != nil {
+			r.Err = fmt.Errorf("skill %q: %w", name, err)
+			return r
+		}
+	}
+	r.Status = LockSkillPlanned
+	r.PlannedAction = PlannedWouldInstall
+	if _, prior := lf.Skills[name]; prior {
+		r.PlannedAction = PlannedWouldUpdateLock
+	}
 	r.Err = nil
 	return r
 }
@@ -734,11 +982,13 @@ type stagedLockEntry struct {
 // failing, so gskill fetches the update instead of demanding --force against
 // its own stale pin. An empty recorded hash (an entry never hashed) has
 // nothing to verify against; it is recorded after the install.
-func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest) (stagedLockEntry, error) {
+func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest, em *skillEmitter) (stagedLockEntry, error) {
+	em.phase(InstallPhaseResolving)
 	ref, rev, pinned, err := a.resolveLockEntry(ctx, lf, name, e)
 	if err != nil {
 		return stagedLockEntry{}, err
 	}
+	em.resolved(rev)
 	skillDir := skillDirOf(e.SkillPath)
 	extMode, extScope := "", ""
 	if e.Ext != nil {
@@ -747,32 +997,43 @@ func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skill
 	inst := a.installerForScope(p, extScope)
 	mode := modeOr(req.InstallMode, extMode)
 
-	ireq, compat, err := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, extScope, ref, rev)
+	ireq, compat, err := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, extScope, ref, rev, em)
 	if err != nil {
 		return stagedLockEntry{}, err
 	}
 	staged := stagedLockEntry{ref: ref, rev: rev, ireq: ireq, compat: compat}
+	em.phase(InstallPhaseVerifying)
 	if e.ComputedHash == "" || compat == e.ComputedHash {
 		return staged, nil
 	}
-	return a.retryOrRejectMismatch(ctx, inst, req, name, skillDir, mode, extScope, e, staged, pinned)
+	return a.retryOrRejectMismatch(ctx, inst, req, name, skillDir, mode, extScope, e, staged, pinned, em)
 }
 
 // retryOrRejectMismatch handles a computedHash mismatch on the recorded pin:
 // re-resolve once (an external tool may have updated the entry), then fail
 // closed unless --force accepts the changed content.
-func (a *App) retryOrRejectMismatch(ctx context.Context, inst *installer.Installer, req InstallFromLockRequest, name, skillDir, mode, scope string, e skillslock.Entry, staged stagedLockEntry, pinned bool) (stagedLockEntry, error) {
+func (a *App) retryOrRejectMismatch(ctx context.Context, inst *installer.Installer, req InstallFromLockRequest, name, skillDir, mode, scope string, e skillslock.Entry, staged stagedLockEntry, pinned bool, em *skillEmitter) (stagedLockEntry, error) {
 	if pinned && !req.Frozen && !req.Offline {
+		// The retry re-runs earlier phases; a nil emitter for the stage keeps
+		// the per-skill phase stream monotonic (contract: phases never go
+		// backwards). The fresh resolution is still recorded on em so the
+		// result's provenance (commit, version) reports what was actually
+		// installed and locked — not the stale pin that triggered the retry.
 		if ref2, rev2, rErr := a.freshResolveLockEntry(ctx, e, false); rErr == nil {
-			if ireq2, compat2, sErr := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, scope, ref2, rev2); sErr == nil && compat2 == e.ComputedHash {
+			if ireq2, compat2, sErr := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, scope, ref2, rev2, nil); sErr == nil && compat2 == e.ComputedHash {
+				em.resolved(rev2)
 				return stagedLockEntry{ref: ref2, rev: rev2, ireq: ireq2, compat: compat2}, nil
 			}
 		}
 	}
 	if !req.Force || req.Frozen {
 		return stagedLockEntry{}, errs.WithHint(
-			fmt.Errorf("%w: computedHash mismatch: lock records %s, source content is %s",
-				errs.ErrIntegrity, e.ComputedHash, staged.compat),
+			&integrityMismatchError{
+				expected: e.ComputedHash,
+				actual:   staged.compat,
+				err: fmt.Errorf("%w: computedHash mismatch: lock records %s, source content is %s",
+					errs.ErrIntegrity, e.ComputedHash, staged.compat),
+			},
 			"re-run with --force to accept the changed upstream content")
 	}
 	return staged, nil
@@ -781,21 +1042,24 @@ func (a *App) retryOrRejectMismatch(ctx context.Context, inst *installer.Install
 // stageLockEntry materializes a revision (no activation), locates the skill at
 // skillDir, and computes its shared computedHash. The returned request is
 // ready for Install once agents are attached.
-func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req InstallFromLockRequest, name, skillDir, mode, scope string, ref source.Ref, rev resolver.Revision) (installer.Request, string, error) {
+func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req InstallFromLockRequest, name, skillDir, mode, scope string, ref source.Ref, rev resolver.Revision, em *skillEmitter) (installer.Request, string, error) {
 	ref.Path = skillDir
 	ireq := a.installRequest(req.Root, ref, rev, nil, scope, mode)
 	ireq.Name = name
 	ireq.Offline = req.Offline
 
+	em.phase(InstallPhaseFetching)
 	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{})
 	if err != nil {
 		return installer.Request{}, "", err
 	}
+	em.phase(InstallPhaseReadingMetadata)
 	found, ok := skillAtRepoPath(scan, skillDir)
 	if !ok {
 		return installer.Request{}, "", fmt.Errorf("%w: skillPath %q not found in source %s",
 			errs.ErrInvalidLock, path.Join(skillDir, integrity.SkillFileName), ref.Original)
 	}
+	em.phase(InstallPhaseHashing)
 	compat, err := integrity.CompatHash(found.Dir)
 	if err != nil {
 		return installer.Request{}, "", err
@@ -809,6 +1073,10 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 // fetch happens. Intact targets short-circuit to up-to-date; missing targets
 // are relinked from the store only (US5). handled=false falls through to the
 // full pipeline.
+// The fast path deliberately takes no emitter and emits no running phases:
+// it can fall through to the full pipeline (which starts back at resolving),
+// and per-skill phases must never go backwards — the terminal event alone
+// tells its story (FR-008 allows skipping phases).
 func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, agents []agent.Agent, req InstallFromLockRequest) (LockSkillResult, bool) {
 	prior, ok := lf.Skills[name]
 	if !ok || e.ComputedHash == "" {
@@ -846,6 +1114,9 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		}
 	}
 	r := LockSkillResult{Name: name, Source: e.Source, ComputedHash: e.ComputedHash, Status: LockSkillUpToDate}
+	stampResultProvenance(&r, e, req)
+	r.Agents = ids
+	r.Commit = prior.Resolved.Commit
 	if len(missing) == 0 {
 		return r, true
 	}
@@ -853,6 +1124,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		// A real run would relink the missing targets; the plan must say so
 		// rather than report "up to date".
 		r.Status = LockSkillPlanned
+		r.PlannedAction = PlannedWouldRepair
 		return r, true
 	}
 

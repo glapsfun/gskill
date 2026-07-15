@@ -1,0 +1,15 @@
+Installation cancelled
+3 skills processed
+✓ 1 installed   ○ 1 cancelled   ○ 1 not attempted
+
+CANCELLED  beta
+  Source:   github.com/acme/skills
+  Version:  —
+  Phase:    fetching
+  Category: cancelled
+  Reason:   git: context canceled
+
+NOT-ATTEMPTED  gamma
+  Source:   github.com/acme/skills
+  Version:  —
+  Phase:    —

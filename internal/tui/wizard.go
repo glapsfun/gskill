@@ -53,7 +53,7 @@ type WizardPhases struct {
 	Versions func(context.Context) (app.VersionList, error)
 	Agents   func(context.Context) ([]app.AgentChoice, error)
 	Plan     func(context.Context, *Session) (app.InstallPlan, error)
-	Execute  func(context.Context, app.InstallPlan, func(app.ProgressEvent)) (app.AddResult, error)
+	Execute  func(context.Context, app.InstallPlan, func(app.InstallProgressEvent)) (app.AddResult, error)
 	// ValidateSource vets typed source input on the source step (US5).
 	ValidateSource func(string) error
 	// ResolveSelection, when set, resolves flag-given skill selectors against
@@ -165,7 +165,7 @@ type planDoneMsg struct {
 	gen int
 }
 
-type wizProgressMsg app.ProgressEvent
+type wizProgressMsg app.InstallProgressEvent
 
 // wizFetchMsg streams one download-progress observation from the discover
 // phase (which runs in a goroutine with a progress sink on its context). It
@@ -249,9 +249,16 @@ type wizardModel struct {
 	// Execution.
 	executing bool
 	executed  bool
-	events    []app.ProgressEvent
+	prog      InstallProgress
 	execCh    chan tea.Msg
 	result    app.AddResult
+	// cancelExec aborts the in-flight execute's context (spec 014 US4); the
+	// key loop keeps draining so the outcome still lands via executeDoneMsg.
+	cancelExec context.CancelFunc
+	cancelling bool
+	// execResults is the shared result component, built once when execution
+	// lands (never per View frame — Bubble Tea renders after every message).
+	execResults InstallResults
 
 	failed    error // terminal failure (discover, plan, or execute)
 	cancelled bool
@@ -263,6 +270,7 @@ func newWizardModel(ctx context.Context, cfg WizardConfig) wizardModel {
 		phases:  cfg.Phases,
 		st:      DefaultTheme(),
 		session: cfg.Session,
+		prog:    NewInstallProgress(),
 	}
 	m.srcInput = newLineInput()
 	for _, s := range cfg.SourceSuggestions {
@@ -373,10 +381,12 @@ func (m *wizardModel) startExecute() tea.Cmd {
 	ch := make(chan tea.Msg, 64)
 	m.execCh = ch
 	execute := m.phases.Execute
-	ctx := m.ctx
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancelExec = cancel
 	plan := m.plan
 	go func() {
-		res, err := execute(ctx, plan, func(e app.ProgressEvent) {
+		defer cancel()
+		res, err := execute(ctx, plan, func(e app.InstallProgressEvent) {
 			ch <- wizProgressMsg(e)
 		})
 		ch <- executeDoneMsg{res: res, err: err}
@@ -534,15 +544,7 @@ func (m *wizardModel) syncSelector() {
 func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		m.sel.height, m.sel.width = msg.Height, msg.Width
-		m.sel.clamp()
-		if m.versionForm != nil && m.refForm == nil {
-			// The candidate list's height is baked in at build time; rebuild
-			// so long listings stay bounded after a resize (FR-022).
-			m.buildVersionForm()
-		}
-		return m, nil
+		return m.onResize(msg)
 
 	case discoverDoneMsg:
 		return m.onDiscoverDone(msg)
@@ -563,7 +565,7 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onPlanDone(msg)
 
 	case wizProgressMsg:
-		m.events = append(m.events, app.ProgressEvent(msg))
+		m.prog = m.prog.Observe(app.InstallProgressEvent(msg))
 		return m, waitWizardMsg(m.execCh)
 
 	case executeDoneMsg:
@@ -575,6 +577,23 @@ func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Anything else may be a huh-internal message (field submit, group
 	// advance): the active step's form must see it or it never completes.
 	return m.stepMsg(msg)
+}
+
+// onResize re-lays every size-aware component out for the new terminal.
+func (m wizardModel) onResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	m.width, m.height = msg.Width, msg.Height
+	m.sel.height, m.sel.width = msg.Height, msg.Width
+	m.prog = m.prog.SetWidth(msg.Width)
+	if m.executed {
+		m.execResults = m.execResults.SetSize(msg.Width, msg.Height)
+	}
+	m.sel.clamp()
+	if m.versionForm != nil && m.refForm == nil {
+		// The candidate list's height is baked in at build time; rebuild
+		// so long listings stay bounded after a resize (FR-022).
+		m.buildVersionForm()
+	}
+	return m, nil
 }
 
 // onDiscoverDone lands phase 1's result on the welcome step. In a source-
@@ -659,6 +678,11 @@ func (m wizardModel) onExecuteDone(msg executeDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.executed = true
 	m.result = msg.res
+	rs := make([]app.LockSkillResult, 0, len(msg.res.Installed))
+	for _, s := range msg.res.Installed {
+		rs = append(rs, app.LockSkillResult{Name: s.Name, Status: app.LockSkillInstalled})
+	}
+	m.execResults = NewInstallResults(rs).SetSize(m.width, m.height)
 	m.step = stepSummary
 	return m, nil
 }
@@ -680,7 +704,18 @@ func (m wizardModel) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	if m.executing {
-		return m, nil // installs are not interruptible from the key loop
+		switch key.String() {
+		case keyEsc, keyCtrlC:
+			// Cancel the run context and keep draining: the pipeline rolls
+			// back per its own interrupt semantics and reports through
+			// executeDoneMsg, so the terminal is never abandoned mid-screen
+			// (spec 014 US4).
+			if m.cancelExec != nil && !m.cancelling {
+				m.cancelling = true
+				m.cancelExec()
+			}
+		}
+		return m, nil
 	}
 	if m.step == stepSummary {
 		switch key.String() {

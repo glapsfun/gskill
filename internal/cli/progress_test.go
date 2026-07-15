@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/progress"
 )
 
@@ -182,5 +183,127 @@ func TestOutput_FetchProgressGating(t *testing.T) {
 	out := NewOutput(&outb, &errb, OutputOptions{Interactive: true})
 	if out.fetchProgress() != nil {
 		t.Error("buffer-backed output must not get a progress renderer")
+	}
+}
+
+// ---- install lifecycle progress (spec 014 US3) ------------------------------------
+
+func installEvent(k, total int, name string, phase app.InstallPhase, status app.InstallStatus) app.InstallProgressEvent {
+	return app.InstallProgressEvent{
+		SkillIndex: k, SkillTotal: total, SkillName: name,
+		Source: "acme/skills", Phase: phase, Status: status,
+	}
+}
+
+// TestInstallLines_VerboseNonTTY (FR-022, clarification #4): with the global
+// verbose flag set, a non-TTY run prints one stable line per skill terminal
+// state — and never any cursor-control sequence.
+func TestInstallLines_VerboseNonTTY(t *testing.T) {
+	t.Parallel()
+
+	var outb, errb bytes.Buffer
+	out := NewOutput(&outb, &errb, OutputOptions{Verbose: true})
+	_, sink, done := out.withInstallProgress(t.Context())
+	defer done()
+	if sink == nil {
+		t.Fatal("verbose non-TTY run returned a nil install sink")
+	}
+
+	sink(installEvent(1, 2, "alpha", app.InstallPhaseFetching, app.InstallStatusRunning))
+	if errb.Len() != 0 {
+		t.Errorf("running event produced output on a non-TTY (must be terminal-state lines only): %q", errb.String())
+	}
+	sink(installEvent(1, 2, "alpha", app.InstallPhaseComplete, app.InstallStatusInstalled))
+	sink(installEvent(2, 2, "beta", app.InstallPhaseComplete, app.InstallStatusFailed))
+
+	got := errb.String()
+	for _, want := range []string{"installed alpha (1/2)", "failed beta (2/2)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("verbose lines missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b[") || strings.Contains(got, "\r") {
+		t.Errorf("non-TTY output carries cursor-control bytes: %q", got)
+	}
+	if outb.Len() != 0 {
+		t.Errorf("progress lines leaked to stdout: %q", outb.String())
+	}
+}
+
+// TestInstallLines_SilentWithoutVerbose: non-TTY runs stay quiet by default.
+func TestInstallLines_SilentWithoutVerbose(t *testing.T) {
+	t.Parallel()
+
+	var outb, errb bytes.Buffer
+	out := NewOutput(&outb, &errb, OutputOptions{})
+	_, sink, done := out.withInstallProgress(t.Context())
+	defer done()
+	if sink != nil {
+		sink(installEvent(1, 1, "alpha", app.InstallPhaseComplete, app.InstallStatusInstalled))
+	}
+	if errb.Len() != 0 || outb.Len() != 0 {
+		t.Errorf("default non-TTY run produced progress output: stdout=%q stderr=%q", outb.String(), errb.String())
+	}
+}
+
+// TestInstallLines_JSONAndQuietStaySilent: --json and --quiet suppress even
+// verbose progress lines.
+func TestInstallLines_JSONAndQuietStaySilent(t *testing.T) {
+	t.Parallel()
+
+	for _, opts := range []OutputOptions{
+		{Verbose: true, JSON: true},
+		{Verbose: true, Quiet: true},
+	} {
+		var outb, errb bytes.Buffer
+		out := NewOutput(&outb, &errb, opts)
+		_, sink, done := out.withInstallProgress(t.Context())
+		if sink != nil {
+			sink(installEvent(1, 1, "alpha", app.InstallPhaseComplete, app.InstallStatusInstalled))
+		}
+		done()
+		if errb.Len() != 0 || outb.Len() != 0 {
+			t.Errorf("opts %+v produced progress output: stdout=%q stderr=%q", opts, outb.String(), errb.String())
+		}
+	}
+}
+
+// TestInstallLines_SanitizesNames: hostile skill names are neutralized in the
+// verbose lines (FR-028).
+func TestInstallLines_SanitizesNames(t *testing.T) {
+	t.Parallel()
+
+	var outb, errb bytes.Buffer
+	out := NewOutput(&outb, &errb, OutputOptions{Verbose: true})
+	_, sink, done := out.withInstallProgress(t.Context())
+	defer done()
+	sink(installEvent(1, 1, "evil\x1b]0;pwned\x07", app.InstallPhaseComplete, app.InstallStatusInstalled))
+	if got := errb.String(); strings.Contains(got, "\x1b]") || strings.Contains(got, "\x07") {
+		t.Errorf("escape bytes leaked: %q", got)
+	}
+}
+
+// TestFetchProgress_InstallLiveLine: on an interactive terminal the live line
+// shows [k/N] skill — phase between download events, and terminal events
+// clear it.
+func TestFetchProgress_InstallLiveLine(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	f := newTestFetchProgress(&buf)
+	sink := f.InstallSink()
+
+	sink(installEvent(1, 3, "gke-scaling", app.InstallPhaseVerifying, app.InstallStatusRunning))
+	got := buf.String()
+	for _, want := range []string{"[1/3]", "gke-scaling", "Verifying integrity"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("install live line missing %q: %q", want, got)
+		}
+	}
+
+	buf.Reset()
+	sink(installEvent(1, 3, "gke-scaling", app.InstallPhaseComplete, app.InstallStatusInstalled))
+	if got := buf.String(); !strings.Contains(got, eraseLine) {
+		t.Errorf("terminal event did not clear the live line: %q", got)
 	}
 }

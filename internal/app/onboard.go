@@ -46,12 +46,9 @@ type DiscoverResult struct {
 	Warnings []string
 }
 
-// ProgressEvent reports one step of an ExecutePlan run for progress UIs.
-type ProgressEvent struct {
-	Skill string
-	Agent string
-	Stage string // "install" (fetch+verify+stage+activate) or "record"
-}
+// ExecutePlan progress is reported through the shared install lifecycle
+// events (InstallProgressEvent, spec 014), replacing the earlier two-stage
+// {Skill, Stage} ProgressEvent.
 
 // Version candidate kinds offered by the wizard's version step (US3).
 const (
@@ -280,7 +277,7 @@ func (a *App) SelectByFlags(disc DiscoverResult, selectors []string, all bool, p
 // non-guided adds use. It refuses a conflicted plan outright (defense in depth;
 // the wizard's approval step already blocks on conflicts, FR-016/FR-017).
 // progress, when non-nil, receives per-skill events.
-func (a *App) ExecutePlan(ctx context.Context, plan InstallPlan, progress func(ProgressEvent)) (AddResult, error) {
+func (a *App) ExecutePlan(ctx context.Context, plan InstallPlan, progress func(InstallProgressEvent)) (AddResult, error) {
 	if len(plan.Conflicts) > 0 {
 		c := plan.Conflicts[0]
 		if c.Err != nil {

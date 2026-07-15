@@ -279,12 +279,12 @@ func TestExecutePlan_InitsFreshProjectAndInstalls(t *testing.T) {
 		t.Fatalf("PlanInstall: %v", err)
 	}
 
-	var events []app.ProgressEvent
-	res, err := a.ExecutePlan(context.Background(), plan, func(e app.ProgressEvent) { events = append(events, e) })
+	var events []app.InstallProgressEvent
+	res, err := a.ExecutePlan(context.Background(), plan, func(e app.InstallProgressEvent) { events = append(events, e) })
 	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
-	if len(res.Installed) != 1 || res.Installed[0].Name != "alpha" {
+	if len(res.Installed) != 1 || res.Installed[0].Name != skillAlpha {
 		t.Fatalf("Installed = %+v, want alpha", res.Installed)
 	}
 	for _, f := range []string{"skills-lock.json", ".gskill"} {
@@ -297,7 +297,7 @@ func TestExecutePlan_InitsFreshProjectAndInstalls(t *testing.T) {
 	}
 	sawAlpha := false
 	for _, e := range events {
-		if e.Skill == "alpha" {
+		if e.SkillName == skillAlpha {
 			sawAlpha = true
 		}
 	}
@@ -475,8 +475,8 @@ func TestExecutePlan_CancelledMidInstallRollsBack(t *testing.T) {
 
 	// Cancel as soon as the first skill records: the second iteration must
 	// abort, and the already-activated first skill must be rolled back.
-	_, err = a.ExecutePlan(ctx, plan, func(e app.ProgressEvent) {
-		if e.Stage == "record" {
+	_, err = a.ExecutePlan(ctx, plan, func(e app.InstallProgressEvent) {
+		if e.Status == app.InstallStatusInstalled {
 			cancel()
 		}
 	})
