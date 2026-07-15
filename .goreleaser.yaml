@@ -82,16 +82,16 @@ sboms:
 
 # Sign checksums.txt with cosign keyless (transitively covers every archive).
 # NOTE: artifacts defaults to `none` — it MUST be set explicitly.
+# cosign's new bundle format embeds the signing certificate inside the bundle
+# itself, so there is no separate .pem file to request or upload.
 signs:
   - id: checksum
     cmd: cosign
     artifacts: checksum
     signature: "${artifact}.sigstore.json"
-    certificate: "${artifact}.pem"
     args:
       - sign-blob
       - "--bundle=${signature}"
-      - "--output-certificate=${certificate}"
       - "${artifact}"
       - "--yes"
     output: true

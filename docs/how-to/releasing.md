@@ -49,7 +49,7 @@ channels**: the `install.sh` default and Homebrew stable are not updated (GoRele
 Each release carries, for `linux`/`darwin` × `amd64`/`arm64`:
 
 - `gskill_<version>_<os>_<arch>.tar.gz` (binary + LICENSE + README)
-- `checksums.txt` and `checksums.txt.sigstore.json` (+ `.pem`)
+- `checksums.txt` and `checksums.txt.sigstore.json` (cosign bundle, cert embedded)
 - `gskill_<version>_<os>_<arch>.tar.gz.sbom.spdx.json`
 - a build-provenance attestation over `checksums.txt`
 
