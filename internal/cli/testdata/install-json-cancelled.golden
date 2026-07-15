@@ -1,0 +1,51 @@
+{
+  "agents": [
+    "claude"
+  ],
+  "changed": true,
+  "initialized": false,
+  "pruned": null,
+  "skills": [
+    {
+      "commit": "a1b2c3d4e5f6",
+      "computedHash": "",
+      "name": "alpha",
+      "resolvedVersion": "1.2.3",
+      "source": "github.com/acme/skills",
+      "sourceType": "github",
+      "status": "installed"
+    },
+    {
+      "computedHash": "",
+      "error": "git: context canceled",
+      "failure": {
+        "category": "cancelled",
+        "message": "git: context canceled",
+        "phase": "fetching"
+      },
+      "name": "beta",
+      "phase": "fetching",
+      "source": "github.com/acme/skills",
+      "sourceType": "github",
+      "status": "cancelled"
+    },
+    {
+      "computedHash": "",
+      "name": "gamma",
+      "source": "github.com/acme/skills",
+      "sourceType": "github",
+      "status": "not-attempted"
+    }
+  ],
+  "status": "cancelled",
+  "summary": {
+    "cancelled": 1,
+    "failed": 0,
+    "installed": 1,
+    "notAttempted": 1,
+    "repaired": 0,
+    "skipped": 0,
+    "total": 3,
+    "upToDate": 0
+  }
+}

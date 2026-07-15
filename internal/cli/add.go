@@ -208,7 +208,7 @@ func (c addCmd) runWizard(ctx context.Context, out *Output, a *app.App, root pro
 				MaxDepth: c.MaxDepth, Include: c.Include, Exclude: c.Exclude,
 			})
 		},
-		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.ProgressEvent)) (app.AddResult, error) {
+		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.InstallProgressEvent)) (app.AddResult, error) {
 			return a.ExecutePlan(ctx, plan, progress)
 		},
 		Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
@@ -254,9 +254,10 @@ func finishWizardOutcome(out *Output, outcome tui.WizardOutcome) error {
 
 // runDirect executes the pre-wizard, non-interactive add path unchanged.
 func (c addCmd) runDirect(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
-	ctx, done := out.withFetchProgress(ctx)
+	ctx, events, done := out.withInstallProgress(ctx)
 	defer done()
 	res, err := a.Add(ctx, app.AddRequest{
+		Progress:    events,
 		Root:        string(root),
 		Source:      c.Source,
 		Version:     c.Version,

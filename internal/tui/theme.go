@@ -100,6 +100,30 @@ func (t Theme) HealthCell(state string) string {
 	}
 }
 
+// InstallStatusCell renders an install-result status with its semantic glyph
+// and color (spec 014 status vocabulary, internal/app/installprogress.go).
+// State is never communicated by color alone — the textual status is always
+// part of the cell — and unknown statuses render plain so a new status is
+// never hidden or miscolored.
+func (t Theme) InstallStatusCell(status string) string {
+	switch status {
+	case "installed", "repaired":
+		return t.Success.Render("✓ " + status)
+	case "up-to-date":
+		return t.Subtitle.Render("● " + status)
+	case "skipped":
+		return t.Warning.Render("◐ " + status)
+	case "failed", "Blocked":
+		return t.Error.Render("✗ " + status)
+	case "cancelled", "not-attempted":
+		return t.Warning.Render("○ " + status)
+	case "planned", "Would install", "Would repair", "Would remove target", "Would update lock":
+		return t.Subtitle.Render("● " + status)
+	default:
+		return status
+	}
+}
+
 // Panel returns a thin bordered panel style in the theme's border color.
 func (t Theme) Panel() lipgloss.Style {
 	return lipgloss.NewStyle().

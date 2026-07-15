@@ -1,0 +1,18 @@
+Installation completed with errors
+4 skills processed
+✓ 1 installed   ✓ 1 repaired   ✗ 2 failed
+
+FAILED  gke-scaling
+  Source:   glapsfun/cloud-native-skills
+  Version:  v1.4.2
+  Phase:    verifying
+  Category: integrity
+  Reason:   computedHash mismatch: lock records sha256:03e0, source content is sha256:94ab
+  Hint:     re-run with --force to accept the changed upstream content
+
+FAILED  k8s-debug
+  Source:   ./local-skills
+  Version:  —
+  Phase:    linking
+  Category: foreign-content
+  Reason:   destination already exists and is not managed by gskill

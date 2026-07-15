@@ -23,6 +23,12 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "backspace":
 		return tea.KeyMsg{Type: tea.KeyBackspace}
+	case "pgdown":
+		return tea.KeyMsg{Type: tea.KeyPgDown}
+	case "home":
+		return tea.KeyMsg{Type: tea.KeyHome}
+	case "end":
+		return tea.KeyMsg{Type: tea.KeyEnd}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}

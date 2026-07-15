@@ -49,8 +49,12 @@ type fetchProgress struct {
 	frames []string
 	frame  int
 	cur    *progress.Event // latest event driving the live line; nil = none
-	width  int
-	last   string // last written live line; identical frames are skipped
+	// inst is the latest install lifecycle running event (spec 014): it backs
+	// the live line whenever no download event is active, so the user sees
+	// "[k/N] skill — phase" between transfers.
+	inst  *app.InstallProgressEvent
+	width int
+	last  string // last written live line; identical frames are skipped
 	// seen dedups the persisted ✓ lines: add materializes the same commit at
 	// discovery time and again at execute time (a cache hit by then).
 	seen map[string]bool
@@ -128,11 +132,46 @@ func (f *fetchProgress) Close() {
 func (f *fetchProgress) tick() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.cur == nil {
+	if f.cur == nil && f.inst == nil {
 		return
 	}
 	f.frame = (f.frame + 1) % len(f.frames)
 	f.redrawLocked()
+}
+
+// InstallSink returns the install-lifecycle callback feeding the live line;
+// nil-safe like Sink.
+func (f *fetchProgress) InstallSink() func(app.InstallProgressEvent) {
+	if f == nil {
+		return nil
+	}
+	return f.handleInstall
+}
+
+// handleInstall keeps the live line showing the current skill and phase
+// between download events; terminal events clear the install line (the
+// download PhaseDone handler already persists the ✓ milestone).
+func (f *fetchProgress) handleInstall(e app.InstallProgressEvent) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if e.SkillName == "" {
+		return
+	}
+	if e.Status.IsTerminal() {
+		if f.inst != nil && f.inst.SkillName == e.SkillName {
+			f.inst = nil
+			if f.cur == nil {
+				f.clearLiveLocked() // no-op when nothing is on screen
+			}
+		}
+		return
+	}
+	f.inst = &e
+	if f.cur == nil {
+		// Download frames own the live line while a transfer is active; the
+		// ticker repaints the install line as soon as the download ends.
+		f.redrawLocked()
+	}
 }
 
 // handle is the progress.Sink: it persists milestone lines and keeps the
@@ -187,12 +226,13 @@ func (f *fetchProgress) announcedLocked(e progress.Event) bool {
 	return false
 }
 
-// clearLiveLocked erases the live line, if any.
+// clearLiveLocked erases the live line, if any — whichever signal (download
+// event or install lifecycle event) was backing it.
 func (f *fetchProgress) clearLiveLocked() {
-	if f.cur == nil {
+	if f.cur == nil && f.inst == nil && f.last == "" {
 		return
 	}
-	f.cur = nil
+	f.cur, f.inst = nil, nil
 	f.last = ""
 	_, _ = fmt.Fprint(f.w, eraseLiveLine)
 }
@@ -213,11 +253,18 @@ func (f *fetchProgress) persistLocked(line string) {
 
 // redrawLocked renders the live line in place, skipping writes when the
 // frame is byte-identical to the previous one (bar frames between ticks).
+// Download frames win over the install-lifecycle frame: they carry transfer
+// detail the lifecycle events cannot.
 func (f *fetchProgress) redrawLocked() {
-	if f.cur == nil {
+	var line string
+	switch {
+	case f.cur != nil:
+		line = f.frameFor(*f.cur)
+	case f.inst != nil:
+		line = f.installFrame(*f.inst)
+	default:
 		return
 	}
-	line := f.frameFor(*f.cur)
 	if w := f.termWidth(); w > 0 {
 		line = ansi.Truncate(line, w-1, "…")
 	}
@@ -226,6 +273,14 @@ func (f *fetchProgress) redrawLocked() {
 	}
 	f.last = line
 	_, _ = fmt.Fprint(f.w, eraseLiveLine+line)
+}
+
+// installFrame renders the lifecycle live line: [k/N] skill — phase.
+func (f *fetchProgress) installFrame(e app.InstallProgressEvent) string {
+	spin := f.st.Accent.Render(f.frames[f.frame])
+	return f.st.Badge.Render(fmt.Sprintf("[%d/%d]", e.SkillIndex, e.SkillTotal)) + " " +
+		spin + " " + f.st.Accent.Render(tui.Sanitize(e.SkillName)) + " — " +
+		tui.PhaseTitle(e.Phase)
 }
 
 // termWidth reports the current terminal width — re-queried live so a resize
@@ -314,6 +369,35 @@ func (o *Output) withFetchProgress(ctx context.Context) (context.Context, func()
 	}
 	var once sync.Once
 	return progress.WithSink(ctx, fp.Sink()), func() { once.Do(fp.Close) }
+}
+
+// withInstallProgress is withFetchProgress plus the install lifecycle channel
+// (spec 014 FR-022): on an interactive terminal the events drive the live
+// stderr line; on a non-TTY with the global verbose flag they print one
+// stable line per skill terminal state; otherwise the callback is nil and
+// the run is silent until results.
+func (o *Output) withInstallProgress(ctx context.Context) (context.Context, func(app.InstallProgressEvent), func()) {
+	fp := o.fetchProgress()
+	if fp != nil {
+		var once sync.Once
+		return progress.WithSink(ctx, fp.Sink()), fp.InstallSink(), func() { once.Do(fp.Close) }
+	}
+	return ctx, o.verboseInstallLines(), func() {}
+}
+
+// verboseInstallLines returns the non-TTY progress callback: one plain line
+// per skill terminal state, only when verbose diagnostics are on and neither
+// --json nor --quiet demands silence. No cursor control, ever.
+func (o *Output) verboseInstallLines() func(app.InstallProgressEvent) {
+	if !o.verbose || o.json || o.quiet {
+		return nil
+	}
+	return func(e app.InstallProgressEvent) {
+		if e.SkillName == "" || !e.Status.IsTerminal() {
+			return
+		}
+		o.Diag("%s %s (%d/%d)", e.Status, tui.Sanitize(e.SkillName), e.SkillIndex, e.SkillTotal)
+	}
 }
 
 // fetchProgress returns a live download-progress renderer bound to stderr,

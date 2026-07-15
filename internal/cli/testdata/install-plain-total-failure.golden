@@ -1,0 +1,17 @@
+Installation completed with errors
+2 skills processed
+✗ 2 failed
+
+FAILED  alpha
+  Source:   github.com/acme/skills
+  Version:  —
+  Phase:    resolving
+  Category: source-unavailable
+  Reason:   source unavailable: dial tcp: no such host
+
+FAILED  beta
+  Source:   github.com/acme/skills
+  Version:  —
+  Phase:    resolving
+  Category: source-unavailable
+  Reason:   source unavailable: dial tcp: no such host

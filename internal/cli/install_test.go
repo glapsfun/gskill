@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,8 +13,10 @@ import (
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/skillslock"
+	"github.com/glapsfun/gskill/internal/tui"
 )
 
 // lockOnlyProject builds a directory containing only a skills-lock.json whose
@@ -490,5 +495,87 @@ func TestInstall_JSONShape(t *testing.T) {
 	}
 	if len(doc.Skills) != 2 || doc.Skills[0].Status != "installed" || len(doc.Skills[0].ComputedHash) != 64 {
 		t.Errorf("skills = %+v", doc.Skills)
+	}
+}
+
+// TestInstall_WizardPathPrintsNoDuplicateSummary (spec 014 FR-020, acceptance
+// 15): the wizard's result screen already reported the run, so the CLI must
+// not print the generic human summary again — and the partial-failure error
+// must still map to exit 10, marked reported so Run skips its "error:" line.
+func TestInstall_WizardPathPrintsNoDuplicateSummary(t *testing.T) { //nolint:paralleltest // swaps the global runLockWizardFn stub
+	old := runLockWizardFn
+	t.Cleanup(func() { runLockWizardFn = old })
+	partial := fmt.Errorf("%w: 1 of 2 skills failed", errs.ErrPartialInstall)
+	runLockWizardFn = func(_ context.Context, _ tui.LockWizardConfig, _ bool) (tui.LockWizardOutcome, error) {
+		return tui.LockWizardOutcome{
+			Executed: true,
+			AgentIDs: []string{"claude"},
+			Result: app.InstallFromLockResult{Skills: []app.LockSkillResult{
+				{Name: "alpha", Status: app.LockSkillInstalled},
+				{Name: "beta", Status: app.LockSkillFailed, Err: partial},
+			}},
+			Err: partial,
+		}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	out := NewOutput(&stdout, &stderr, OutputOptions{Interactive: true})
+	c := installCmd{}
+	err := c.runLockWizard(context.Background(), out, app.New(app.Options{}), t.TempDir(), app.LockPreview{}, Globals{})
+	if err == nil {
+		t.Fatal("wizard partial failure returned nil error")
+	}
+	if errs.ExitCode(err) != int(errs.CodePartialInstall) {
+		t.Errorf("exit code = %d, want %d", errs.ExitCode(err), errs.CodePartialInstall)
+	}
+	var rep reportedError
+	if !errors.As(err, &rep) {
+		t.Error("error not marked reported: Run would print a duplicate generic summary")
+	}
+	if got := stdout.String(); got != "" {
+		t.Errorf("wizard path wrote a duplicate summary to stdout:\n%s", got)
+	}
+	if strings.Contains(stderr.String(), "Installed") {
+		t.Errorf("wizard path wrote a duplicate summary to stderr:\n%s", stderr.String())
+	}
+}
+
+// TestInstall_CancelledRunMapsToExit130 (spec 014 FR-025): a cancelled
+// install maps to the existing cancellation exit code, is reported plainly
+// (not as an "error:" line), and the non-wizard path emits no
+// cursor-control/alternate-screen sequences.
+func TestInstall_CancelledRunMapsToExit130(t *testing.T) {
+	t.Parallel()
+	var outb, errb bytes.Buffer
+	out := NewOutput(&outb, &errb, OutputOptions{})
+	code := reportRunError(out, fmt.Errorf("%w: installation interrupted: 2 of 3 skills not attempted", errs.ErrCancelled))
+	if code != int(errs.CodeCancelled) {
+		t.Errorf("exit code = %d, want %d", code, errs.CodeCancelled)
+	}
+	if strings.Contains(errb.String(), "error:") {
+		t.Errorf("cancellation reported as an error line: %q", errb.String())
+	}
+	if !strings.Contains(errb.String(), "interrupted") {
+		t.Errorf("cancellation not reported at all: %q", errb.String())
+	}
+	combined := outb.String() + errb.String()
+	if strings.Contains(combined, "\x1b[") || strings.Contains(combined, "\x1b]") {
+		t.Errorf("non-TTY cancellation output carries escape sequences: %q", combined)
+	}
+}
+
+// TestReportRunError_RawContextCanceledIsCancellation (review C2): a raw
+// context.Canceled chain (e.g. a git fetch aborted by the add wizard's esc)
+// maps to the plain cancellation report and exit 130, never a generic error.
+func TestReportRunError_RawContextCanceledIsCancellation(t *testing.T) {
+	t.Parallel()
+	var outb, errb bytes.Buffer
+	out := NewOutput(&outb, &errb, OutputOptions{})
+	code := reportRunError(out, fmt.Errorf("git: fetch: %w", context.Canceled))
+	if code != int(errs.CodeCancelled) {
+		t.Errorf("exit code = %d, want %d", code, errs.CodeCancelled)
+	}
+	if strings.Contains(errb.String(), "error:") {
+		t.Errorf("raw cancellation reported as an error line: %q", errb.String())
 	}
 }

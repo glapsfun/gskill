@@ -58,7 +58,7 @@ func (c onboardCmd) Run(ctx context.Context, out *Output, a *app.App, root proje
 				Discover: disc, Selected: s.Selected, AgentIDs: s.AgentIDs,
 			})
 		},
-		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.ProgressEvent)) (app.AddResult, error) {
+		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.InstallProgressEvent)) (app.AddResult, error) {
 			return a.ExecutePlan(ctx, plan, progress)
 		},
 		Agents: func(ctx context.Context) ([]app.AgentChoice, error) {

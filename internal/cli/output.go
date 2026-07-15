@@ -21,6 +21,9 @@ type OutputOptions struct {
 	JSON        bool
 	Quiet       bool
 	Interactive bool
+	// Verbose enables the stable one-line-per-skill install progress on
+	// non-interactive runs (spec 014 FR-022); wired from the global -v flag.
+	Verbose bool
 }
 
 // Output renders primary results to stdout and diagnostics to stderr, keeping
@@ -32,6 +35,7 @@ type Output struct {
 	json        bool
 	quiet       bool
 	interactive bool
+	verbose     bool
 	stdin       io.Reader // confirmation replies; defaults to os.Stdin
 }
 
@@ -44,6 +48,7 @@ func NewOutput(stdout, stderr io.Writer, opts OutputOptions) *Output {
 		json:        opts.JSON,
 		quiet:       opts.Quiet,
 		interactive: opts.Interactive && isTTY(stdout),
+		verbose:     opts.Verbose,
 	}
 }
 

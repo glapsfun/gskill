@@ -30,10 +30,12 @@ type LockWizardSkill struct {
 }
 
 // LockWizardPhases are the app-layer use-cases the flow drives, injected by
-// the CLI so the wizard stays view-pure and unit-testable.
+// the CLI so the wizard stays view-pure and unit-testable. Execute receives
+// the wizard's progress callback so the run streams install lifecycle events
+// into the live progress view (spec 014 US1).
 type LockWizardPhases struct {
 	Agents  func(context.Context) ([]app.AgentChoice, error)
-	Execute func(context.Context, []string) (app.InstallFromLockResult, error)
+	Execute func(context.Context, []string, func(app.InstallProgressEvent)) (app.InstallFromLockResult, error)
 }
 
 // LockWizardConfig configures a lock-install wizard run.
@@ -112,6 +114,17 @@ type lockExecDoneMsg struct {
 	err error
 }
 
+// lockProgressMsg carries one install lifecycle event into the model
+// (contracts/install-progress-events.md consumer adapter).
+type lockProgressMsg struct {
+	event app.InstallProgressEvent
+}
+
+// waitLockMsg delivers the next message from the execute stream.
+func waitLockMsg(ch chan tea.Msg) tea.Cmd {
+	return func() tea.Msg { return <-ch }
+}
+
 // lockWizardModel is the bubbletea model for the flow.
 type lockWizardModel struct {
 	ctx context.Context //nolint:containedctx // bubbletea models carry the run context by design (same as wizardModel)
@@ -132,10 +145,24 @@ type lockWizardModel struct {
 	failed    error
 	cancelled bool
 	executed  bool
+
+	prog    InstallProgress
+	execCh  chan tea.Msg
+	results InstallResults
+	height  int
+
+	// cancelRun aborts the in-flight install's context (spec 014 US4); the
+	// program keeps draining events until the pipeline reports back, so the
+	// partial result screen always renders before exit.
+	cancelRun  context.CancelFunc
+	cancelling bool
 }
 
 func newLockWizardModel(ctx context.Context, cfg LockWizardConfig) lockWizardModel {
-	return lockWizardModel{ctx: ctx, cfg: cfg, st: DefaultTheme(), step: lockStepAgents, agentsLoading: true}
+	return lockWizardModel{
+		ctx: ctx, cfg: cfg, st: DefaultTheme(), step: lockStepAgents,
+		agentsLoading: true, prog: NewInstallProgress(),
+	}
 }
 
 // Init kicks off agent detection.
@@ -164,14 +191,24 @@ func (m lockWizardModel) Outcome() LockWizardOutcome {
 func (m lockWizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
+		m.width, m.height = msg.Width, msg.Height
+		m.prog = m.prog.SetWidth(msg.Width)
+		if m.executed {
+			// The result component exists only after execution; sizing an
+			// empty zero-value table on every pre-summary resize is waste.
+			m.results = m.results.SetSize(msg.Width, msg.Height)
+		}
 		return m, nil
 	case lockAgentsDoneMsg:
 		return m.onAgentsLoaded(msg)
+	case lockProgressMsg:
+		m.prog = m.prog.Observe(msg.event)
+		return m, waitLockMsg(m.execCh)
 	case lockExecDoneMsg:
 		m.result = msg.res
 		m.execErr = msg.err
 		m.executed = true
+		m.results = NewInstallResults(msg.res.Skills).SetSize(m.width, m.height)
 		m.step = lockStepSummary
 		return m, nil
 	case tea.KeyMsg:
@@ -249,7 +286,7 @@ func (m lockWizardModel) onKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch k {
 		case "enter", "y":
 			m.step = lockStepProgress
-			return m, m.execCmd()
+			return m, m.startExec()
 		case keyEsc, "b":
 			m.step = lockStepAgents
 			m.buildForm()
@@ -259,8 +296,40 @@ func (m lockWizardModel) onKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case lockStepProgress:
-		return m, nil // installation is not interruptible from the view
-	case lockStepSummary, lockStepNoAgents, lockStepError:
+		return m.onProgressKey(k)
+	case lockStepSummary:
+		return m.onSummaryKey(key)
+	case lockStepNoAgents, lockStepError:
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// onProgressKey handles keys during installation: esc/ctrl+c cancels the run
+// context and never quits — the pipeline drains, the remaining entries land
+// as cancelled/not-attempted, and the partial result screen shows before
+// exit (FR-024/FR-025). Every other key is ignored.
+func (m lockWizardModel) onProgressKey(k string) (tea.Model, tea.Cmd) {
+	switch k {
+	case keyEsc, keyCtrlC:
+		if m.cancelRun != nil && !m.cancelling {
+			m.cancelling = true
+			m.cancelRun()
+		}
+	}
+	return m, nil
+}
+
+// onSummaryKey routes result-screen keys: the table owns scrolling and the
+// enter → detail → esc round trip; with no rows any key exits, preserving
+// the "press any key" contract.
+func (m lockWizardModel) onSummaryKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if !m.results.HasRows() {
+		return m, tea.Quit
+	}
+	next, exit := m.results.Update(key)
+	m.results = next
+	if exit {
 		return m, tea.Quit
 	}
 	return m, nil
@@ -284,14 +353,26 @@ func (m lockWizardModel) formMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m lockWizardModel) execCmd() tea.Cmd {
+// startExec launches the install, streaming lifecycle events over a buffered
+// channel into the progress view (the onboarding wizard's startExecute
+// pattern). The run context is cancellable so esc/ctrl+c can stop the
+// pipeline between skills (spec 014 US4).
+func (m *lockWizardModel) startExec() tea.Cmd {
+	ch := make(chan tea.Msg, 64)
+	m.execCh = ch
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancelRun = cancel
 	phases := m.cfg.Phases
-	ctx := m.ctx
 	ids := m.agentIDs
-	return func() tea.Msg {
-		res, err := phases.Execute(ctx, ids)
-		return lockExecDoneMsg{res: res, err: err}
-	}
+	go func() {
+		defer cancel()
+		res, err := phases.Execute(ctx, ids, func(e app.InstallProgressEvent) {
+			ch <- lockProgressMsg{event: e}
+		})
+		ch <- lockExecDoneMsg{res: res, err: err}
+		close(ch)
+	}()
+	return waitLockMsg(ch)
 }
 
 // View implements tea.Model.
@@ -302,7 +383,14 @@ func (m lockWizardModel) View() string {
 	case lockStepPreview:
 		return m.viewPreview()
 	case lockStepProgress:
-		return m.header("Installing skills") + "⏳ Fetching, verifying, and linking…\n"
+		v := m.header("Installing skills") +
+			m.st.Subtitle.Render("Fetching, verifying, and linking skills") + "\n\n" +
+			m.prog.View()
+		if m.cancelling {
+			return v + "\n" + m.st.Warning.Render("cancelling — waiting for the current skill to stop safely…") + "\n" +
+				m.hintLine("finishing up")
+		}
+		return v + m.hintLine("esc cancel")
 	case lockStepSummary:
 		return m.viewSummary()
 	case lockStepNoAgents:
@@ -389,21 +477,19 @@ func lockPreviewPlanLines(prior, requested []string) []string {
 	return lines
 }
 
-// viewSummary reports per-skill outcomes.
+// viewSummary renders the detailed result screen (spec 014 US2): truthful
+// counters, the failure table, and the drill-down detail view. The run error
+// is shown once here — the CLI must not repeat a generic summary afterwards
+// (FR-020).
 func (m lockWizardModel) viewSummary() string {
 	var b strings.Builder
-	b.WriteString(m.header("Install summary"))
-	for _, s := range m.result.Skills {
-		mark := "✓"
-		if s.Status == app.LockSkillFailed {
-			mark = "✗"
-		}
-		fmt.Fprintf(&b, "  %s %s (%s)\n", mark, Sanitize(s.Name), Sanitize(s.Status))
-	}
+	b.WriteString(m.results.View())
 	if m.execErr != nil {
-		b.WriteString("\n" + Sanitize(errText(m.execErr)) + "\n")
+		// Shown once, inside the TUI; the CLI never repeats a generic summary
+		// after the wizard exits (FR-020).
+		b.WriteString("\n" + m.st.Error.Render(Sanitize(errText(m.execErr))) + "\n")
 	}
-	b.WriteString(m.hintLine("press any key to exit"))
+	b.WriteString(m.hintLine(m.results.Hints()))
 	return b.String()
 }
 

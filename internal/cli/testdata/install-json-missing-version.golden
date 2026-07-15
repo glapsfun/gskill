@@ -1,0 +1,36 @@
+{
+  "agents": [
+    "claude"
+  ],
+  "changed": false,
+  "initialized": false,
+  "pruned": null,
+  "skills": [
+    {
+      "computedHash": "",
+      "error": "no such ref v9.9.9",
+      "failure": {
+        "category": "resolution",
+        "message": "no such ref v9.9.9",
+        "phase": "resolving"
+      },
+      "name": "early",
+      "phase": "resolving",
+      "skillPath": "skills/early",
+      "source": "github.com/acme/skills",
+      "sourceType": "github",
+      "status": "failed"
+    }
+  ],
+  "status": "failure",
+  "summary": {
+    "cancelled": 0,
+    "failed": 1,
+    "installed": 0,
+    "notAttempted": 0,
+    "repaired": 0,
+    "skipped": 0,
+    "total": 1,
+    "upToDate": 0
+  }
+}

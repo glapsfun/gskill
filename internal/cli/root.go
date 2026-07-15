@@ -245,6 +245,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 		JSON:        root.JSON,
 		Quiet:       root.Quiet,
 		Interactive: !root.NoInteractive,
+		Verbose:     root.Verbose,
 	})
 
 	root.resolveDir()
@@ -254,19 +255,33 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	kctx.Bind(Globals{Offline: root.Offline, NoCache: root.NoCache, DryRun: root.DryRun, Yes: root.Yes})
 
 	if runErr := kctx.Run(out); runErr != nil {
-		if errors.Is(runErr, errs.ErrCancelled) {
-			// A user-initiated cancel is not an error condition: report it
-			// plainly and exit 130 (spec 011, contracts/cli-onboarding.md).
-			out.Diag("%v", runErr)
-			return errs.ExitCode(runErr)
-		}
-		out.ErrDiag("error: %v", runErr)
-		if hint := errs.HintOf(runErr); hint != "" {
-			out.Hint("→ %s", hint)
-		}
-		return errs.ExitCode(runErr)
+		return reportRunError(out, runErr)
 	}
 	return 0
+}
+
+// reportRunError renders a failed run on stderr and maps it to its exit code.
+func reportRunError(out *Output, runErr error) int {
+	var rep reportedError
+	if errors.As(runErr, &rep) {
+		// The interactive UI already told the full story (spec 014 FR-020):
+		// map to the exit code without repeating a generic summary line.
+		return errs.ExitCode(runErr)
+	}
+	if errors.Is(runErr, errs.ErrCancelled) || errors.Is(runErr, context.Canceled) {
+		// A user-initiated cancel is not an error condition: report it
+		// plainly and exit 130 (spec 011, contracts/cli-onboarding.md). Raw
+		// context.Canceled can surface from ctx-aware operations (e.g. a git
+		// fetch aborted mid-skill) whose chains never pass an errs sentinel —
+		// they map to the same cancellation contract, never a generic error.
+		out.Diag("%v", runErr)
+		return int(errs.CodeCancelled)
+	}
+	out.ErrDiag("error: %v", runErr)
+	if hint := errs.HintOf(runErr); hint != "" {
+		out.Hint("→ %s", hint)
+	}
+	return errs.ExitCode(runErr)
 }
 
 // retryWithHelp re-parses args with --help appended, using a fresh grammar so

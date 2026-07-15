@@ -55,10 +55,13 @@ func fakePhases(calls *phaseCalls, skills []discovery.DiscoveredSkill, conflicts
 			}
 			return plan, nil
 		},
-		Execute: func(_ context.Context, _ app.InstallPlan, progress func(app.ProgressEvent)) (app.AddResult, error) {
+		Execute: func(_ context.Context, _ app.InstallPlan, progress func(app.InstallProgressEvent)) (app.AddResult, error) {
 			calls.execute++
 			if progress != nil {
-				progress(app.ProgressEvent{Skill: "alpha", Stage: "install"})
+				progress(app.InstallProgressEvent{
+					SkillIndex: 1, SkillTotal: 1, SkillName: "alpha",
+					Phase: app.InstallPhaseStoring, Status: app.InstallStatusRunning,
+				})
 			}
 			return app.AddResult{Installed: []app.InstalledSkill{{Name: "alpha"}}}, nil
 		},
@@ -305,7 +308,7 @@ func TestWizard_ExecuteErrorIsTerminalAndReported(t *testing.T) {
 	wantErr := errors.New("checksum mismatch")
 	var calls phaseCalls
 	phases := fakePhases(&calls, fakeSkills("alpha"), nil)
-	phases.Execute = func(context.Context, app.InstallPlan, func(app.ProgressEvent)) (app.AddResult, error) {
+	phases.Execute = func(context.Context, app.InstallPlan, func(app.InstallProgressEvent)) (app.AddResult, error) {
 		calls.execute++
 		return app.AddResult{}, wantErr
 	}
@@ -429,14 +432,28 @@ func TestWizardProgress_RendersEvents(t *testing.T) {
 	})
 	m.step = stepProgress
 	m.session.Selected = fakeSkills("alpha", "beta")
-	m.events = []app.ProgressEvent{{Skill: "alpha", Stage: "install"}, {Skill: "alpha", Stage: "record"}}
+	m.execCh = make(chan tea.Msg, 4) // waitWizardMsg target; never pumped here
+	feed := func(e app.InstallProgressEvent) {
+		next, _ := m.Update(wizProgressMsg(e))
+		mm, ok := next.(wizardModel)
+		if !ok {
+			t.Fatalf("Update returned unexpected model %T", next)
+		}
+		m = mm
+	}
+	feed(app.InstallProgressEvent{SkillIndex: 1, SkillTotal: 2, SkillName: "alpha", Phase: app.InstallPhaseStoring, Status: app.InstallStatusRunning})
+	feed(app.InstallProgressEvent{SkillIndex: 1, SkillTotal: 2, SkillName: "alpha", Phase: app.InstallPhaseComplete, Status: app.InstallStatusInstalled})
+	feed(app.InstallProgressEvent{SkillIndex: 2, SkillTotal: 2, SkillName: "beta", Phase: app.InstallPhaseStoring, Status: app.InstallStatusRunning})
 
 	view := m.View()
-	if !strings.Contains(view, "✓ alpha") && !strings.Contains(view, "✓") {
-		t.Errorf("progress view does not mark completed skills:\n%s", view)
+	if !strings.Contains(view, "1 / 2") {
+		t.Errorf("progress view does not reflect the terminal-driven count:\n%s", view)
 	}
 	if !strings.Contains(view, "beta") {
-		t.Errorf("progress view missing pending skill:\n%s", view)
+		t.Errorf("progress view missing current skill:\n%s", view)
+	}
+	if !strings.Contains(view, "Writing to store") {
+		t.Errorf("progress view missing current phase:\n%s", view)
 	}
 }
 
@@ -445,7 +462,7 @@ func TestWizardSummary_ShowsPathsAndNextCommands(t *testing.T) {
 
 	var calls phaseCalls
 	phases := fakePhases(&calls, fakeSkills("alpha"), nil)
-	phases.Execute = func(context.Context, app.InstallPlan, func(app.ProgressEvent)) (app.AddResult, error) {
+	phases.Execute = func(context.Context, app.InstallPlan, func(app.InstallProgressEvent)) (app.AddResult, error) {
 		calls.execute++
 		return app.AddResult{Installed: []app.InstalledSkill{{
 			Name: "alpha", Targets: map[string]string{"claude": ".claude/skills/alpha"},
@@ -1120,7 +1137,7 @@ func realPhases(t *testing.T, a *app.App, root, src string) WizardPhases {
 				Discover: disc, Selected: s.Selected, AgentIDs: s.AgentIDs,
 			})
 		},
-		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.ProgressEvent)) (app.AddResult, error) {
+		Execute: func(ctx context.Context, plan app.InstallPlan, progress func(app.InstallProgressEvent)) (app.AddResult, error) {
 			return a.ExecutePlan(ctx, plan, progress)
 		},
 		Agents: func(ctx context.Context) ([]app.AgentChoice, error) {
@@ -1423,7 +1440,7 @@ func sourceAwarePhases(calls *phaseCalls, versionCalls *[]string) (WizardPhases,
 			calls.plan++
 			return app.InstallPlan{Source: s.Source}, nil
 		},
-		Execute: func(context.Context, app.InstallPlan, func(app.ProgressEvent)) (app.AddResult, error) {
+		Execute: func(context.Context, app.InstallPlan, func(app.InstallProgressEvent)) (app.AddResult, error) {
 			calls.execute++
 			return app.AddResult{}, nil
 		},

@@ -1,0 +1,9 @@
+Installation plan (dry run)
+4 skills processed
+● 4 planned
+
+Would install        fresh
+Would repair         relink
+Would remove target  narrow
+Would update lock    rewrite
+nothing written (--dry-run)
