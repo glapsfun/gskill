@@ -89,8 +89,9 @@ func (s *Store) GC(ctx context.Context, opts GCOptions) (GCReport, error) {
 	}
 	rep.Candidates = candidates
 
+	cutoff := time.Now().Add(-graceOr(opts.GracePeriod))
 	for _, c := range candidates {
-		deleted, err := s.deleteIfStillUnused(ctx, c.Key, opts)
+		deleted, err := s.deleteIfStillUnused(ctx, c.Key, opts, cutoff)
 		if err != nil {
 			return rep, err
 		}
@@ -123,11 +124,7 @@ func (s *Store) gcCandidates(opts GCOptions) ([]GCCandidate, error) {
 	if opts.MarkRefs != nil {
 		marked = opts.MarkRefs()
 	}
-	grace := opts.GracePeriod
-	if grace <= 0 {
-		grace = defaultGracePeriod
-	}
-	cutoff := time.Now().Add(-grace)
+	cutoff := time.Now().Add(-graceOr(opts.GracePeriod))
 
 	var out []GCCandidate
 	for _, key := range keys {
@@ -161,7 +158,7 @@ func (s *Store) gcCandidates(opts GCOptions) ([]GCCandidate, error) {
 // deleteIfStillUnused takes the object's lock and re-checks every protection
 // immediately before deleting (FR-031). A lock held by another process, or a
 // protection that appeared meanwhile, skips the object (gc-conflict).
-func (s *Store) deleteIfStillUnused(ctx context.Context, key string, opts GCOptions) (bool, error) {
+func (s *Store) deleteIfStillUnused(ctx context.Context, key string, opts GCOptions, cutoff time.Time) (bool, error) {
 	// A short timeout: a held lock means an active operation — skip, don't wait.
 	shortLocker := NewLocker(s.home, 2*time.Second, nil)
 	lock, err := shortLocker.LockObject(ctx, key)
@@ -177,8 +174,31 @@ func (s *Store) deleteIfStillUnused(ctx context.Context, key string, opts GCOpti
 	if opts.MarkRefs != nil && opts.MarkRefs()[key] {
 		return false, nil
 	}
+	// Re-read the age under the object lock: TouchLastUsed stamps lastUsedAt
+	// under this same lock, so an install that reused the object after the
+	// candidate scan (possibly from a project the registry does not know yet)
+	// pushes it back inside the grace period and must skip the delete.
+	meta, err := ReadMetadata(s.MetadataPath(key))
+	if err != nil {
+		return false, nil // no longer readable: never sweep on doubt (FR-024)
+	}
+	age := meta.CreatedAt
+	if meta.LastUsedAt.After(age) {
+		age = meta.LastUsedAt
+	}
+	if age.After(cutoff) {
+		return false, nil
+	}
 	if err := os.RemoveAll(s.ObjectPath(key)); err != nil {
 		return false, fmt.Errorf("delete store object %s: %w", key, err)
 	}
 	return true, nil
+}
+
+// graceOr returns the effective grace period, defaulting non-positive values.
+func graceOr(grace time.Duration) time.Duration {
+	if grace <= 0 {
+		return defaultGracePeriod
+	}
+	return grace
 }

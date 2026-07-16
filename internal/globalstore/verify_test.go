@@ -82,6 +82,43 @@ func TestVerifyObject_MissingObject(t *testing.T) {
 	}
 }
 
+// TestVerifyObject_SchemaVersionMismatchNeverQuarantines: an object written
+// by a different gskill generation may be perfectly healthy — an older binary
+// must refuse to use it, but never destroy shared content a newer binary can
+// still serve.
+func TestVerifyObject_SchemaVersionMismatchNeverQuarantines(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHome(t)
+	s := globalstore.New(h)
+	src, key := writeSkillDir(t, "# future schema\n")
+	if _, err := s.Admit(t.Context(), key, src, globalstore.Origin{Commit: "c"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(s.MetadataPath(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := strings.Replace(string(raw), `"schemaVersion": 1`, `"schemaVersion": 99`, 1)
+	if future == string(raw) {
+		t.Fatalf("schemaVersion not found in metadata: %s", raw)
+	}
+	if err := os.WriteFile(s.MetadataPath(key), []byte(future), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.VerifyObject(key)
+	if !errors.Is(err, globalstore.ErrSchemaVersion) {
+		t.Errorf("err = %v, want ErrSchemaVersion", err)
+	}
+	if !s.Has(key) {
+		t.Error("newer-schema object was removed from the store")
+	}
+	if entries, readErr := os.ReadDir(h.QuarantineDir()); readErr == nil && len(entries) != 0 {
+		t.Errorf("newer-schema object was quarantined: %v", entries)
+	}
+}
+
 func TestVerifyObject_InvalidMetadataFails(t *testing.T) {
 	t.Parallel()
 

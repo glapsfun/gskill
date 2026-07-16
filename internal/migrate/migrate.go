@@ -1,19 +1,21 @@
 // Package migrate converts a project from the legacy project-local content
 // store (<project>/.gskill/store) to the user-level global store (spec 015
 // US5, FR-037/038). Migration is verified, deduplicating, and rollback-safe
-// by construction: links switch only after the global object is verified,
-// and the local store is removed only after complete success.
+// by construction: links switch only after every object is admitted and
+// verified globally and every affected link is known re-pointable, and the
+// local store is removed only after complete success.
 package migrate
 
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/glapsfun/gskill/internal/active"
+	"github.com/glapsfun/gskill/internal/fsutil"
 	"github.com/glapsfun/gskill/internal/globalstore"
 	"github.com/glapsfun/gskill/internal/integrity"
 )
@@ -97,35 +99,32 @@ func listLocalObjects(root string) ([]string, error) {
 
 // localObjectPath maps a key to its legacy store directory.
 func localObjectPath(root, key string) string {
-	return filepath.Join(localStoreDir(root), filepath.FromSlash(keyToPath(key)))
-}
-
-// keyToPath converts "sha256:abc" to "sha256/abc".
-func keyToPath(key string) string {
-	for i := range len(key) {
-		if key[i] == ':' {
-			return key[:i] + "/" + key[i+1:]
-		}
-	}
-	return key
+	return fsutil.KeyPath(localStoreDir(root), key)
 }
 
 // BuildPlan inspects the project's local store against the global store
 // without changing anything (FR-037 dry-run).
 func BuildPlan(root string, gs *globalstore.Store) (Plan, error) {
+	plan, _, err := buildPlan(root, gs)
+	return plan, err
+}
+
+// buildPlan is BuildPlan plus the enumerated key list, so Run never has to
+// re-list (and possibly disagree with) the store the plan was computed from.
+func buildPlan(root string, gs *globalstore.Store) (Plan, []string, error) {
 	plan := Plan{Root: root}
 	keys, err := listLocalObjects(root)
 	if err != nil {
-		return plan, err
+		return plan, nil, err
 	}
 	plan.LocalObjects = len(keys)
 
 	var localTotal, copyBytes int64
 	for _, key := range keys {
 		dir := localObjectPath(root, key)
-		size, err := dirSize(dir)
+		size, err := fsutil.DirSize(dir)
 		if err != nil {
-			return plan, err
+			return plan, nil, err
 		}
 		localTotal += size
 
@@ -142,17 +141,19 @@ func BuildPlan(root string, gs *globalstore.Store) (Plan, error) {
 		}
 	}
 	plan.SavingsBytes = localTotal - copyBytes
-	return plan, nil
+	return plan, keys, nil
 }
 
 // Run executes the migration (research R11): verify each local object,
 // dedupe-or-copy into the global store, verify, re-point the project-active
 // links for the given lock entries, and remove the legacy store and cache
-// only after complete success. Corrupt local objects are skipped and
-// reported; any skip, admission failure, or relink failure leaves the local
-// store in place so the project stays fully usable (FR-038).
+// only after complete success. Links are switched only when the whole
+// migration is known to complete: a corrupt or unadmittable object, or an
+// active link migration cannot re-point (an external tool's entry resolving
+// into the legacy store), leaves every link and the local store untouched so
+// the project stays fully usable (FR-038).
 func Run(ctx context.Context, root string, gs *globalstore.Store, skills []LockedSkill) (Result, error) {
-	plan, err := BuildPlan(root, gs)
+	plan, keys, err := buildPlan(root, gs)
 	if err != nil {
 		return Result{}, err
 	}
@@ -161,10 +162,6 @@ func Run(ctx context.Context, root string, gs *globalstore.Store, skills []Locke
 		return res, nil // nothing to migrate
 	}
 
-	keys, err := listLocalObjects(root)
-	if err != nil {
-		return res, err
-	}
 	originByHash := make(map[string]globalstore.Origin, len(skills))
 	for _, sk := range skills {
 		originByHash[sk.ContentHash] = sk.Origin
@@ -179,45 +176,53 @@ func Run(ctx context.Context, root string, gs *globalstore.Store, skills []Locke
 	if err != nil {
 		return res, err
 	}
-	relinked, err := relinkAll(gs, root, skills, corrupt, &res)
+
+	// Completeness is decided BEFORE any link switches: relinking only some
+	// skills while the kept legacy store still pins the project to scope=
+	// project would make the switched links fail closed as foreign on the
+	// next run (FR-038). The old local store is preserved unless everything
+	// below is known to succeed for every object, skill, and active link
+	// (FR-037 step 13).
+	relinkable, complete := relinkableSkills(gs, skills, corrupt, admitted)
+	unmanaged, err := legacyActiveLinks(root, relinkable)
 	if err != nil {
 		return res, err
 	}
-	complete := admitted && relinked
-
-	// The old local store is preserved until everything above succeeded for
-	// every object and skill (FR-037 step 13, FR-038).
-	if complete {
-		if err := os.RemoveAll(localStoreDir(root)); err != nil {
-			return res, fmt.Errorf("remove legacy store: %w", err)
-		}
-		_ = os.RemoveAll(localCacheDir(root))
-		res.LocalStoreRemoved = true
+	if !complete || len(unmanaged) > 0 {
+		return res, nil
 	}
+
+	if err := relinkAll(gs, root, skills, relinkable, &res); err != nil {
+		return res, err
+	}
+	if err := os.RemoveAll(localStoreDir(root)); err != nil {
+		return res, fmt.Errorf("remove legacy store: %w", err)
+	}
+	_ = os.RemoveAll(localCacheDir(root))
+	res.LocalStoreRemoved = true
 	return res, nil
 }
 
-// dirSize sums regular-file sizes under dir.
-func dirSize(dir string) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+// relinkableSkills returns the entries whose active links can switch to the
+// global store, plus whether every entry and object migrated cleanly.
+func relinkableSkills(gs *globalstore.Store, skills []LockedSkill, corrupt map[string]bool, admitted bool) (map[string]bool, bool) {
+	relinkable := make(map[string]bool, len(skills))
+	complete := admitted
+	for _, sk := range skills {
+		if sk.ContentHash == "" || corrupt[sk.ContentHash] || !gs.Has(sk.ContentHash) {
+			complete = false
+			continue
 		}
-		if d.Type().IsRegular() {
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
-			total += info.Size()
-		}
-		return nil
-	})
-	return total, err
+		relinkable[sk.Name] = true
+	}
+	return relinkable, complete
 }
 
 // admitAll dedupes-or-copies every healthy local object into the global
-// store, verifying each admission. It reports whether every object made it.
+// store. It reports whether every object made it. A fresh admission is
+// already fail-closed verified by Admit's staged re-hash; only a reused
+// pre-existing object is re-verified here, since its bytes were not part of
+// this run's staging.
 func admitAll(ctx context.Context, gs *globalstore.Store, root string, keys []string, corrupt map[string]bool, originByHash map[string]globalstore.Origin, res *Result) (bool, error) {
 	complete := true
 	for _, key := range keys {
@@ -227,32 +232,68 @@ func admitAll(ctx context.Context, gs *globalstore.Store, root string, keys []st
 		}
 		// Admit verifies the staged copy against key and re-checks under the
 		// object lock; an existing identical object is reused (FR-037).
-		if _, err := gs.Admit(ctx, key, localObjectPath(root, key), originByHash[key]); err != nil {
+		reused, err := gs.Admit(ctx, key, localObjectPath(root, key), originByHash[key])
+		if err != nil {
 			return false, fmt.Errorf("admit %s: %w", key, err)
 		}
-		if err := gs.VerifyObject(key); err != nil {
-			return false, fmt.Errorf("verify admitted %s: %w", key, err)
+		if reused {
+			if err := gs.VerifyObject(key); err != nil {
+				return false, fmt.Errorf("verify admitted %s: %w", key, err)
+			}
 		}
 		res.AdmittedObjects++
 	}
 	return complete, nil
 }
 
-// relinkAll re-points each lock entry's active link at its verified global
-// object. Agent links point through the active layer, so they follow
-// untouched. It reports whether every skill was relinked.
-func relinkAll(gs *globalstore.Store, root string, skills []LockedSkill, corrupt map[string]bool, res *Result) (bool, error) {
-	complete := true
+// legacyActiveLinks returns the active-layer entries that resolve into the
+// legacy store but are NOT among the skills this migration re-points —
+// typically entries another tool manages (no gskill block). Removing the
+// legacy store would break them, so their presence blocks removal.
+func legacyActiveLinks(root string, relinkable map[string]bool) ([]string, error) {
+	names, err := active.List(root)
+	if err != nil {
+		return nil, err
+	}
+	storeRoot, err := filepath.Abs(localStoreDir(root))
+	if err != nil {
+		return nil, err
+	}
+	var blocked []string
+	for _, name := range names {
+		if relinkable[name] {
+			continue
+		}
+		target, err := os.Readlink(active.Path(root, name))
+		if err != nil {
+			continue // absent or not a symlink: nothing in the legacy store
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(active.Dir(root), target)
+		}
+		rel, err := filepath.Rel(storeRoot, filepath.Clean(target))
+		if err != nil || strings.HasPrefix(filepath.ToSlash(rel), "..") {
+			continue // resolves outside the legacy store
+		}
+		blocked = append(blocked, name)
+	}
+	sort.Strings(blocked)
+	return blocked, nil
+}
+
+// relinkAll re-points each relinkable lock entry's active link at its
+// verified global object. Agent links point through the active layer, so
+// they follow untouched.
+func relinkAll(gs *globalstore.Store, root string, skills []LockedSkill, relinkable map[string]bool, res *Result) error {
 	for _, sk := range skills {
-		if sk.ContentHash == "" || corrupt[sk.ContentHash] || !gs.Has(sk.ContentHash) {
-			complete = false
+		if !relinkable[sk.Name] {
 			continue
 		}
 		if _, err := active.EnsureActive(root, sk.Name, gs.ContentPath(sk.ContentHash),
 			gs.Root(), localStoreDir(root)); err != nil {
-			return false, fmt.Errorf("relink %s: %w", sk.Name, err)
+			return fmt.Errorf("relink %s: %w", sk.Name, err)
 		}
 		res.Relinked = append(res.Relinked, sk.Name)
 	}
-	return complete, nil
+	return nil
 }

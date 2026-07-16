@@ -61,10 +61,7 @@ func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
 		out, rErr = a.reconcile(ctx, p, req)
 		if rErr == nil {
 			if lf, lfErr := loadOrNewLock(p.lockPath); lfErr == nil {
-				if stErr := writeProjectState(p, lf); stErr != nil {
-					a.log.Warn("write project state", "error", stErr)
-				}
-				a.registerProject(ctx, p, lf)
+				a.recordProjectState(ctx, p, lf)
 			}
 		}
 		return rErr
@@ -388,11 +385,15 @@ func sweepActiveOrphans(p *project, lf *skillslock.State, external map[string]bo
 // keepExternalActiveContent adds to refs the store content still reachable
 // through an external-only entry's active symlink: gskill has no record for
 // such entries, so the link itself is the reference that must survive GC.
+// Refs resolve against the PROJECT-LOCAL store root — the store the callers'
+// p.store.GC sweeps — never contentRoot(): under scope=global with a still-
+// populated legacy store the two diverge, and resolving against the global
+// root would leave every legacy-store link unprotected.
 func (a *App) keepExternalActiveContent(p *project, external, refs map[string]bool) error {
 	if len(external) == 0 {
 		return nil
 	}
-	storeRoot, err := filepath.Abs(p.contentRoot())
+	storeRoot, err := filepath.Abs(p.store.Root())
 	if err != nil {
 		return err
 	}

@@ -42,7 +42,7 @@ func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune boo
 		if lockErr != nil {
 			return lockErr
 		}
-		return a.unlinkOne(p, lf, skill, agentID, prune, &out)
+		return a.unlinkOne(ctx, p, lf, skill, agentID, prune, &out)
 	})
 	if err != nil {
 		return UnlinkResult{}, err
@@ -51,7 +51,7 @@ func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune boo
 }
 
 // unlinkOne performs the unlink against the loaded lock under the project lock.
-func (a *App) unlinkOne(p *project, lf *skillslock.State, skill, agentID string, prune bool, out *UnlinkResult) error {
+func (a *App) unlinkOne(ctx context.Context, p *project, lf *skillslock.State, skill, agentID string, prune bool, out *UnlinkResult) error {
 	locked, inLock := lf.Skills[skill]
 	if !inLock {
 		return errs.WithHint(
@@ -92,14 +92,14 @@ func (a *App) unlinkOne(p *project, lf *skillslock.State, skill, agentID string,
 
 	if len(remaining) > 0 {
 		lf.Skills[skill] = locked
-		return a.saveUnlink(p, lf, false)
+		return a.saveUnlink(ctx, p, lf, false)
 	}
 
 	out.Unreferenced = true
 	if !prune {
 		// Retain the active entry, store content, and lock entry.
 		lf.Skills[skill] = locked
-		return a.saveUnlink(p, lf, false)
+		return a.saveUnlink(ctx, p, lf, false)
 	}
 
 	// Prune: remove the active entry and lock entry, and GC the store.
@@ -108,14 +108,14 @@ func (a *App) unlinkOne(p *project, lf *skillslock.State, skill, agentID string,
 	}
 	delete(lf.Skills, skill)
 	out.Pruned = true
-	return a.saveUnlink(p, lf, true)
+	return a.saveUnlink(ctx, p, lf, true)
 }
 
 // saveUnlink persists the lock, optionally GC'ing the store. The GC is
 // strictly the PROJECT-LOCAL store's: unlinking never deletes shared global
 // content, which is deletable only through `gskill store gc` (spec 015
 // FR-009/FR-024). For scope=global p.store is empty, a no-op by design.
-func (a *App) saveUnlink(p *project, lf *skillslock.State, gc bool) error {
+func (a *App) saveUnlink(ctx context.Context, p *project, lf *skillslock.State, gc bool) error {
 	if err := saveLock(p.lockPath, lf); err != nil {
 		return err
 	}
@@ -124,9 +124,9 @@ func (a *App) saveUnlink(p *project, lf *skillslock.State, gc bool) error {
 			return err
 		}
 	}
-	if err := writeProjectState(p, lf); err != nil {
-		a.log.Warn("write project state", "error", err)
-	}
+	// Keep the advisory registry in step: a pruned skill's reference must
+	// stop marking its object or store GC can never reclaim it (FR-027).
+	a.recordProjectState(ctx, p, lf)
 	return nil
 }
 

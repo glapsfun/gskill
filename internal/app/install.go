@@ -460,6 +460,10 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 			rollback()
 			return saveErr
 		}
+		// Without this bookkeeping, a project populated only via `gskill add`
+		// is invisible to store GC's marking and its global objects become
+		// deletable while still referenced.
+		a.recordProjectState(ctx, p, lf)
 		return nil
 	})
 	if err != nil {

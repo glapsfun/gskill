@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/agent"
+	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
@@ -183,10 +184,7 @@ func (a *App) finishLockRun(ctx context.Context, p *project, lf *skillslock.Stat
 		res.Changed = res.Changed || len(pruned) > 0
 	}
 	if !req.DryRun {
-		if stErr := writeProjectState(p, lf); stErr != nil {
-			a.log.Warn("write project state", "error", stErr)
-		}
-		a.registerProject(ctx, p, lf)
+		a.recordProjectState(ctx, p, lf)
 	}
 	return nil
 }
@@ -1159,12 +1157,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	if !p.contentHas(prior.Resolved.ContentHash) {
 		return LockSkillResult{}, false
 	}
-	// The recorded hash must match the actual stored content — comparing the
-	// entry against itself would let an edited or corrupted computedHash pass
-	// as "up to date" (it must fail closed, or be accepted via --force, on
-	// the full path). For a global store this re-reads the shared object's
-	// content, so a tampered object never satisfies the fast path (FR-020).
-	if compat, err := integrity.CompatHash(p.contentPath(prior.Resolved.ContentHash)); err != nil || compat != e.ComputedHash {
+	if !a.storedContentUpToDate(p, prior.Resolved.ContentHash, e.ComputedHash) {
 		return LockSkillResult{}, false
 	}
 
@@ -1203,6 +1196,28 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	lf.Skills[name] = prior
 	r.Status = LockSkillRepaired
 	return r, true
+}
+
+// storedContentUpToDate establishes that the stored object still backs the
+// lock entry. The recorded hash must match the actual stored content —
+// comparing the entry against itself would let an edited or corrupted
+// computedHash pass as "up to date" (it must fail closed, or be accepted via
+// --force, on the full path). CompatHash skips symlinks by design, so it
+// alone cannot notice one added into (or retargeted inside) a shared object:
+// for the global store the store's own verification also runs (depth per
+// store.verify_on_use), so a tampered object never satisfies the fast path
+// (FR-020) — it falls through to the full path, which fails closed or
+// quarantines.
+func (a *App) storedContentUpToDate(p *project, contentHash, computedHash string) bool {
+	if compat, err := integrity.CompatHash(p.contentPath(contentHash)); err != nil || compat != computedHash {
+		return false
+	}
+	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
+		if err := newGlobalContentStore(p.global, a.cfg).Verify(contentHash); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveLockEntry pins an entry to a revision: a previously recorded gskill

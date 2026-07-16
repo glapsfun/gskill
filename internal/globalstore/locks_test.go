@@ -23,7 +23,6 @@ func TestLockPaths_Naming(t *testing.T) {
 		want string
 	}{
 		{locks.ObjectLockPath("sha256:abcd"), filepath.Join(h.LocksDir(), "store-sha256-abcd.lock")},
-		{locks.ProjectLockPath("p-123"), filepath.Join(h.LocksDir(), "project-p-123.lock")},
 		{locks.GCLockPath(), filepath.Join(h.LocksDir(), "gc.lock")},
 		{locks.RegistryLockPath(), filepath.Join(h.LocksDir(), "projects.lock")},
 	}

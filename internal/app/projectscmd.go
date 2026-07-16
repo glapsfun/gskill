@@ -74,7 +74,7 @@ func (a *App) ProjectsPrune(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	locker := globalstore.NewLocker(gs.Home(), a.cfg.StoreLockTimeout, nil)
+	locker := globalstore.NewLocker(gs.Home(), a.storeLockTimeout(), nil)
 	lock, err := locker.LockRegistry(ctx)
 	if err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func (a *App) ProjectsRefresh(ctx context.Context) (refreshed []string, err erro
 	if err != nil {
 		return nil, err
 	}
-	locker := globalstore.NewLocker(gs.Home(), a.cfg.StoreLockTimeout, nil)
+	locker := globalstore.NewLocker(gs.Home(), a.storeLockTimeout(), nil)
 	lock, err := locker.LockRegistry(ctx)
 	if err != nil {
 		return nil, err
@@ -104,6 +104,13 @@ func (a *App) ProjectsRefresh(ctx context.Context) (refreshed []string, err erro
 	for _, e := range entries {
 		if e.Root == "" {
 			continue // minimal entries cannot be re-derived
+		}
+		if _, statErr := os.Stat(e.Lockfile); statErr != nil {
+			// The lockfile is unreadable right now (unmounted volume, mid-
+			// rebase): keep the recorded snapshot. Rewriting the entry with
+			// zero references would strip the GC protection the project still
+			// needs; `gskill projects prune` is the deliberate removal path.
+			continue
 		}
 		lf, lfErr := loadOrNewLock(e.Lockfile)
 		if lfErr != nil {

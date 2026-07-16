@@ -5,10 +5,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/glapsfun/gskill/internal/fsutil"
 	"github.com/glapsfun/gskill/internal/home"
 )
+
+// safeKeyName maps a content key ("sha256:<hex>") to its filesystem-friendly
+// form ("sha256-<hex>"). Pin markers, object lock files, and quarantine names
+// all share this one encoding; Pins() reverse-parses it, so encoder and
+// decoder must stay in lockstep.
+func safeKeyName(key string) string {
+	return strings.ReplaceAll(key, ":", "-")
+}
 
 // ErrObjectNotFound reports a store lookup for a key with no admitted object.
 var ErrObjectNotFound = errors.New("store object not found")

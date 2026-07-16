@@ -1,9 +1,9 @@
 package globalstore
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/glapsfun/gskill/internal/errs"
@@ -22,6 +22,12 @@ func (s *Store) VerifyObject(key string) error {
 
 	meta, err := ReadMetadata(s.MetadataPath(key))
 	if err != nil {
+		if errors.Is(err, ErrSchemaVersion) {
+			// A different gskill generation wrote this record; the object may
+			// be healthy. Refuse to use it here, but never quarantine shared
+			// content another (newer) binary can still serve.
+			return fmt.Errorf("store object %s: %w", key, err)
+		}
 		if qErr := s.Quarantine(key); qErr != nil {
 			return fmt.Errorf("%w (quarantine also failed: %w)", err, qErr)
 		}
@@ -56,8 +62,7 @@ func (s *Store) VerifyObject(key string) error {
 // <home>/quarantine/<key>-<timestamp>/ so it can never be activated, while
 // preserving the evidence for repair and inspection (FR-021).
 func (s *Store) Quarantine(key string) error {
-	safe := strings.ReplaceAll(key, ":", "-")
-	dest := fmt.Sprintf("%s/%s-%d", s.home.QuarantineDir(), safe, time.Now().UnixNano())
+	dest := fmt.Sprintf("%s/%s-%d", s.home.QuarantineDir(), safeKeyName(key), time.Now().UnixNano())
 	if err := os.Rename(s.ObjectPath(key), dest); err != nil {
 		return fmt.Errorf("quarantine %s: %w", key, err)
 	}

@@ -11,14 +11,9 @@ import (
 	"github.com/glapsfun/gskill/internal/home"
 )
 
-// pinFileName maps a content key to its pin marker file name.
-func pinFileName(key string) string {
-	return strings.ReplaceAll(key, ":", "-")
-}
-
 // pinPath returns the pin marker path for key.
 func (s *Store) pinPath(key string) string {
-	return filepath.Join(s.home.PinsDir(), pinFileName(key))
+	return filepath.Join(s.home.PinsDir(), safeKeyName(key))
 }
 
 // Pin exempts the object for key from garbage collection (FR-026). Pinning

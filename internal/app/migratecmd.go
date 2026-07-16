@@ -5,7 +5,9 @@ import (
 	"fmt"
 
 	"github.com/glapsfun/gskill/internal/config"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/globalstore"
+	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/migrate"
 )
 
@@ -25,6 +27,17 @@ type MigrateReport struct {
 // success — any earlier failure leaves the project fully usable (FR-038).
 func (a *App) MigrateGlobalStore(ctx context.Context, root string, dryRun bool) (MigrateReport, error) {
 	rep := MigrateReport{DryRun: dryRun}
+	if a.cfg.StoreScope == config.StoreScopeProject {
+		// An explicit project scope wins over migration state on every later
+		// run (resolveStoreScope), so migrating now would relink actives into
+		// a store the next install refuses as foreign. Fail before touching
+		// anything.
+		return rep, errs.WithHint(
+			fmt.Errorf("%w: store.scope is explicitly set to %q; migration would leave the project unusable",
+				errs.ErrUsage, config.StoreScopeProject),
+			"remove store.scope from the config (or set it to \"global\") and re-run",
+		)
+	}
 	if !hasPopulatedProjectStore(root) {
 		rep.NothingToDo = true
 		return rep, nil
@@ -55,6 +68,12 @@ func (a *App) MigrateGlobalStore(ctx context.Context, root string, dryRun bool) 
 		skills := make([]migrate.LockedSkill, 0, len(lf.Skills))
 		for _, name := range sortedKeys(lf.Skills) {
 			rec := lf.Skills[name]
+			if rec.Installation.Scope == string(installer.ScopeGlobal) {
+				// A scope=global entry's content lives in the config-dir
+				// store, not the project store: there is nothing to migrate
+				// and no project active link to re-point.
+				continue
+			}
 			skills = append(skills, migrate.LockedSkill{
 				Name:        name,
 				ContentHash: rec.Resolved.ContentHash,

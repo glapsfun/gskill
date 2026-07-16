@@ -2,6 +2,7 @@ package globalstore
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -15,6 +16,11 @@ import (
 // metadataSchemaVersion is the schema this build reads and writes. Readers
 // reject records with a different version rather than misinterpreting them.
 const metadataSchemaVersion = 1
+
+// ErrSchemaVersion reports a metadata record written by a different gskill
+// generation. The object itself may be perfectly healthy — callers must treat
+// this as "cannot read", never as corruption.
+var ErrSchemaVersion = errors.New("unsupported metadata schema version")
 
 // Metadata is the descriptive, mutable-under-lock record beside an object's
 // immutable content. It never affects object identity.
@@ -88,8 +94,8 @@ func ReadMetadata(path string) (Metadata, error) {
 	}
 	if meta.SchemaVersion != metadataSchemaVersion {
 		return Metadata{}, fmt.Errorf(
-			"metadata %s has schema version %d; this gskill understands version %d — upgrade gskill or repair the object",
-			path, meta.SchemaVersion, metadataSchemaVersion)
+			"%w: metadata %s has schema version %d; this gskill understands version %d — upgrade gskill",
+			ErrSchemaVersion, path, meta.SchemaVersion, metadataSchemaVersion)
 	}
 	return meta, nil
 }

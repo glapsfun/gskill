@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/installer"
 )
 
@@ -25,7 +26,15 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 
 	var out RepairResult
 	err = a.withLock(ctx, p, func() error {
-		cleaned, cleanErr := installer.CleanupStaging(p.store.Root(), p.cache.Root())
+		// Staging cleanup only touches roots this project's lock covers. For
+		// scope=global, p.cache is the SHARED home cache where other projects
+		// stage concurrent fetches (only the per-project lock is held here),
+		// so it is left to the age-thresholded sweep in store GC (FR-032).
+		stagingRoots := []string{p.store.Root()}
+		if p.storeScope != config.StoreScopeGlobal {
+			stagingRoots = append(stagingRoots, p.cache.Root())
+		}
+		cleaned, cleanErr := installer.CleanupStaging(stagingRoots...)
 		if cleanErr != nil {
 			return cleanErr
 		}
@@ -62,10 +71,7 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 			}
 			out.Repaired = append(out.Repaired, name)
 		}
-		if stErr := writeProjectState(p, lf); stErr != nil {
-			a.log.Warn("write project state", "error", stErr)
-		}
-		a.registerProject(ctx, p, lf)
+		a.recordProjectState(ctx, p, lf)
 		return nil
 	})
 	if err != nil {

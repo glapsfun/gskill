@@ -162,7 +162,15 @@ func (i *Installer) installFromStore(ctx context.Context, req Request) (Result, 
 	if err != nil {
 		return Result{}, fmt.Errorf("discover stored content %s: %w", hash, err)
 	}
-	warnings := identityWarning(req.Name, skill.Frontmatter.Name)
+	// Reused content gets the same validation a fresh fetch gets (FR-043):
+	// admission validated it once, but the executable-bit warnings were not
+	// persisted, and a symlink planted after admission must still fail closed
+	// before this project activates the shared object.
+	warnings, err := validateContent(contentPath)
+	if err != nil {
+		return Result{}, err
+	}
+	warnings = append(warnings, identityWarning(req.Name, skill.Frontmatter.Name)...)
 
 	skillFile, err := os.ReadFile(filepath.Join(contentPath, integrity.SkillFileName)) //nolint:gosec // store-internal path
 	if err != nil {
@@ -175,8 +183,13 @@ func (i *Installer) installFromStore(ctx context.Context, req Request) (Result, 
 
 	if origin := originFrom(req); origin.Commit != "" {
 		// Best-effort origin enrichment; identity never changes (FR-003).
-		if _, putErr := i.content.Put(ctx, hash, contentPath, origin); putErr != nil {
-			warnings = append(warnings, fmt.Sprintf("record origin for %s: %v", hash, putErr))
+		// Stores that record origins expose the metadata-only path; falling
+		// back to Put would re-copy and re-verify the whole object just to
+		// merge one metadata record.
+		if rec, ok := i.content.(OriginRecorder); ok {
+			if recErr := rec.RecordOrigin(ctx, hash, origin); recErr != nil {
+				warnings = append(warnings, fmt.Sprintf("record origin for %s: %v", hash, recErr))
+			}
 		}
 	}
 

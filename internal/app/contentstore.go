@@ -69,3 +69,17 @@ func (g *globalContentStore) Touch(ctx context.Context, hash string) {
 	// Best-effort GC bookkeeping; a failure never fails an install.
 	_ = g.gs.TouchLastUsed(ctx, hash)
 }
+
+// RecordOrigin merges origin metadata into an already-admitted object
+// (installer.OriginRecorder) without re-copying or re-verifying content the
+// caller just verified.
+func (g *globalContentStore) RecordOrigin(ctx context.Context, hash string, origin installer.ObjectOrigin) error {
+	return g.gs.RecordOrigin(ctx, hash, globalstore.Origin{
+		SourceType: origin.SourceType,
+		Source:     origin.Source,
+		SkillPath:  origin.SkillPath,
+		Version:    origin.Version,
+		Ref:        origin.Ref,
+		Commit:     origin.Commit,
+	})
+}

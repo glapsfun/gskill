@@ -188,6 +188,25 @@ func OwnerOnlyTempDir(parent, pattern string) (string, error) {
 	return dir, nil
 }
 
+// DirSize sums the sizes of regular files under dir.
+func DirSize(dir string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() {
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}
+
 // ListStaleDirs returns the direct subdirectories of parent whose
 // modification time is older than maxAge — abandoned staging left behind by
 // interrupted processes. A missing parent yields no entries.

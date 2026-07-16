@@ -68,7 +68,7 @@ func (s *Store) Repair(ctx context.Context, key string, fetch FetchFunc) error {
 	}
 	_ = os.RemoveAll(old)
 
-	meta.SizeBytes, _ = dirSizeOrZero(s.ContentPath(key))
+	meta.SizeBytes, _ = fsutil.DirSize(s.ContentPath(key))
 	return WriteMetadata(s.MetadataPath(key), meta)
 }
 
@@ -80,13 +80,4 @@ func commitOrigin(origins []Origin) (Origin, bool) {
 		}
 	}
 	return Origin{}, false
-}
-
-// dirSizeOrZero is dirSize with a zero fallback for bookkeeping paths.
-func dirSizeOrZero(dir string) (int64, error) {
-	n, err := dirSize(dir)
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
 }

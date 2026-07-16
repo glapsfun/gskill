@@ -33,6 +33,13 @@ type ContentStore interface {
 	ScopeLabel() string
 }
 
+// OriginRecorder is the optional metadata-only enrichment seam: stores that
+// keep origin metadata (the global store) merge origin into an existing
+// object without touching or re-verifying its content.
+type OriginRecorder interface {
+	RecordOrigin(ctx context.Context, hash string, origin ObjectOrigin) error
+}
+
 // ObjectOrigin describes where admitted content came from. Stores that keep
 // origin metadata (the global store) record it; others ignore it.
 type ObjectOrigin struct {

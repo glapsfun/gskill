@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/glapsfun/gskill/internal/fsutil"
@@ -41,14 +40,7 @@ func NewLockerWithNotice(h *home.Home, timeout time.Duration, notice io.Writer, 
 
 // ObjectLockPath returns the lock file guarding one store object.
 func (l *Locker) ObjectLockPath(key string) string {
-	safe := strings.ReplaceAll(key, ":", "-")
-	return filepath.Join(l.home.LocksDir(), "store-"+safe+".lock")
-}
-
-// ProjectLockPath returns the lock file guarding one project's links, state,
-// and lockfile.
-func (l *Locker) ProjectLockPath(projectID string) string {
-	return filepath.Join(l.home.LocksDir(), "project-"+projectID+".lock")
+	return filepath.Join(l.home.LocksDir(), "store-"+safeKeyName(key)+".lock")
 }
 
 // GCLockPath returns the lock file guarding a whole GC apply run.
@@ -64,11 +56,6 @@ func (l *Locker) RegistryLockPath() string {
 // LockObject takes the exclusive lock for one store object.
 func (l *Locker) LockObject(ctx context.Context, key string) (*fsutil.Lock, error) {
 	return l.acquire(ctx, l.ObjectLockPath(key), "store object "+key)
-}
-
-// LockProject takes the exclusive lock for one project.
-func (l *Locker) LockProject(ctx context.Context, projectID string) (*fsutil.Lock, error) {
-	return l.acquire(ctx, l.ProjectLockPath(projectID), "project "+projectID)
 }
 
 // LockGC takes the exclusive garbage-collection lock.

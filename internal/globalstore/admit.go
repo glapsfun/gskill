@@ -3,7 +3,6 @@ package globalstore
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -56,7 +55,7 @@ func (s *Store) Admit(ctx context.Context, expectedKey, srcDir string, origin Or
 		return false, err
 	}
 
-	size, err := dirSize(staged)
+	size, err := fsutil.DirSize(staged)
 	if err != nil {
 		return false, fmt.Errorf("measure staged content: %w", err)
 	}
@@ -79,11 +78,13 @@ func (s *Store) Admit(ctx context.Context, expectedKey, srcDir string, origin Or
 	}
 
 	if err := os.Rename(staged, s.ContentPath(expectedKey)); err != nil {
-		// Clean the half-made object dir so no metadata-only husk remains.
-		_ = os.RemoveAll(objDir)
 		if s.Has(expectedKey) { // concurrent admitter won the rename race
 			return true, nil
 		}
+		// Clean the half-made object dir so no metadata-only husk remains.
+		// This must come after the Has re-check: content/ lives inside objDir,
+		// so removing first would destroy a concurrent winner's valid object.
+		_ = os.RemoveAll(objDir)
 		return false, fmt.Errorf("promote into store: %w", err)
 	}
 	return false, nil
@@ -156,25 +157,6 @@ func shortKey(key string) string {
 		safe = append(safe, c)
 	}
 	return string(safe)
-}
-
-// dirSize sums the sizes of regular files under dir.
-func dirSize(dir string) (int64, error) {
-	var total int64
-	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.Type().IsRegular() {
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
-			total += info.Size()
-		}
-		return nil
-	})
-	return total, err
 }
 
 // stageVerified copies srcDir into the staging area, validates it (path

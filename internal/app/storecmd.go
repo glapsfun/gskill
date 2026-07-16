@@ -36,7 +36,7 @@ func (a *App) openGlobalStore() (*globalstore.Store, error) {
 		return nil, fmt.Errorf("open gskill home: %w", err)
 	}
 	gs := globalstore.New(h)
-	gs.SetLocker(globalstore.NewLocker(h, a.cfg.StoreLockTimeout, nil))
+	gs.SetLocker(globalstore.NewLocker(h, a.storeLockTimeout(), nil))
 	return gs, nil
 }
 
@@ -61,27 +61,26 @@ func (a *App) StoreVerify(_ context.Context) (StoreVerifyResult, error) {
 
 // storeUsedBy resolves which known projects reference an object, from the
 // advisory registry snapshots. It is never required for correctness (FR-027).
+// The registry is read and indexed once at call time, not per lookup — the
+// returned function is invoked once per object by list/verify.
 func storeUsedBy(gs *globalstore.Store) func(key string) []string {
-	return func(key string) []string {
-		entries, err := projreg.List(gs.Home())
-		if err != nil {
-			return nil
-		}
-		var roots []string
+	index := map[string][]string{}
+	if entries, err := projreg.List(gs.Home()); err == nil {
 		for _, e := range entries {
+			label := e.Root
+			if label == "" {
+				label = e.ProjectID
+			}
+			seen := map[string]bool{}
 			for _, ref := range e.References {
-				if ref.StoreHash == key {
-					label := e.Root
-					if label == "" {
-						label = e.ProjectID
-					}
-					roots = append(roots, label)
-					break
+				if !seen[ref.StoreHash] {
+					seen[ref.StoreHash] = true
+					index[ref.StoreHash] = append(index[ref.StoreHash], label)
 				}
 			}
 		}
-		return roots
 	}
+	return func(key string) []string { return index[key] }
 }
 
 // storeMarkRefs builds the GC mark function (FR-024): registry snapshots are
@@ -383,10 +382,19 @@ func (a *App) registerProject(ctx context.Context, p *project, lf *skillslock.St
 		a.log.Warn("register project", "error", err)
 		return
 	}
+	// Record an absolute root: GC marking and refresh re-read the project
+	// from this path, possibly from a different working directory, so a
+	// relative -C spelling must never be persisted. The user's own path
+	// spelling is kept otherwise (no symlink resolution) — it is what
+	// `projects list` displays back.
+	root := p.root
+	if abs, absErr := filepath.Abs(root); absErr == nil {
+		root = abs
+	}
 	entry := projreg.Entry{
 		ProjectID: st.ProjectID,
-		Root:      p.root,
-		Lockfile:  p.lockPath,
+		Root:      root,
+		Lockfile:  filepath.Join(root, skillslock.FileName),
 		LastSeen:  time.Now().UTC().Truncate(time.Second),
 	}
 	for _, name := range sortedKeys(lf.Skills) {
@@ -395,7 +403,7 @@ func (a *App) registerProject(ctx context.Context, p *project, lf *skillslock.St
 		}
 	}
 
-	locker := globalstore.NewLocker(p.global.Home(), a.cfg.StoreLockTimeout, nil)
+	locker := globalstore.NewLocker(p.global.Home(), a.storeLockTimeout(), nil)
 	lock, err := locker.LockRegistry(ctx)
 	if err != nil {
 		a.log.Warn("register project", "error", err)

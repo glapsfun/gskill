@@ -97,7 +97,11 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 			out.Skills = append(out.Skills, change)
 			out.Changed = out.Changed || change.Changed
 		}
-		return saveLock(p.lockPath, lf)
+		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
+			return saveErr
+		}
+		a.recordProjectState(ctx, p, lf)
+		return nil
 	})
 	if err != nil {
 		return InstallResult{}, err
@@ -149,10 +153,9 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 		}
 		out.StoreGCed = gced
 
-		// Drop the removed skills' machine-local bookkeeping (FR-014).
-		if stErr := writeProjectState(p, lf); stErr != nil {
-			a.log.Warn("write project state", "error", stErr)
-		}
+		// Drop the removed skills' machine-local bookkeeping (FR-014) and let
+		// the registry stop marking the removed objects (FR-027).
+		a.recordProjectState(ctx, p, lf)
 		return nil
 	})
 	if err != nil {
