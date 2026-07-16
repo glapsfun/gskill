@@ -86,7 +86,8 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 			if !ok {
 				return errs.WithHint(
 					fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidLock, name),
-					"run 'gskill list' to see installed skills")
+					"run 'gskill list' to see installed skills",
+				)
 			}
 			sctx := stampSkill(ctx, name, k+1, len(targets))
 			change, applyErr := a.installOne(sctx, p, lf, name, intentFromRecord(r), InstallRequest{Root: root})
@@ -138,11 +139,20 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 			return saveErr
 		}
 
+		// GC is strictly the PROJECT-LOCAL store's: removing a skill from one
+		// project must never delete shared global content — global objects are
+		// deletable only through `gskill store gc` (spec 015 FR-009/FR-024).
+		// For scope=global p.store is empty, so this is a no-op by design.
 		gced, gcErr := p.store.GC(referencedHashes(lf))
 		if gcErr != nil {
 			return gcErr
 		}
 		out.StoreGCed = gced
+
+		// Drop the removed skills' machine-local bookkeeping (FR-014).
+		if stErr := writeProjectState(p, lf); stErr != nil {
+			a.log.Warn("write project state", "error", stErr)
+		}
 		return nil
 	})
 	if err != nil {

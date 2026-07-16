@@ -42,15 +42,25 @@ func (g *globalContentStore) Verify(hash string) error {
 }
 
 func (g *globalContentStore) Put(ctx context.Context, hash, srcDir string, origin installer.ObjectOrigin) (string, error) {
-	if _, err := g.gs.Admit(ctx, hash, srcDir, globalstore.Origin{
+	reused, err := g.gs.Admit(ctx, hash, srcDir, globalstore.Origin{
 		SourceType: origin.SourceType,
 		Source:     origin.Source,
 		SkillPath:  origin.SkillPath,
 		Version:    origin.Version,
 		Ref:        origin.Ref,
 		Commit:     origin.Commit,
-	}); err != nil {
+	})
+	if err != nil {
 		return "", err
+	}
+	if reused {
+		// Admission was satisfied by a pre-existing object: it, not the
+		// freshly fetched content, is what activation will link — so it must
+		// verify before use, or a tampered shared object would silently serve
+		// this project (FR-020/021).
+		if err := g.Verify(hash); err != nil {
+			return "", err
+		}
 	}
 	return g.gs.ContentPath(hash), nil
 }

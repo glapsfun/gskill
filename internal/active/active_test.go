@@ -3,6 +3,7 @@ package active_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/active"
@@ -260,5 +261,89 @@ func TestList_ReturnsManagedNames(t *testing.T) {
 	}
 	if len(names) != 1 || names[0] != "argocd" {
 		t.Errorf("List = %v, want [argocd]", names)
+	}
+}
+
+// TestEnsureActive_SwitchLeavesNoTempAndRepoints (spec 015 FR-010, T018):
+// switching versions re-points via a temporary sibling link plus atomic
+// rename — the new target is live afterwards and no temp artifacts remain.
+func TestEnsureActive_SwitchLeavesNoTempAndRepoints(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	storeRoot := filepath.Join(root, ".gskill", "store")
+	v1 := filepath.Join(storeRoot, "sha256", "v1", "content")
+	v2 := filepath.Join(storeRoot, "sha256", "v2", "content")
+	for _, d := range []string{v1, v2} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := active.EnsureActive(root, "gamma", v1, storeRoot); err != nil {
+		t.Fatalf("activate v1: %v", err)
+	}
+	if _, err := active.EnsureActive(root, "gamma", v2, storeRoot); err != nil {
+		t.Fatalf("switch to v2: %v", err)
+	}
+
+	target, err := os.Readlink(active.Path(root, "gamma"))
+	if err != nil {
+		t.Fatalf("readlink: %v", err)
+	}
+	if filepath.Clean(target) != filepath.Clean(v2) {
+		t.Errorf("active -> %q, want %q", target, v2)
+	}
+
+	entries, err := os.ReadDir(active.Dir(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "tmp") {
+			t.Errorf("temporary switch artifact left behind: %s", e.Name())
+		}
+	}
+}
+
+// TestEnsureActive_FailedSwitchLeavesOldLink (spec 015 FR-010, T018): when
+// the switch cannot complete (read-only active dir), the previous link is
+// untouched — the project never observes a missing or half-updated skill.
+func TestEnsureActive_FailedSwitchLeavesOldLink(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory write permissions")
+	}
+	t.Parallel()
+
+	root := t.TempDir()
+	storeRoot := filepath.Join(root, ".gskill", "store")
+	v1 := filepath.Join(storeRoot, "sha256", "v1", "content")
+	v2 := filepath.Join(storeRoot, "sha256", "v2", "content")
+	for _, d := range []string{v1, v2} {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := active.EnsureActive(root, "gamma", v1, storeRoot); err != nil {
+		t.Fatalf("activate v1: %v", err)
+	}
+
+	// Freeze the active dir: the temp-link creation must fail before the old
+	// entry is ever touched.
+	dir := active.Dir(root)
+	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // intentional non-restrictive perms for the test
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o750) }) //nolint:gosec // intentional non-restrictive perms for the test
+
+	if _, err := active.EnsureActive(root, "gamma", v2, storeRoot); err == nil {
+		t.Fatal("switch into a read-only dir should fail")
+	}
+	target, err := os.Readlink(active.Path(root, "gamma"))
+	if err != nil {
+		t.Fatalf("old link gone after failed switch: %v", err)
+	}
+	if filepath.Clean(target) != filepath.Clean(v1) {
+		t.Errorf("active -> %q after failed switch, want old %q", target, v1)
 	}
 }

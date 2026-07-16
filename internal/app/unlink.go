@@ -32,7 +32,8 @@ func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune boo
 	if _, ok := a.agents.Get(agentID); !ok {
 		return UnlinkResult{}, errs.WithHint(
 			fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, agentID),
-			"run 'gskill doctor' to list detected agents")
+			"run 'gskill doctor' to list detected agents",
+		)
 	}
 
 	out := UnlinkResult{Skill: skill, UnlinkedAgent: agentID}
@@ -55,14 +56,16 @@ func (a *App) unlinkOne(p *project, lf *skillslock.State, skill, agentID string,
 	if !inLock {
 		return errs.WithHint(
 			fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidLock, skill),
-			"run 'gskill list' to see installed skills")
+			"run 'gskill list' to see installed skills",
+		)
 	}
 
 	current := locked.Installation.Agents
 	if !contains(current, agentID) {
 		return errs.WithHint(
 			fmt.Errorf("%w: skill %q is not installed for agent %q", errs.ErrInvalidLock, skill, agentID),
-			"run 'gskill status' to see each skill's agents")
+			"run 'gskill status' to see each skill's agents",
+		)
 	}
 
 	// Remove the agent's recorded target (confined, and — for a real
@@ -108,7 +111,10 @@ func (a *App) unlinkOne(p *project, lf *skillslock.State, skill, agentID string,
 	return a.saveUnlink(p, lf, true)
 }
 
-// saveUnlink persists the lock, optionally GC'ing the store.
+// saveUnlink persists the lock, optionally GC'ing the store. The GC is
+// strictly the PROJECT-LOCAL store's: unlinking never deletes shared global
+// content, which is deletable only through `gskill store gc` (spec 015
+// FR-009/FR-024). For scope=global p.store is empty, a no-op by design.
 func (a *App) saveUnlink(p *project, lf *skillslock.State, gc bool) error {
 	if err := saveLock(p.lockPath, lf); err != nil {
 		return err
@@ -117,6 +123,9 @@ func (a *App) saveUnlink(p *project, lf *skillslock.State, gc bool) error {
 		if _, err := p.store.GC(referencedHashes(lf)); err != nil {
 			return err
 		}
+	}
+	if err := writeProjectState(p, lf); err != nil {
+		a.log.Warn("write project state", "error", err)
 	}
 	return nil
 }

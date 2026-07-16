@@ -86,7 +86,8 @@ func TestClassifyFailure_HintFromChain(t *testing.T) {
 
 	err := errs.WithHint(
 		fmt.Errorf("%w: computedHash mismatch", errs.ErrIntegrity),
-		"re-run with --force to accept the changed upstream content")
+		"re-run with --force to accept the changed upstream content",
+	)
 	f := classifyFailure(InstallPhaseVerifying, err)
 	if f.Hint != "re-run with --force to accept the changed upstream content" {
 		t.Errorf("Hint = %q, want the chain's hint", f.Hint)

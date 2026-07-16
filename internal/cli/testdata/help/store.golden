@@ -1,0 +1,28 @@
+Usage: gskill store <command> [flags]
+
+Manage the global content store.
+
+Examples:
+
+    gskill store verify
+    gskill store repair sha256:abc123…
+
+Flags:
+  -h, --help              Show context-sensitive help.
+      --json              Emit machine-readable JSON on stdout.
+      --quiet             Suppress diagnostics on stderr.
+      --no-interactive    Disable prompts and colored output.
+      --yes               Assume yes for confirmation prompts.
+      --offline           Operate without network access.
+      --no-cache          Bypass the content cache.
+      --dry-run           Report actions without applying them.
+      --config=STRING     Path to a config file.
+  -v, --verbose           Enable verbose diagnostics.
+  -C, --dir=STRING        Run as if gskill started in this directory.
+
+MORE
+  store verify
+    Verify every global store object's integrity.
+
+  store repair <hash>
+    Restore a corrupted object from its recorded origin.

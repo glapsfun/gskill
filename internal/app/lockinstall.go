@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -245,7 +246,8 @@ func checkFrozenAgents(l *skillslock.Lock, req InstallFromLockRequest) error {
 				fmt.Errorf("%w: --agent %s conflicts with the locked agents for %q:\nlocked: %s\nrequested: %s",
 					errs.ErrLockMismatch, strings.Join(requested, ","), name,
 					strings.Join(locked, ", "), strings.Join(requested, ", ")),
-				"remove --frozen-lockfile to update the agent selection")
+				"remove --frozen-lockfile to update the agent selection",
+			)
 		}
 	}
 	return nil
@@ -691,7 +693,8 @@ func (a *App) ensureLocalState(ctx context.Context, p *project, req InstallFromL
 	if req.NoInit {
 		return false, errs.WithHint(
 			fmt.Errorf("%w: project is not initialized and --no-init is set", errs.ErrInvalidLock),
-			"drop --no-init or run 'gskill init' first")
+			"drop --no-init or run 'gskill init' first",
+		)
 	}
 	if req.DryRun {
 		return true, nil
@@ -830,7 +833,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 
 	staged, err := a.stageAndVerifyLockEntry(ctx, p, lf, name, e, req, em)
 	if err != nil {
-		return fail(err)
+		return fail(enrichOfflineMiss(p, e, req, err))
 	}
 
 	if req.DryRun {
@@ -890,6 +893,28 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 	return r
 }
 
+// enrichOfflineMiss upgrades an offline source-unavailable failure with the
+// content-store facts the user needs (spec 015 FR-019, error contract
+// object-not-found-offline): the required object identity that was absent
+// from the resolved store, and the remediation.
+func enrichOfflineMiss(p *project, e skillslock.Entry, req InstallFromLockRequest, err error) error {
+	if !req.Offline || !errors.Is(err, errs.ErrSourceUnavailable) {
+		return err
+	}
+	hash := ""
+	if e.Ext != nil {
+		hash = e.Ext.StoreHash
+	}
+	if hash == "" {
+		return err
+	}
+	return errs.WithHint(
+		fmt.Errorf("%w\n  required object: %s (not available in the %s store)",
+			err, hash, p.storeScope),
+		"run without --offline to fetch it",
+	)
+}
+
 // planStagedEntry reports a staged entry's dry-run plan: would-install for a
 // fresh entry, would-update-lock for one already recorded (the run would
 // rewrite its record — agents, pins), after verifying (without deleting) that
@@ -931,7 +956,8 @@ func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req Insta
 		return fail(errs.WithHint(
 			fmt.Errorf("%w: entry has no gskill metadata; --frozen-lockfile cannot enrich the lock",
 				errs.ErrLockMismatch),
-			"run 'gskill install' without --frozen-lockfile once to record it"))
+			"run 'gskill install' without --frozen-lockfile once to record it",
+		))
 	}
 
 	explicit := req.Agents != nil
@@ -951,7 +977,8 @@ func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req Insta
 			}
 			return fail(errs.WithHint(
 				fmt.Errorf("%w: no target agents selected", errs.ErrUsage),
-				"pass --agent <id>[,<id>...] (the lock entry declares none)"))
+				"pass --agent <id>[,<id>...] (the lock entry declares none)",
+			))
 		}
 		if e.Ext == nil || len(entryAgents(e)) == 0 {
 			// Explicit empty selection, but nothing was ever installed for
@@ -1059,7 +1086,8 @@ func (a *App) retryOrRejectMismatch(ctx context.Context, inst *installer.Install
 				err: fmt.Errorf("%w: computedHash mismatch: lock records %s, source content is %s",
 					errs.ErrIntegrity, e.ComputedHash, staged.compat),
 			},
-			"re-run with --force to accept the changed upstream content")
+			"re-run with --force to accept the changed upstream content",
+		)
 	}
 	return staged, nil
 }

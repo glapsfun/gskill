@@ -26,7 +26,8 @@ const stateDirName = ".gskill"
 func errNoLock() error {
 	return errs.WithHint(
 		fmt.Errorf("%w: no %s found", errs.ErrInvalidLock, skillslock.FileName),
-		"run 'gskill add <source>' to install a first skill, or clone a project that commits one")
+		"run 'gskill add <source>' to install a first skill, or clone a project that commits one",
+	)
 }
 
 // project bundles the resolved paths and content stores for one project root.

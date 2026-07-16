@@ -43,6 +43,10 @@ var helpPages = []struct {
 	{"cache-stats", []string{"cache", "stats"}},
 	{"cache-list", []string{"cache", "list"}},
 	{"cache-clean", []string{"cache", "clean"}},
+
+	{"store", []string{"store"}},
+	{"store-verify", []string{"store", "verify"}},
+	{"store-repair", []string{"store", "repair"}},
 	{"config-path", []string{"config", "path"}},
 	{"config-list", []string{"config", "list"}},
 	{"config-get", []string{"config", "get"}},

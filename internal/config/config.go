@@ -107,6 +107,16 @@ func DefaultMap() map[string]any {
 	}
 }
 
+// Default returns the built-in defaults as a resolved Config, with no file,
+// environment, or flag layers consulted.
+func Default() *Config {
+	cfg, err := Load(Sources{Environ: []string{}})
+	if err != nil {
+		panic("config: built-in defaults failed to load: " + err.Error())
+	}
+	return cfg
+}
+
 // Load merges the configuration layers in Sources and returns the result.
 func Load(s Sources) (*Config, error) {
 	k := koanf.New(".")

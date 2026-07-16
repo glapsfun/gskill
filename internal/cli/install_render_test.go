@@ -226,6 +226,15 @@ func TestInstallRender_StoreReuseLine(t *testing.T) {
 		t.Errorf("missing store reuse line in:\n%s", text)
 	}
 
+	// A fully-reused run reports that no network was needed (US3 scenario 3).
+	allReused := app.InstallFromLockResult{Skills: []app.LockSkillResult{
+		{Name: "alpha", Status: app.LockSkillUpToDate, StoreReuse: installer.StoreReused, StoreScope: "global"},
+	}}
+	text, _ = renderResults(t, allReused, OutputOptions{})
+	if !strings.Contains(text, "network not required") {
+		t.Errorf("missing network-not-required note in:\n%s", text)
+	}
+
 	entry := lockSkillJSONEntry(res.Skills[0], false)
 	if entry["storeReuse"] != installer.StoreReused {
 		t.Errorf("json storeReuse = %v, want reused", entry["storeReuse"])

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/fsutil"
@@ -108,10 +109,36 @@ func EnsureActive(root, name, storePath string, storeRoots ...string) (string, e
 	return "", foreignErr(name, dest, "non-symlink content")
 }
 
-// create materializes the active entry as a symlink into storePath, copying where
-// symlinks are unsupported.
+// create materializes the active entry as a symlink into storePath, copying
+// where symlinks are unsupported. A symlink switch is atomic (spec 015
+// FR-010): the new link is prepared as a temporary sibling, its target
+// verified, then renamed over the entry — the project never observes a
+// missing or half-updated skill, and a failure leaves the previous entry
+// untouched.
 func create(dest, storePath, name string) (string, error) {
-	if _, err := fsutil.SymlinkOrCopy(storePath, dest); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+		return "", fmt.Errorf("activate %s: %w", name, err)
+	}
+	abs, err := filepath.Abs(storePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve store path for %s: %w", name, err)
+	}
+	tmp := fmt.Sprintf("%s..gskill-switch-%d", dest, time.Now().UnixNano())
+	if linkErr := os.Symlink(abs, tmp); linkErr != nil {
+		// Symlinks unsupported on this filesystem: copy fallback keeps the
+		// pre-existing (non-atomic) semantics.
+		if _, err := fsutil.SymlinkOrCopy(storePath, dest); err != nil {
+			return "", fmt.Errorf("activate %s: %w", name, err)
+		}
+		return dest, nil
+	}
+	// Verify the prepared link resolves before it goes live (FR-010).
+	if _, statErr := os.Stat(tmp); statErr != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("activate %s: prepared link target unreadable: %w", name, statErr)
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
 		return "", fmt.Errorf("activate %s: %w", name, err)
 	}
 	return dest, nil

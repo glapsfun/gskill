@@ -59,6 +59,13 @@ func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
 	err = a.withLock(ctx, p, func() error {
 		var rErr error
 		out, rErr = a.reconcile(ctx, p, req)
+		if rErr == nil {
+			if lf, lfErr := loadOrNewLock(p.lockPath); lfErr == nil {
+				if stErr := writeProjectState(p, lf); stErr != nil {
+					a.log.Warn("write project state", "error", stErr)
+				}
+			}
+		}
 		return rErr
 	})
 	if err != nil {
@@ -253,6 +260,8 @@ func (a *App) pruneToDesired(p *project, lf *skillslock.State) ([]string, error)
 	if err := a.keepExternalActiveContent(p, external, refs); err != nil {
 		return nil, err
 	}
+	// Project-local store GC only: pruning never deletes shared global
+	// content (spec 015 FR-009/FR-024); for scope=global p.store is empty.
 	if _, err := p.store.GC(refs); err != nil {
 		return nil, err
 	}

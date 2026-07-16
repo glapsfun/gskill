@@ -347,7 +347,8 @@ func (a *App) resolveSelection(scan discovery.Result, req AddRequest, explicitPa
 		}
 		return nil, fmt.Errorf(
 			"%w: source contains %d skills; select with --skill <name>, repeated --skill, or --skill '*'",
-			errs.ErrUsage, len(valid))
+			errs.ErrUsage, len(valid),
+		)
 	case len(invalid) > 0:
 		return nil, fmt.Errorf("%w: skill %q is invalid: %s",
 			errs.ErrInvalidLock, invalid[0].ID, firstProblem(invalid[0]))
@@ -487,7 +488,8 @@ func (a *App) planAdd(lf *skillslock.State, external map[string]bool, id string,
 	if !exists && external[id] {
 		return addPlan{}, &ConflictError{Skill: id, Kind: ConflictCrossSource, err: fmt.Errorf(
 			"%w: skill %q is already declared in %s by another tool; run 'gskill install' to adopt that entry, or use a different name",
-			errs.ErrInvalidLock, id, skillslock.FileName)}
+			errs.ErrInvalidLock, id, skillslock.FileName,
+		)}
 	}
 	if !exists || req.Force {
 		ags, err := a.agentsByID(reqIDs)
@@ -497,7 +499,8 @@ func (a *App) planAdd(lf *skillslock.State, external map[string]bool, id string,
 	if existing.Source.Original != req.Source {
 		return addPlan{}, &ConflictError{Skill: id, Kind: ConflictCrossSource, err: fmt.Errorf(
 			"%w: skill %q is already declared from a different source %q (name collision); use a different name or 'gskill remove %s' first",
-			errs.ErrInvalidLock, id, existing.Source.Original, id)}
+			errs.ErrInvalidLock, id, existing.Source.Original, id,
+		)}
 	}
 
 	current := existing.Installation.Agents
@@ -517,7 +520,8 @@ func (a *App) planAdd(lf *skillslock.State, external map[string]bool, id string,
 func conflictErr(id string) error {
 	return &ConflictError{Skill: id, Kind: ConflictNoopReadd, err: fmt.Errorf(
 		"%w: skill %q already declared; use 'gskill update %s' or --force",
-		errs.ErrInvalidLock, id, id)}
+		errs.ErrInvalidLock, id, id,
+	)}
 }
 
 // mergeAgentInstall folds an agent-add install result into an existing lock
@@ -685,7 +689,8 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 	// Backfill the tracking intent before building the lock entry, so the
 	// record's `requested` stays satisfied on the next run.
 	rq := backfillRequested(
-		skillslock.Requested{Version: in.Version, Ref: in.Ref, Commit: in.Commit}, rev)
+		skillslock.Requested{Version: in.Version, Ref: in.Ref, Commit: in.Commit}, rev,
+	)
 
 	ireq := a.installRequest(p.root, ref, rev, agents, cmp.Or(in.Scope, req.Scope), modeOr(req.Mode, in.Mode))
 	ireq.Name = name
@@ -718,7 +723,8 @@ func (a *App) agentsByID(ids []string) ([]agent.Agent, error) {
 		if !ok {
 			return nil, errs.WithHint(
 				fmt.Errorf("%w: locked agent %q is not available", errs.ErrUnsupportedAgent, id),
-				"run 'gskill doctor' to list detected agents")
+				"run 'gskill doctor' to list detected agents",
+			)
 		}
 		out = append(out, ag)
 	}
@@ -739,7 +745,8 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 			if !ok {
 				return nil, errs.WithHint(
 					fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, id),
-					"run 'gskill doctor' to list detected agents")
+					"run 'gskill doctor' to list detected agents",
+				)
 			}
 			out = append(out, ag)
 		}
@@ -766,7 +773,8 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 	return nil, errs.WithHint(
 		fmt.Errorf("%w: no target agent specified and none detected (known: %s)",
 			errs.ErrUnsupportedAgent, strings.Join(known, ", ")),
-		"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing")
+		"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing",
+	)
 }
 
 // installRequest assembles an installer.Request with shared defaults.
@@ -835,7 +843,8 @@ func recordAdd(lf *skillslock.State, req AddRequest, s discovery.DiscoveredSkill
 		return nil
 	}
 	rq := backfillRequested(
-		skillslock.Requested{Version: req.Version, Ref: req.Ref, Commit: req.Commit}, rev)
+		skillslock.Requested{Version: req.Version, Ref: req.Ref, Commit: req.Commit}, rev,
+	)
 	locked, err := buildLockEntry(ref, rev, ireq, result, rq)
 	if err != nil {
 		return err

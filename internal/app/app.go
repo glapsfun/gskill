@@ -48,7 +48,10 @@ type Options struct {
 func New(opts Options) *App {
 	cfg := opts.Config
 	if cfg == nil {
-		cfg = &config.Config{}
+		// Built-in defaults, not a zero value: zero-valued fields (e.g.
+		// StoreVerifyOnUse=false, StoreLockTimeout=0) would silently disable
+		// documented safety behavior.
+		cfg = config.Default()
 	}
 	logger := opts.Logger
 	if logger == nil {

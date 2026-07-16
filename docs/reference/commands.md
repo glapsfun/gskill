@@ -287,6 +287,25 @@ List all skills discovered in a source.
 | `--ref` | string | Branch or tag to scan. |
 
 
+## `store`
+
+Manage the global content store.
+
+
+## `store repair`
+
+Restore a corrupted object from its recorded origin.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `hash` | yes | Content key of the object to repair (sha256:<hex>). |
+
+
+## `store verify`
+
+Verify every global store object's integrity.
+
+
 ## `unlink`
 
 Detach one agent from a skill (--prune removes it when the last agent goes).

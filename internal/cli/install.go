@@ -484,7 +484,7 @@ func storeReuseLine(skills []app.LockSkillResult) string {
 	}
 	switch {
 	case downloaded == 0:
-		return fmt.Sprintf("%s: %d reused, no downloads", label, reused)
+		return fmt.Sprintf("%s: %d reused, no downloads (network not required)", label, reused)
 	case reused == 0:
 		return fmt.Sprintf("%s: %d downloaded", label, downloaded)
 	default:

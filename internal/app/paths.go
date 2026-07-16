@@ -84,7 +84,8 @@ func (a *App) checkSafeTargetRemoval(p *project, scope, agentID, name, recorded,
 			return "", false, errs.WithHint(
 				fmt.Errorf("%w: %s target for skill %q is not gskill-managed content (modified since install)",
 					errs.ErrInvalidLock, agentID, name),
-				"the content differs from what gskill installed; resolve it manually before narrowing this skill's agents")
+				"the content differs from what gskill installed; resolve it manually before narrowing this skill's agents",
+			)
 		}
 	case statErr != nil && !os.IsNotExist(statErr):
 		// A target that genuinely doesn't exist needs no check, but any other

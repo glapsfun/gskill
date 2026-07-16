@@ -206,9 +206,16 @@ func originFrom(req Request) ObjectOrigin {
 	if ref == "" {
 		ref = req.Revision.Branch
 	}
+	src := req.Ref.URL
+	if src == "" {
+		src = req.Ref.LocalPath
+	}
+	if src == "" {
+		src = req.Ref.Display()
+	}
 	return ObjectOrigin{
 		SourceType: string(req.Ref.Type),
-		Source:     req.Ref.Display(),
+		Source:     src,
 		SkillPath:  req.Path,
 		Version:    req.Revision.Version,
 		Ref:        ref,

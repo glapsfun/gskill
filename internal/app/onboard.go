@@ -207,7 +207,8 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 				// not the lockfile's "locked agent" message (review finding).
 				return nil, errs.WithHint(
 					fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, id),
-					"run 'gskill doctor' to list detected agents")
+					"run 'gskill doctor' to list detected agents",
+				)
 			}
 			pre = append(pre, ag)
 		}
@@ -223,7 +224,8 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 			return nil, errs.WithHint(
 				fmt.Errorf("%w: no target agent specified and none detected (known: %s)",
 					errs.ErrUnsupportedAgent, strings.Join(known, ", ")),
-				"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing")
+				"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing",
+			)
 		}
 		pre = []agent.Agent{def}
 	}

@@ -67,6 +67,9 @@ MORE
   doctor [flags]
     Check the environment and declared requirements.
 
+  store <command> [flags]
+    Manage the global content store.
+
   dashboard (tui) [flags]
     Launch the interactive dashboard.
 
