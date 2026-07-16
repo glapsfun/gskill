@@ -73,3 +73,27 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 		}
 	}
 }
+
+// TestGitignore_CoversProjectState (spec 015 FR-014, T054): the managed
+// .gskill/ ignore block covers the machine-local state.json, so it can never
+// be committed.
+func TestGitignore_CoversProjectState(t *testing.T) {
+	t.Parallel()
+	repo, ha, hb := lockRepo(t)
+	root := t.TempDir()
+	writeLockOnly(t, root, repo, ha, hb)
+	if _, err := runLockInstall(t, root); err != nil {
+		t.Fatal(err)
+	}
+
+	gi, err := os.ReadFile(filepath.Join(root, ".gitignore")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf(".gitignore missing after install: %v", err)
+	}
+	if !strings.Contains(string(gi), ".gskill/") {
+		t.Fatalf(".gitignore lacks the .gskill/ entry that covers state.json:\n%s", gi)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".gskill", "state.json")); err != nil {
+		t.Fatalf("state.json not written: %v", err)
+	}
+}

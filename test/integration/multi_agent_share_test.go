@@ -8,10 +8,30 @@ import (
 )
 
 // countStoreEntries returns the number of content-addressed store entries
-// (.gskill/store/<algo>/<hash>).
+// serving proj: the legacy project-local store plus the test's private
+// global store (spec 015 — content lives globally for new projects).
 func countStoreEntries(t *testing.T, proj string) int {
 	t.Helper()
-	base := filepath.Join(proj, ".gskill", "store")
+	n := countStoreDir(t, filepath.Join(proj, ".gskill", "store"))
+	if home, ok := testHomeOf(t); ok {
+		n += countStoreDir(t, filepath.Join(home, "store"))
+	}
+	return n
+}
+
+// testHomeOf reports the calling test's private gskill home, if an App was
+// created.
+func testHomeOf(t *testing.T) (string, bool) {
+	t.Helper()
+	if _, ok := testApps.Load(t.Name()); !ok {
+		return "", false
+	}
+	return newApp(t).GskillHome(), true
+}
+
+// countStoreDir counts <base>/<algo>/<hash> entries.
+func countStoreDir(t *testing.T, base string) int {
+	t.Helper()
 	algos, err := os.ReadDir(base)
 	if err != nil {
 		if os.IsNotExist(err) {

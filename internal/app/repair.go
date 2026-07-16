@@ -35,7 +35,7 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 		if err != nil {
 			return err
 		}
-		storeRoot, err := filepath.Abs(p.store.Root())
+		storeRoot, err := filepath.Abs(p.contentRoot())
 		if err != nil {
 			return fmt.Errorf("resolve store root: %w", err)
 		}

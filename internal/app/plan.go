@@ -223,7 +223,10 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 // check) do not pay for a second registry-wide detection pass (review
 // finding). agents == nil resolves here.
 func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents []agent.Agent) (InstallPlan, error) {
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return InstallPlan{}, err
+	}
 
 	plan := InstallPlan{
 		Root:            req.Root,

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/glapsfun/gskill/internal/fsutil"
 )
 
 // GCOptions configures a garbage-collection run (FR-024/025).
@@ -99,6 +101,14 @@ func (s *Store) GC(ctx context.Context, opts GCOptions) (GCReport, error) {
 		rep.Deleted = append(rep.Deleted, c.Key)
 		rep.ReclaimableBytes += c.SizeBytes
 		_ = s.Unpin(c.Key) // clear any stale pin marker bookkeeping
+	}
+
+	// Sweep abandoned staging left by interrupted admissions (FR-032). An
+	// hour is far past any live admission; in-flight staging is younger.
+	if stale, err := fsutil.ListStaleDirs(s.home.TmpDir(), time.Hour); err == nil {
+		for _, dir := range stale {
+			_ = os.RemoveAll(dir)
+		}
 	}
 	return rep, nil
 }

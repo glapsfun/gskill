@@ -78,6 +78,10 @@ func New(opts Options) *App {
 // Config returns the resolved configuration.
 func (a *App) Config() *config.Config { return a.cfg }
 
+// GskillHome returns the App-level home override ("" when the environment
+// resolution applies). Tests use it to locate their private store.
+func (a *App) GskillHome() string { return a.gskillHome }
+
 // Logger returns the structured logger.
 func (a *App) Logger() *slog.Logger { return a.log }
 

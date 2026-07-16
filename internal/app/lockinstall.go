@@ -605,6 +605,13 @@ func (a *App) runOneLockEntry(ctx context.Context, p *project, lf *skillslock.St
 	if r.ResolvedRef == "" {
 		r.ResolvedRef = em.resolvedRef
 	}
+	// Structured decision log (spec 015 FR-041): reuse-vs-fetch, store scope,
+	// and identity facts; privacy-sensitive paths are not included here.
+	a.log.Debug("lock entry processed",
+		"skill", name, "status", r.Status,
+		"storeReuse", r.StoreReuse, "storeScope", r.StoreScope,
+		"commit", r.Commit, "hash", r.ComputedHash)
+
 	switch {
 	case r.Err != nil:
 		if r.Phase == "" {

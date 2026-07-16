@@ -337,6 +337,10 @@ func (a *App) StoreGC(ctx context.Context, apply bool, olderThan time.Duration) 
 	if err != nil {
 		return StoreGCReport{}, err
 	}
+	a.log.Info("store gc",
+		"applied", apply, "candidates", len(rep.Candidates),
+		"deleted", len(rep.Deleted), "skipped", len(rep.Skipped),
+		"reclaimableBytes", rep.ReclaimableBytes, "degraded", rep.Degraded)
 	return StoreGCReport{Applied: apply, GCReport: rep}, nil
 }
 

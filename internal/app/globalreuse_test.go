@@ -260,18 +260,18 @@ func assertCopyModeState(t *testing.T, root string) {
 	}
 }
 
-// assertDriftRepairedFromStore drifts the project copy, syncs, and checks the
-// copy was restored while the store object stayed byte-identical (FR-013).
-// Drift repair is the reconcile paths' contract (sync/repair), not the
-// install fast path's, which only relinks missing targets.
+// assertDriftRepairedFromStore drifts the project copy, runs repair, and
+// checks the copy was restored while the store object stayed byte-identical
+// (FR-013). Content-drift repair is `gskill repair`'s contract (it verifies
+// hashes); the install fast path only relinks missing targets.
 func assertDriftRepairedFromStore(t *testing.T, a *app.App, root, h, target string) {
 	t.Helper()
 	objects := listStoreObjects(t, h)
 	if err := os.WriteFile(filepath.Join(target, "SKILL.md"), []byte("# drifted\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Sync(context.Background(), app.SyncRequest{Root: root, Offline: true}); err != nil {
-		t.Fatalf("sync over drifted copy: %v", err)
+	if _, err := a.Repair(context.Background(), root); err != nil {
+		t.Fatalf("repair over drifted copy: %v", err)
 	}
 	restored, err := os.ReadFile(filepath.Join(target, "SKILL.md")) //nolint:gosec // test-controlled temp path
 	if err != nil {

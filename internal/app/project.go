@@ -1,6 +1,8 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -146,6 +148,27 @@ func (a *App) installerFor(p *project) *installer.Installer {
 		return installer.NewWithStore(a.git, p.cache, newGlobalContentStore(p.global, a.cfg))
 	}
 	return installer.New(a.git, p.cache, p.store)
+}
+
+// mutateLockPath returns the project's exclusive mutate-lock file. Project
+// scope keeps the legacy in-repo lock; global scope derives a per-project
+// name inside the shared home locks dir (project-<id>.lock, spec 015
+// FR-030) — a fixed name there would serialize every project on the machine.
+func (p *project) mutateLockPath() string {
+	if p.storeScope != config.StoreScopeGlobal {
+		return filepath.Join(p.locksDir, "mutate.lock")
+	}
+	sum := sha256.Sum256([]byte(p.root))
+	return filepath.Join(p.locksDir, "project-"+hex.EncodeToString(sum[:8])+".lock")
+}
+
+// contentRoot returns the resolved content-store root for health and
+// ownership checks.
+func (p *project) contentRoot() string {
+	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
+		return p.global.Root()
+	}
+	return p.store.Root()
 }
 
 // contentHas reports whether the project's resolved content store holds hash.

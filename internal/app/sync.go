@@ -166,7 +166,7 @@ func (a *App) reconcileSkill(ctx context.Context, p *project, lf *skillslock.Sta
 // reconcileNeeded reports whether the chain for the desired agents is anything
 // other than fully healthy (cheap, no hashing).
 func (a *App) reconcileNeeded(p *project, name string, locked skillslock.Record, desiredIDs []string) (bool, error) {
-	storeRoot, err := filepath.Abs(p.store.Root())
+	storeRoot, err := filepath.Abs(p.contentRoot())
 	if err != nil {
 		return true, fmt.Errorf("resolve store root: %w", err)
 	}
@@ -392,7 +392,7 @@ func (a *App) keepExternalActiveContent(p *project, external, refs map[string]bo
 	if len(external) == 0 {
 		return nil
 	}
-	storeRoot, err := filepath.Abs(p.store.Root())
+	storeRoot, err := filepath.Abs(p.contentRoot())
 	if err != nil {
 		return err
 	}
@@ -416,9 +416,16 @@ func (a *App) keepExternalActiveContent(p *project, external, refs map[string]bo
 
 // managedRoots returns the absolute roots a gskill-managed target may link into.
 func (a *App) managedRoots(p *project) []string {
-	storeRoot, _ := filepath.Abs(p.store.Root())
 	activeRoot, _ := filepath.Abs(active.Dir(p.root))
-	return []string{activeRoot, storeRoot}
+	// Both store roots are gskill-owned link targets: the resolved scope's
+	// root plus the legacy project-local root, so links created before or
+	// after a store-scope transition are both recognized (spec 015 FR-011).
+	legacyRoot, _ := filepath.Abs(filepath.Join(p.root, stateDirName, "store"))
+	roots := []string{activeRoot, legacyRoot}
+	if resolved, err := filepath.Abs(p.contentRoot()); err == nil && resolved != legacyRoot {
+		roots = append(roots, resolved)
+	}
+	return roots
 }
 
 // managedBySymlink reports whether path is a symlink that resolves into one of

@@ -792,12 +792,14 @@ func (a *App) installRequest(root string, ref source.Ref, rev resolver.Revision,
 	}
 }
 
-// withLock runs fn while holding the project's exclusive mutate lock (FR-021).
+// withLock runs fn while holding the project's exclusive mutate lock
+// (FR-021, spec 015 FR-030): it covers the project-active links, agent
+// links, machine-local state, and lockfile updates of exactly one project.
 func (a *App) withLock(ctx context.Context, p *project, fn func() error) error {
 	if err := os.MkdirAll(p.locksDir, 0o750); err != nil {
 		return fmt.Errorf("create locks dir: %w", err)
 	}
-	lock, err := fsutil.Acquire(ctx, filepath.Join(p.locksDir, "mutate.lock"), fsutil.LockExclusive, defaultLockTimeout)
+	lock, err := fsutil.Acquire(ctx, p.mutateLockPath(), fsutil.LockExclusive, defaultLockTimeout)
 	if err != nil {
 		return err
 	}

@@ -75,6 +75,10 @@ func (a *App) MigrateGlobalStore(ctx context.Context, root string, dryRun bool) 
 		}
 		rep.Plan = res.Plan
 		rep.Result = res
+		a.log.Info("migrate global-store",
+			"localObjects", res.LocalObjects, "admitted", res.AdmittedObjects,
+			"relinked", len(res.Relinked), "corrupt", len(res.Corrupt),
+			"localStoreRemoved", res.LocalStoreRemoved)
 
 		if res.LocalStoreRemoved {
 			// The project now serves from the global store: record it in the

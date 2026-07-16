@@ -101,7 +101,10 @@ func (a *App) DiscoverSource(ctx context.Context, req DiscoverRequest) (Discover
 		return DiscoverResult{}, err
 	}
 
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return DiscoverResult{}, err
+	}
 	ireq := a.installRequest(req.Root, ref, rev, nil, req.Scope, req.Mode)
 	inst := a.installerForScope(p, string(ireq.Scope))
 	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{
@@ -291,7 +294,10 @@ func (a *App) ExecutePlan(ctx context.Context, plan InstallPlan, progress func(I
 		return AddResult{}, fmt.Errorf("%w: no skill selected", errs.ErrUsage)
 	}
 
-	p := openProject(plan.Root)
+	p, err := a.openProjectScoped(plan.Root)
+	if err != nil {
+		return AddResult{}, err
+	}
 	if plan.InitProject {
 		if _, err := a.Init(ctx, plan.Root, false); err != nil {
 			return AddResult{}, err
