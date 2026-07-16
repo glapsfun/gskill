@@ -1,0 +1,26 @@
+Usage: gskill store gc [flags]
+
+Report (default) or delete unused store objects.
+
+Examples:
+
+    gskill store gc
+    gskill store gc --apply
+    gskill store gc --apply --older-than 90d
+
+Flags:
+  -h, --help                 Show context-sensitive help.
+      --json                 Emit machine-readable JSON on stdout.
+      --quiet                Suppress diagnostics on stderr.
+      --no-interactive       Disable prompts and colored output.
+      --yes                  Assume yes for confirmation prompts.
+      --offline              Operate without network access.
+      --no-cache             Bypass the content cache.
+      --dry-run              Report actions without applying them.
+      --config=STRING        Path to a config file.
+  -v, --verbose              Enable verbose diagnostics.
+  -C, --dir=STRING           Run as if gskill started in this directory.
+
+      --apply                Delete the unused objects (default is a dry-run
+                             report).
+      --older-than=STRING    Override the grace period for this run (e.g. 90d).

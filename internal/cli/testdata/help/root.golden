@@ -73,6 +73,9 @@ MORE
   migrate <command> [flags]
     Migrate this project to the shared global store.
 
+  projects <command> [flags]
+    Inspect the advisory project registry.
+
   dashboard (tui) [flags]
     Launch the interactive dashboard.
 

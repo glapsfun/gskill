@@ -1,0 +1,34 @@
+Usage: gskill projects <command> [flags]
+
+Inspect the advisory project registry.
+
+Examples:
+
+    gskill projects list
+    gskill projects prune
+
+Flags:
+  -h, --help              Show context-sensitive help.
+      --json              Emit machine-readable JSON on stdout.
+      --quiet             Suppress diagnostics on stderr.
+      --no-interactive    Disable prompts and colored output.
+      --yes               Assume yes for confirmation prompts.
+      --offline           Operate without network access.
+      --no-cache          Bypass the content cache.
+      --dry-run           Report actions without applying them.
+      --config=STRING     Path to a config file.
+  -v, --verbose           Enable verbose diagnostics.
+  -C, --dir=STRING        Run as if gskill started in this directory.
+
+MORE
+  projects list
+    List projects known to use the global store.
+
+  projects inspect <project-id>
+    Show one registered project's details.
+
+  projects prune
+    Drop registry entries for projects that no longer exist.
+
+  projects refresh
+    Re-derive every registry entry from its project.

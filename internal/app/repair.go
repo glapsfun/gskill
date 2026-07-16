@@ -62,6 +62,10 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 			}
 			out.Repaired = append(out.Repaired, name)
 		}
+		if stErr := writeProjectState(p, lf); stErr != nil {
+			a.log.Warn("write project state", "error", stErr)
+		}
+		a.registerProject(ctx, p, lf)
 		return nil
 	})
 	if err != nil {

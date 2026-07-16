@@ -165,7 +165,7 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 		if err != nil {
 			return err
 		}
-		return a.finishLockRun(p, lf, req, &res)
+		return a.finishLockRun(ctx, p, lf, req, &res)
 	})
 	return res, installErr
 }
@@ -173,7 +173,7 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 // finishLockRun applies the post-install run steps: pruning when requested,
 // and the machine-local state.json bookkeeping (never required for
 // reproduction — FR-014/FR-015 — so its failure warns rather than fails).
-func (a *App) finishLockRun(p *project, lf *skillslock.State, req InstallFromLockRequest, res *InstallFromLockResult) error {
+func (a *App) finishLockRun(ctx context.Context, p *project, lf *skillslock.State, req InstallFromLockRequest, res *InstallFromLockResult) error {
 	if req.Prune && !req.DryRun && !req.Frozen {
 		pruned, pErr := a.pruneToDesired(p, lf)
 		if pErr != nil {
@@ -186,6 +186,7 @@ func (a *App) finishLockRun(p *project, lf *skillslock.State, req InstallFromLoc
 		if stErr := writeProjectState(p, lf); stErr != nil {
 			a.log.Warn("write project state", "error", stErr)
 		}
+		a.registerProject(ctx, p, lf)
 	}
 	return nil
 }

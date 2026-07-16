@@ -64,6 +64,7 @@ func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
 				if stErr := writeProjectState(p, lf); stErr != nil {
 					a.log.Warn("write project state", "error", stErr)
 				}
+				a.registerProject(ctx, p, lf)
 			}
 		}
 		return rErr

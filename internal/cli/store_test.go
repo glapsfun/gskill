@@ -166,3 +166,91 @@ func TestStoreVerify_SanitizesUntrustedStrings(t *testing.T) {
 		t.Error("raw escape sequence leaked into store verify output")
 	}
 }
+
+// TestStoreList_JSONShapeAndSanitize (contracts §2, FR-034).
+func TestStoreList_JSONShapeAndSanitize(t *testing.T) {
+	t.Parallel()
+
+	homeDir, healthy, _ := storeFixture(t)
+	// Hostile origin skill path on the healthy object.
+	h := home.New(homeDir)
+	s := globalstore.New(h)
+	meta, err := globalstore.ReadMetadata(s.MetadataPath(healthy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta.Origins = globalstore.MergeOrigins(meta.Origins, globalstore.Origin{
+		SkillPath: "skills/evil\x1b[2Jname", Version: "1.0.0", Commit: "x",
+	})
+	if err := globalstore.WriteMetadata(s.MetadataPath(healthy), meta); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, code := runStore(t, homeDir, "store", "list")
+	if code != 0 {
+		t.Fatalf("store list exit = %d", code)
+	}
+	if strings.Contains(stdout, "\x1b[2J") {
+		t.Error("raw escape sequence leaked into store list output")
+	}
+
+	jsonOut, _, _ := runStore(t, homeDir, "store", "list", "--json")
+	var doc struct {
+		Objects []struct {
+			Hash      string `json:"hash"`
+			SizeBytes int64  `json:"sizeBytes"`
+		} `json:"objects"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatalf("list --json: %v\n%s", err, jsonOut)
+	}
+	if len(doc.Objects) != 2 {
+		t.Errorf("objects = %+v, want 2", doc.Objects)
+	}
+}
+
+// TestStoreGC_DryRunByDefault (FR-025): without --apply nothing is deleted
+// and the hint points at --apply.
+func TestStoreGC_DryRunByDefault(t *testing.T) {
+	t.Parallel()
+
+	homeDir, healthy, corrupted := storeFixture(t)
+	stdout, _, code := runStore(t, homeDir, "store", "gc", "--older-than", "0d")
+	if code != 0 {
+		t.Fatalf("gc dry-run exit = %d\n%s", code, stdout)
+	}
+	// Nothing deleted: both objects still present (the corrupted one has
+	// invalid content but valid metadata, so it may be a candidate — either
+	// way, a dry run removes nothing).
+	h := home.New(homeDir)
+	s := globalstore.New(h)
+	for _, key := range []string{healthy, corrupted} {
+		if !s.Has(key) {
+			t.Errorf("dry-run gc removed %s", key)
+		}
+	}
+	if !strings.Contains(stdout, "--apply") {
+		t.Errorf("dry-run output has no --apply hint:\n%s", stdout)
+	}
+}
+
+// TestStorePins_RoundTripCLI (FR-026).
+func TestStorePins_RoundTripCLI(t *testing.T) {
+	t.Parallel()
+
+	homeDir, healthy, _ := storeFixture(t)
+	if _, stderr, code := runStore(t, homeDir, "store", "pin", healthy); code != 0 {
+		t.Fatalf("pin: %s", stderr)
+	}
+	stdout, _, _ := runStore(t, homeDir, "store", "pins")
+	if !strings.Contains(stdout, healthy) {
+		t.Errorf("pins output missing %s:\n%s", healthy, stdout)
+	}
+	if _, stderr, code := runStore(t, homeDir, "store", "unpin", healthy); code != 0 {
+		t.Fatalf("unpin: %s", stderr)
+	}
+	stdout, _, _ = runStore(t, homeDir, "store", "pins")
+	if strings.Contains(stdout, healthy) {
+		t.Errorf("pins output still lists %s after unpin", healthy)
+	}
+}

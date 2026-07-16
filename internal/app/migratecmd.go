@@ -78,13 +78,14 @@ func (a *App) MigrateGlobalStore(ctx context.Context, root string, dryRun bool) 
 
 		if res.LocalStoreRemoved {
 			// The project now serves from the global store: record it in the
-			// machine-local state (FR-014).
+			// machine-local state and the advisory registry (FR-014, FR-027).
 			gp := *p
 			gp.storeScope = config.StoreScopeGlobal
 			gp.global = gs
 			if stErr := writeProjectState(&gp, lf); stErr != nil {
 				a.log.Warn("write project state", "error", stErr)
 			}
+			a.registerProject(ctx, &gp, lf)
 		}
 		return nil
 	})
