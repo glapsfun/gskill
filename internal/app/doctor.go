@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -45,6 +46,11 @@ func (a *App) Doctor(ctx context.Context, root string) (DoctorReport, error) {
 	}
 	for _, ag := range detected {
 		report.DetectedAgents = append(report.DetectedAgents, ag.ID())
+	}
+
+	if hasPopulatedProjectStore(root) && a.cfg.StoreScope != config.StoreScopeProject {
+		report.Warnings = append(report.Warnings,
+			"this project uses the legacy project-local store; run 'gskill migrate global-store' to share content across projects")
 	}
 
 	lf, err := loadOrNewLock(openProject(root).lockPath)

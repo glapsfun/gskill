@@ -44,6 +44,8 @@ var helpPages = []struct {
 	{"cache-list", []string{"cache", "list"}},
 	{"cache-clean", []string{"cache", "clean"}},
 
+	{"migrate", []string{"migrate"}},
+	{"migrate-global-store", []string{"migrate", "global-store"}},
 	{"store", []string{"store"}},
 	{"store-verify", []string{"store", "verify"}},
 	{"store-repair", []string{"store", "repair"}},

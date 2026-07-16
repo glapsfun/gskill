@@ -158,6 +158,16 @@ Install all declared skills (additive, idempotent).
 List installed skills, their status, and per-agent health.
 
 
+## `migrate`
+
+Migrate this project to the shared global store.
+
+
+## `migrate global-store`
+
+Move this project's skill content into the shared global store.
+
+
 ## `onboard`
 
 Guided skill installation without a predefined source.

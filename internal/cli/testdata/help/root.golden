@@ -70,6 +70,9 @@ MORE
   store <command> [flags]
     Manage the global content store.
 
+  migrate <command> [flags]
+    Migrate this project to the shared global store.
+
   dashboard (tui) [flags]
     Launch the interactive dashboard.
 
