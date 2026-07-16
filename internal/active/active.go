@@ -58,7 +58,7 @@ func Rel(name string) string {
 // content update. It NEVER destroys foreign content: a symlink resolving outside
 // storeRoot, or a real directory whose content does not match the store, fails
 // closed and is left intact (FR-029/FR-030).
-func EnsureActive(root, name, storePath, storeRoot string) (string, error) {
+func EnsureActive(root, name, storePath string, storeRoots ...string) (string, error) {
 	dest := Path(root, name)
 	info, err := os.Lstat(dest)
 	if err != nil {
@@ -77,14 +77,19 @@ func EnsureActive(root, name, storePath, storeRoot string) (string, error) {
 		if aErr != nil {
 			return "", fmt.Errorf("resolve store path: %w", aErr)
 		}
-		switch {
-		case filepath.Clean(target) == filepath.Clean(want):
+		if filepath.Clean(target) == filepath.Clean(want) {
 			return dest, nil // idempotent
-		case underRoot(target, storeRoot):
-			return create(dest, storePath, name) // stale managed symlink → re-point
-		default:
-			return "", foreignErr(name, dest, target)
 		}
+		// A symlink into any gskill store root — the current one, or the
+		// legacy/global root a scope transition left behind (spec 015) — is a
+		// stale managed link and re-points; anything else is foreign and
+		// fails closed.
+		for _, storeRoot := range storeRoots {
+			if underRoot(target, storeRoot) {
+				return create(dest, storePath, name)
+			}
+		}
+		return "", foreignErr(name, dest, target)
 	}
 
 	// A real directory: managed copy (or identical content) iff its content

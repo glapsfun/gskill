@@ -3,6 +3,8 @@ package app_test
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/integrity"
@@ -24,6 +27,17 @@ const testAgent = "claude"
 
 // lockApp is the lock-install tests' name for the shared test App constructor.
 func lockApp() *app.App { return onboardApp() }
+
+// lockAppWithHome builds a test App with a private, empty gskill home —
+// simulating a fresh machine whose global store holds nothing.
+func lockAppWithHome(t *testing.T) *app.App {
+	t.Helper()
+	return app.New(app.Options{
+		Agents:     agent.NewDefaultRegistry(),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		GskillHome: filepath.Join(t.TempDir(), "gskill-home"),
+	})
+}
 
 func runLockInstall(t *testing.T, root string) (app.InstallFromLockResult, error) {
 	t.Helper()
@@ -552,7 +566,8 @@ func TestInstallFromLock_OfflineRestoresFromStore(t *testing.T) {
 	assertAgentTargets(t, root, "alpha", "beta")
 }
 
-// TestInstallFromLock_OfflineEmptyStoreFails (US5): nothing cached and no
+// TestInstallFromLock_OfflineEmptyStoreFails (US5): nothing cached, nothing
+// in any store (a private gskill home simulates a fresh machine), and no
 // network allowed → clear failure.
 func TestInstallFromLock_OfflineEmptyStoreFails(t *testing.T) {
 	t.Parallel()
@@ -560,7 +575,7 @@ func TestInstallFromLock_OfflineEmptyStoreFails(t *testing.T) {
 	root := t.TempDir()
 	writeLockOnly(t, root, repo, ha, hb)
 
-	_, err := lockApp().InstallFromLock(context.Background(), app.InstallFromLockRequest{
+	_, err := lockAppWithHome(t).InstallFromLock(context.Background(), app.InstallFromLockRequest{
 		Root: root, Agents: []string{testAgent}, Offline: true,
 	})
 	if err == nil {
@@ -922,8 +937,12 @@ func TestInstallFromLock_ExplicitEmptyAgentsRemovesEverythingButRetainsRecord(t 
 		}
 		assertNoAgentTargets(t, root, name, "."+testAgent, ".codex", ".cursor")
 	}
+	// Canonical content is retained in whichever store served the project:
+	// the legacy project-local store, or the global store (spec 015 — a
+	// narrow-to-zero never deletes shared global content, FR-009/FR-024).
 	storeEntries, _ := os.ReadDir(filepath.Join(root, ".gskill", "store"))
-	if len(storeEntries) == 0 {
+	globalEntries, _ := os.ReadDir(filepath.Join(os.Getenv("GSKILL_HOME"), "store", "sha256"))
+	if len(storeEntries) == 0 && len(globalEntries) == 0 {
 		t.Error("store appears empty after narrowing to zero agents — canonical content should be retained")
 	}
 }

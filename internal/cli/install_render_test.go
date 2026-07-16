@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/testutil"
 )
 
@@ -208,5 +209,41 @@ func TestInstallRender_SanitizesUntrustedText(t *testing.T) {
 		if strings.Contains(s, "\x1b") || strings.Contains(s, "\x07") {
 			t.Errorf("escape bytes leaked into plain output:\n%q", s)
 		}
+	}
+}
+
+// TestInstallRender_StoreReuseLine (spec 015 FR-007): the run summary reports
+// how many skills the content store served versus fetched, and the per-skill
+// JSON entries carry storeReuse/storeScope.
+func TestInstallRender_StoreReuseLine(t *testing.T) {
+	t.Parallel()
+	res := app.InstallFromLockResult{Skills: []app.LockSkillResult{
+		{Name: "alpha", Status: app.LockSkillUpToDate, StoreReuse: installer.StoreReused, StoreScope: "global"},
+		{Name: "beta", Status: app.LockSkillInstalled, StoreReuse: installer.StoreDownloaded, StoreScope: "global"},
+	}}
+	text, _ := renderResults(t, res, OutputOptions{})
+	if !strings.Contains(text, "global store: 1 reused, 1 downloaded") {
+		t.Errorf("missing store reuse line in:\n%s", text)
+	}
+
+	entry := lockSkillJSONEntry(res.Skills[0], false)
+	if entry["storeReuse"] != installer.StoreReused {
+		t.Errorf("json storeReuse = %v, want reused", entry["storeReuse"])
+	}
+	if entry["storeScope"] != "global" {
+		t.Errorf("json storeScope = %v, want global", entry["storeScope"])
+	}
+}
+
+// TestInstallRender_NoStoreLineWhenNothingReachedTheStore: failures/plans
+// carry no store decision, so no line renders.
+func TestInstallRender_NoStoreLineWhenNothingReachedTheStore(t *testing.T) {
+	t.Parallel()
+	res := app.InstallFromLockResult{Skills: []app.LockSkillResult{
+		{Name: "alpha", Status: app.LockSkillPlanned},
+	}}
+	text, _ := renderResults(t, res, OutputOptions{})
+	if strings.Contains(text, "store:") {
+		t.Errorf("unexpected store line in:\n%s", text)
 	}
 }

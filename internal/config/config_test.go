@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glapsfun/gskill/internal/config"
 )
@@ -192,5 +193,160 @@ func TestLoad_RepositoriesDefaultEmpty(t *testing.T) {
 	}
 	if len(cfg.Repositories) != 0 {
 		t.Errorf("default Repositories = %v, want empty", cfg.Repositories)
+	}
+}
+
+func TestLoad_StoreDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(config.Sources{Environ: []string{}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StoreScope != "" {
+		t.Errorf("StoreScope = %q, want empty (auto)", cfg.StoreScope)
+	}
+	if !cfg.StoreVerifyOnUse {
+		t.Error("StoreVerifyOnUse = false, want default true")
+	}
+	if cfg.StoreGCGracePeriod != 30*24*time.Hour {
+		t.Errorf("StoreGCGracePeriod = %v, want 30d", cfg.StoreGCGracePeriod)
+	}
+	if cfg.StoreLockTimeout != 60*time.Second {
+		t.Errorf("StoreLockTimeout = %v, want 60s", cfg.StoreLockTimeout)
+	}
+	if !cfg.ProjectsRegistry {
+		t.Error("ProjectsRegistry = false, want default true")
+	}
+	if cfg.PrivacyProjectRegistry != "full" {
+		t.Errorf("PrivacyProjectRegistry = %q, want %q", cfg.PrivacyProjectRegistry, "full")
+	}
+}
+
+func TestLoad_StoreFromFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeTOML(t, dir, "config.toml", `
+[store]
+scope = "project"
+verify_on_use = false
+gc_grace_period = "45d"
+lock_timeout = "90s"
+
+[projects]
+registry = false
+
+[privacy]
+project_registry = "minimal"
+`)
+	cfg, err := config.Load(config.Sources{UserFile: path, Environ: []string{}})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StoreScope != "project" {
+		t.Errorf("StoreScope = %q, want %q", cfg.StoreScope, "project")
+	}
+	if cfg.StoreVerifyOnUse {
+		t.Error("StoreVerifyOnUse = true, want false from file")
+	}
+	if cfg.StoreGCGracePeriod != 45*24*time.Hour {
+		t.Errorf("StoreGCGracePeriod = %v, want 45d", cfg.StoreGCGracePeriod)
+	}
+	if cfg.StoreLockTimeout != 90*time.Second {
+		t.Errorf("StoreLockTimeout = %v, want 90s", cfg.StoreLockTimeout)
+	}
+	if cfg.ProjectsRegistry {
+		t.Error("ProjectsRegistry = true, want false from file")
+	}
+	if cfg.PrivacyProjectRegistry != "minimal" {
+		t.Errorf("PrivacyProjectRegistry = %q, want %q", cfg.PrivacyProjectRegistry, "minimal")
+	}
+}
+
+func TestLoad_StoreFromEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Load(config.Sources{
+		Environ: []string{
+			"GSKILL_STORE_SCOPE=global",
+			"GSKILL_STORE_VERIFY=false",
+			"GSKILL_PROJECT_REGISTRY=false",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.StoreScope != "global" {
+		t.Errorf("StoreScope = %q, want %q from env", cfg.StoreScope, "global")
+	}
+	if cfg.StoreVerifyOnUse {
+		t.Error("StoreVerifyOnUse = true, want false from GSKILL_STORE_VERIFY")
+	}
+	if cfg.ProjectsRegistry {
+		t.Error("ProjectsRegistry = true, want false from GSKILL_PROJECT_REGISTRY")
+	}
+}
+
+func TestLoad_InvalidStoreScopeRejected(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.Load(config.Sources{Environ: []string{"GSKILL_STORE_SCOPE=everywhere"}})
+	if err == nil {
+		t.Fatal("Load with invalid store scope should fail")
+	}
+}
+
+func TestLoad_InvalidGracePeriodRejected(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeTOML(t, dir, "config.toml", "[store]\ngc_grace_period = \"soon\"\n")
+	if _, err := config.Load(config.Sources{UserFile: path, Environ: []string{}}); err == nil {
+		t.Fatal("Load with invalid grace period should fail")
+	}
+}
+
+func TestLoad_InvalidPrivacyModeRejected(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := writeTOML(t, dir, "config.toml", "[privacy]\nproject_registry = \"secret\"\n")
+	if _, err := config.Load(config.Sources{UserFile: path, Environ: []string{}}); err == nil {
+		t.Fatal("Load with invalid privacy mode should fail")
+	}
+}
+
+func TestParseFlexDuration(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{in: "30d", want: 30 * 24 * time.Hour},
+		{in: "0d", want: 0},
+		{in: "90s", want: 90 * time.Second},
+		{in: "1h30m", want: 90 * time.Minute},
+		{in: "", wantErr: true},
+		{in: "-5d", wantErr: true},
+		{in: "soon", wantErr: true},
+	}
+	for _, tc := range cases {
+		got, err := config.ParseFlexDuration(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("ParseFlexDuration(%q): want error, got %v", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParseFlexDuration(%q): %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("ParseFlexDuration(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }

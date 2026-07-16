@@ -4,11 +4,13 @@
 package fsutil
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const (
@@ -157,4 +159,59 @@ func copyFile(src, dst string, perm fs.FileMode) (err error) {
 		return fmt.Errorf("copy %s: %w", dst, err)
 	}
 	return nil
+}
+
+// WriteJSONAtomic marshals v as indented JSON with a trailing newline and
+// writes it atomically to path. encoding/json emits struct fields in
+// declaration order and sorts map keys, so writes are deterministic for a
+// given value (Constitution I).
+func WriteJSONAtomic(path string, v any, perm fs.FileMode) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+	return WriteFileAtomic(path, append(data, '\n'), perm)
+}
+
+// OwnerOnlyTempDir creates a uniquely named staging directory under parent
+// (creating parent if needed) with owner-only permissions, for content that
+// must never be readable or writable by other users while in flight.
+func OwnerOnlyTempDir(parent, pattern string) (string, error) {
+	dir, err := TempDir(parent, pattern)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // directories need the owner exec bit
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("restrict temp dir: %w", err)
+	}
+	return dir, nil
+}
+
+// ListStaleDirs returns the direct subdirectories of parent whose
+// modification time is older than maxAge — abandoned staging left behind by
+// interrupted processes. A missing parent yields no entries.
+func ListStaleDirs(parent string, maxAge time.Duration) ([]string, error) {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", parent, err)
+	}
+	cutoff := time.Now().Add(-maxAge)
+	var stale []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue // vanished mid-scan
+		}
+		if info.ModTime().Before(cutoff) {
+			stale = append(stale, filepath.Join(parent, entry.Name()))
+		}
+	}
+	return stale, nil
 }

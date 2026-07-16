@@ -1,9 +1,11 @@
 package fsutil_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/glapsfun/gskill/internal/fsutil"
 )
@@ -143,5 +145,97 @@ func TestSymlinkOrCopy_SymlinksWhenSupported(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(dst, "SKILL.md")); err != nil || string(got) != "doc" { //nolint:gosec // test-controlled path
 		t.Errorf("read through symlink = %q, err=%v, want %q", got, err, "doc")
+	}
+}
+
+func TestWriteJSONAtomic_DeterministicWithTrailingNewline(t *testing.T) {
+	t.Parallel()
+
+	type payload struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	path := filepath.Join(t.TempDir(), "nested", "out.json")
+	if err := fsutil.WriteJSONAtomic(path, payload{Name: "a", Count: 1}, 0o600); err != nil {
+		t.Fatalf("WriteJSONAtomic: %v", err)
+	}
+	first, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) == 0 || first[len(first)-1] != '\n' {
+		t.Error("output does not end with a trailing newline")
+	}
+	// Same value re-serializes byte-identically (deterministic writes).
+	if err := fsutil.WriteJSONAtomic(path, payload{Name: "a", Count: 1}, 0o600); err != nil {
+		t.Fatalf("second WriteJSONAtomic: %v", err)
+	}
+	second, err := os.ReadFile(path) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Errorf("re-serialization differs:\n%s\nvs\n%s", first, second)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("perm = %o, want 0600", perm)
+	}
+}
+
+func TestOwnerOnlyTempDir_Permissions(t *testing.T) {
+	t.Parallel()
+
+	parent := filepath.Join(t.TempDir(), "tmp")
+	dir, err := fsutil.OwnerOnlyTempDir(parent, "object-abc-*")
+	if err != nil {
+		t.Fatalf("OwnerOnlyTempDir: %v", err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Errorf("temp dir perm = %o, want 0700", perm)
+	}
+}
+
+func TestListStaleDirs_FindsOnlyOldEntries(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	oldDir := filepath.Join(parent, "object-aaa-1")
+	newDir := filepath.Join(parent, "object-bbb-2")
+	for _, d := range []string{oldDir, newDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	past := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(oldDir, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := fsutil.ListStaleDirs(parent, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ListStaleDirs: %v", err)
+	}
+	if len(stale) != 1 || stale[0] != oldDir {
+		t.Errorf("ListStaleDirs = %v, want [%s]", stale, oldDir)
+	}
+}
+
+func TestListStaleDirs_MissingParentIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	stale, err := fsutil.ListStaleDirs(filepath.Join(t.TempDir(), "absent"), time.Hour)
+	if err != nil {
+		t.Fatalf("ListStaleDirs on missing parent: %v", err)
+	}
+	if len(stale) != 0 {
+		t.Errorf("ListStaleDirs = %v, want empty", stale)
 	}
 }

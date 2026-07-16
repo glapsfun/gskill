@@ -25,6 +25,17 @@ func newApp() *app.App {
 	})
 }
 
+// newAppWithHome builds an App with a private, empty gskill home — a fresh
+// machine whose global store holds nothing.
+func newAppWithHome(t *testing.T) *app.App {
+	t.Helper()
+	return app.New(app.Options{
+		Agents:     agent.NewDefaultRegistry(),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		GskillHome: filepath.Join(t.TempDir(), "gskill-home"),
+	})
+}
+
 // runGskill runs the CLI against root and returns stdout, stderr, and exit code.
 func runGskill(t *testing.T, root string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()

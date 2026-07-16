@@ -61,12 +61,15 @@ func (a *App) Outdated(ctx context.Context, root string) (OutdatedReport, error)
 // Update re-resolves the named skills (or all when names is empty) to the newest
 // version within their constraints and rewrites the lock (FR-009).
 func (a *App) Update(ctx context.Context, root string, names []string) (InstallResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return InstallResult{}, err
+	}
 	if !fileExists(p.lockPath) {
 		return InstallResult{}, errNoLock()
 	}
 	var out InstallResult
-	err := a.withLock(ctx, p, func() error {
+	err = a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr
@@ -111,12 +114,15 @@ type RemoveResult struct {
 // Remove uninstalls the named skills from the lock and every agent directory,
 // then garbage-collects unreferenced store entries.
 func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return RemoveResult{}, err
+	}
 	if !fileExists(p.lockPath) {
 		return RemoveResult{}, errNoLock()
 	}
 	var out RemoveResult
-	err := a.withLock(ctx, p, func() error {
+	err = a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr

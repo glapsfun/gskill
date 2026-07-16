@@ -8,6 +8,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
@@ -269,6 +270,9 @@ func humanLockInstall(res app.InstallFromLockResult, sum app.InstallSummary) str
 	if line := tui.InstallCounterLine(sum); line != "" {
 		b.WriteString("\n" + line)
 	}
+	if line := storeReuseLine(res.Skills); line != "" {
+		b.WriteString("\n" + line)
+	}
 	for _, s := range res.Skills {
 		switch app.InstallStatus(s.Status) { //nolint:exhaustive // successful statuses render as counters only (clarification #2)
 		case app.InstallStatusFailed, app.InstallStatusCancelled, app.InstallStatusNotAttempted:
@@ -335,6 +339,8 @@ func lockSkillJSONEntry(s app.LockSkillResult, explicit bool) map[string]any {
 	putIf("resolvedRef", s.ResolvedRef)
 	putIf("commit", s.Commit)
 	putIf("installMode", s.InstallMode)
+	putIf("storeReuse", s.StoreReuse)
+	putIf("storeScope", s.StoreScope)
 	putIf("phase", string(s.Phase))
 	putIf("plannedAction", s.PlannedAction)
 	if len(s.Agents) > 0 {
@@ -447,4 +453,41 @@ func sortedUnion(a, b []string) []string {
 	out = append(out, b...)
 	sort.Strings(out)
 	return out
+}
+
+// storeReuseLine summarizes the content-store decisions of a run (spec 015
+// FR-007): how many skills were served from the store versus fetched, and
+// which physical store scope served them. Empty when no skill reached the
+// store (all failed or planned).
+func storeReuseLine(skills []app.LockSkillResult) string {
+	var reused, downloaded int
+	scope := ""
+	for _, s := range skills {
+		switch s.StoreReuse {
+		case installer.StoreReused:
+			reused++
+		case installer.StoreDownloaded:
+			downloaded++
+		default:
+			continue
+		}
+		if scope == "" {
+			scope = s.StoreScope
+		}
+	}
+	if reused+downloaded == 0 {
+		return ""
+	}
+	label := "store"
+	if scope == "global" {
+		label = "global store"
+	}
+	switch {
+	case downloaded == 0:
+		return fmt.Sprintf("%s: %d reused, no downloads", label, reused)
+	case reused == 0:
+		return fmt.Sprintf("%s: %d downloaded", label, downloaded)
+	default:
+		return fmt.Sprintf("%s: %d reused, %d downloaded", label, reused, downloaded)
+	}
 }

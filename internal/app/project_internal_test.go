@@ -177,3 +177,64 @@ func TestSaveLockFreshProject(t *testing.T) {
 		t.Errorf("Ext = %+v", e.Ext)
 	}
 }
+
+// --- store-scope resolution (spec 015, FR-039, research R9) ---
+
+func TestResolveStoreScope_ExplicitConfigWins(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// Populated project-local store would normally force "project"; explicit
+	// config overrides detection.
+	seedProjectStore(t, root)
+
+	if got := resolveStoreScope("global", root); got != "global" {
+		t.Errorf("scope = %q, want explicit global", got)
+	}
+	if got := resolveStoreScope("project", t.TempDir()); got != "project" {
+		t.Errorf("scope = %q, want explicit project", got)
+	}
+}
+
+func TestResolveStoreScope_AutoNewProjectIsGlobal(t *testing.T) {
+	t.Parallel()
+
+	if got := resolveStoreScope("", t.TempDir()); got != "global" {
+		t.Errorf("scope = %q, want global for a project without a local store", got)
+	}
+}
+
+func TestResolveStoreScope_AutoPopulatedLocalStoreStaysProject(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	seedProjectStore(t, root)
+	if got := resolveStoreScope("", root); got != "project" {
+		t.Errorf("scope = %q, want project for an unmigrated local store", got)
+	}
+}
+
+func TestResolveStoreScope_AutoEmptyLocalStoreDirIsGlobal(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// An empty .gskill/store (no objects) does not force project scope.
+	if err := os.MkdirAll(filepath.Join(root, ".gskill", "store"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveStoreScope("", root); got != "global" {
+		t.Errorf("scope = %q, want global for an empty local store", got)
+	}
+}
+
+// seedProjectStore creates one fake object in the project-local store.
+func seedProjectStore(t *testing.T, root string) {
+	t.Helper()
+	obj := filepath.Join(root, ".gskill", "store", "sha256", "abc123")
+	if err := os.MkdirAll(obj, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(obj, "SKILL.md"), []byte("# x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

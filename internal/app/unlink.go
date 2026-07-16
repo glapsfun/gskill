@@ -25,7 +25,10 @@ type UnlinkResult struct {
 // store content, and lock entry are retained unless prune is set, in which
 // case the skill is removed entirely and unreferenced store content is GC'd.
 func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune bool) (UnlinkResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return UnlinkResult{}, err
+	}
 	if _, ok := a.agents.Get(agentID); !ok {
 		return UnlinkResult{}, errs.WithHint(
 			fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, agentID),
@@ -33,7 +36,7 @@ func (a *App) Unlink(ctx context.Context, root, skill, agentID string, prune boo
 	}
 
 	out := UnlinkResult{Skill: skill, UnlinkedAgent: agentID}
-	err := a.withLock(ctx, p, func() error {
+	err = a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr

@@ -25,14 +25,16 @@ func TestOfflineRestore_WarmCacheSucceedsColdCacheFails(t *testing.T) {
 		t.Fatalf("offline restore with warm cache failed: %s", stderr)
 	}
 
-	// Wipe all local state (store + cache + installs); an offline restore with
-	// nothing local fails (exit 5).
+	// Wipe all local state (store + cache + installs) and use a fresh gskill
+	// home (empty global store): an offline restore on a truly cold machine
+	// fails (exit 5). With a warm global store it would legitimately succeed
+	// (spec 015 FR-019), which is why the home must be private here.
 	for _, d := range []string{".gskill", ".agents", ".claude"} {
 		if err := os.RemoveAll(filepath.Join(proj, d)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, _, code := runGskill(t, proj, "--offline", "install", "--frozen-lockfile")
+	_, _, code := runGskillWithApp(t, newAppWithHome(t), proj, "--offline", "install", "--frozen-lockfile")
 	if code != 5 {
 		t.Errorf("exit code = %d, want 5 (source unavailable offline)", code)
 	}

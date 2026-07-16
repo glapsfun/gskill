@@ -39,7 +39,10 @@ type InitResult struct {
 // manifest; an empty skills-lock.json is written only when withLock is set.
 // It is idempotent.
 func (a *App) Init(_ context.Context, root string, withLock bool) (InitResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return InitResult{}, err
+	}
 	res := InitResult{LockPath: p.lockPath}
 
 	for _, dir := range []string{filepath.Join(root, stateDirName), active.Dir(root)} {
@@ -125,7 +128,10 @@ type AddResult struct {
 // It errors on an already-declared key unless Force is set (FR-047), and
 // writes nothing when no target agent is available (FR-029).
 func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return AddResult{}, err
+	}
 
 	// Adding an agent to an already-installed skill is a local relink: reuse the
 	// locked revision and existing store, with no resolve or network (FR-001).

@@ -18,10 +18,13 @@ type RepairResult struct {
 // without changing the lockfile, and cleans up orphaned staging left by an
 // interrupted install (FR-024, SC-007).
 func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return RepairResult{}, err
+	}
 
 	var out RepairResult
-	err := a.withLock(ctx, p, func() error {
+	err = a.withLock(ctx, p, func() error {
 		cleaned, cleanErr := installer.CleanupStaging(p.store.Root(), p.cache.Root())
 		if cleanErr != nil {
 			return cleanErr

@@ -46,14 +46,17 @@ type SyncResult struct {
 // entries the lock no longer declares; without Prune it reports such orphans
 // instead of deleting them (FR-013).
 func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return SyncResult{}, err
+	}
 	if !fileExists(p.lockPath) {
 		// Without this gate a missing lock reads as "nothing declared" and
 		// --prune would wipe every managed install.
 		return SyncResult{}, errNoLock()
 	}
 	var out SyncResult
-	err := a.withLock(ctx, p, func() error {
+	err = a.withLock(ctx, p, func() error {
 		var rErr error
 		out, rErr = a.reconcile(ctx, p, req)
 		return rErr

@@ -97,6 +97,14 @@ type LockSkillResult struct {
 	Phase           InstallPhase
 	PlannedAction   string // dry-run only: would-install|would-repair|would-remove-target|would-update-lock|blocked
 	Failure         *InstallFailure
+
+	// StoreReuse reports whether the content store satisfied this skill
+	// ("reused") or its source was fetched ("downloaded") — spec 015 FR-007.
+	// Empty when the entry never reached the store (failures, plans).
+	StoreReuse string
+	// StoreScope names the physical store that served the skill: "global" or
+	// "project".
+	StoreScope string
 }
 
 // InstallFromLockResult is the run summary.
@@ -116,7 +124,10 @@ type InstallFromLockResult struct {
 // the namespaced gskill metadata (FR-016). Failures are isolated per skill:
 // verified successes stay installed and recorded (FR-016a).
 func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (InstallFromLockResult, error) {
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return InstallFromLockResult{}, err
+	}
 	var res InstallFromLockResult
 
 	// A run whose context is already cancelled fails fast with zero writes:
@@ -153,17 +164,29 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 		if err != nil {
 			return err
 		}
-		if req.Prune && !req.DryRun && !req.Frozen {
-			pruned, pErr := a.pruneToDesired(p, lf)
-			if pErr != nil {
-				return pErr
-			}
-			res.Pruned = pruned
-			res.Changed = res.Changed || len(pruned) > 0
-		}
-		return nil
+		return a.finishLockRun(p, lf, req, &res)
 	})
 	return res, installErr
+}
+
+// finishLockRun applies the post-install run steps: pruning when requested,
+// and the machine-local state.json bookkeeping (never required for
+// reproduction — FR-014/FR-015 — so its failure warns rather than fails).
+func (a *App) finishLockRun(p *project, lf *skillslock.State, req InstallFromLockRequest, res *InstallFromLockResult) error {
+	if req.Prune && !req.DryRun && !req.Frozen {
+		pruned, pErr := a.pruneToDesired(p, lf)
+		if pErr != nil {
+			return pErr
+		}
+		res.Pruned = pruned
+		res.Changed = res.Changed || len(pruned) > 0
+	}
+	if !req.DryRun {
+		if stErr := writeProjectState(p, lf); stErr != nil {
+			a.log.Warn("write project state", "error", stErr)
+		}
+	}
+	return nil
 }
 
 // entryAgents returns an entry's declared gskill agents (nil for raw entries).
@@ -838,6 +861,8 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 		r.Phase = InstallPhaseLinking
 		return fail(err)
 	}
+	r.StoreReuse = result.StoreReuse
+	r.StoreScope = result.StoreScope
 
 	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result,
 		requestedForEntry(lf, name, e, staged.rev))
@@ -1095,14 +1120,15 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		// output; that would silently stop catching that drift.
 		return LockSkillResult{}, false
 	}
-	if !p.store.Has(prior.Resolved.ContentHash) {
+	if !p.contentHas(prior.Resolved.ContentHash) {
 		return LockSkillResult{}, false
 	}
 	// The recorded hash must match the actual stored content — comparing the
 	// entry against itself would let an edited or corrupted computedHash pass
 	// as "up to date" (it must fail closed, or be accepted via --force, on
-	// the full path).
-	if compat, err := integrity.CompatHash(p.store.Path(prior.Resolved.ContentHash)); err != nil || compat != e.ComputedHash {
+	// the full path). For a global store this re-reads the shared object's
+	// content, so a tampered object never satisfies the fast path (FR-020).
+	if compat, err := integrity.CompatHash(p.contentPath(prior.Resolved.ContentHash)); err != nil || compat != e.ComputedHash {
 		return LockSkillResult{}, false
 	}
 
@@ -1117,6 +1143,10 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	stampResultProvenance(&r, e, req)
 	r.Agents = ids
 	r.Commit = prior.Resolved.Commit
+	// The fast path is a store hit by definition: content came from the
+	// resolved store, nothing was fetched (spec 015 FR-007).
+	r.StoreReuse = installer.StoreReused
+	r.StoreScope = p.storeScope
 	if len(missing) == 0 {
 		return r, true
 	}
