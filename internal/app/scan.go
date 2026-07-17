@@ -114,9 +114,9 @@ func (a *App) scanInstaller() *installer.Installer {
 	cfgDir, err1 := config.Dir()
 	cacheDir, err2 := config.CacheDir()
 	if err1 != nil || err2 != nil {
-		return installer.New(a.git, cache.New(filepath.Join(stateDirName, "cache")), store.New(filepath.Join(stateDirName, "store")))
+		return installer.New(a.git, cache.New(filepath.Join(stateDirName, "cache")), store.New(filepath.Join(stateDirName, "store"))).WithScanCache(a.scans)
 	}
-	return installer.New(a.git, cache.New(cacheDir), store.New(filepath.Join(cfgDir, "store")))
+	return installer.New(a.git, cache.New(cacheDir), store.New(filepath.Join(cfgDir, "store"))).WithScanCache(a.scans)
 }
 
 // findSkill locates a discovered skill by a name or name@path selector,

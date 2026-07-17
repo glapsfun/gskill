@@ -74,6 +74,7 @@ type Installer struct {
 	git     git.Runner
 	cache   *cache.Cache
 	content ContentStore
+	scans   *ScanCache // nil ⇒ no scan memoization
 }
 
 // New builds an Installer over the legacy project-local store. The git runner
@@ -280,14 +281,30 @@ func identityWarning(selectedID, frontmatterName string) []string {
 // manifest/lock writes. Used by source inspection, search, and the add
 // pre-flight (contracts/discovery.md).
 func (i *Installer) DiscoverAll(ctx context.Context, req Request, opts discovery.Options) (discovery.Result, error) {
+	// RootID defaults before the memo lookup so the key sees the effective
+	// identity. A memo hit answers before materialize: the scan and even the
+	// cache check are skipped, which per-skill progress may observe as
+	// skipped phases (allowed — phases may be skipped, never regress).
+	if opts.RootID == "" {
+		opts.RootID = req.Ref.Repo
+	}
+	key, cacheable := "", false
+	if i.scans != nil {
+		if key, cacheable = scanCacheKey(req, opts); cacheable {
+			if r, ok := i.scans.get(key); ok {
+				return r, nil
+			}
+		}
+	}
 	material, err := i.materialize(ctx, req)
 	if err != nil {
 		return discovery.Result{}, err
 	}
-	if opts.RootID == "" {
-		opts.RootID = req.Ref.Repo
+	result, err := discovery.DiscoverAll(material, opts)
+	if err == nil && cacheable {
+		i.scans.put(key, result)
 	}
-	return discovery.DiscoverAll(material, opts)
+	return result, err
 }
 
 // materialize returns a directory holding the source tree: the local path for

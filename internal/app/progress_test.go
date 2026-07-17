@@ -99,16 +99,21 @@ func TestDiscoverSource_EmitsResolveAndFetchProgress(t *testing.T) {
 		t.Errorf("Fetching event not stamped: %+v", events[2])
 	}
 
-	// Second discovery: warm cache, no fetch.
+	// Second discovery: warm scan memo, no fetch. The App's scan cache
+	// answers before the commit cache is even consulted, so no cache-level
+	// event fires at all — phases may be skipped, never regress (FR-008).
 	events = nil
 	ctx = sinkCtx(&events)
 	if _, err := a.DiscoverSource(ctx, app.DiscoverRequest{Root: root, Source: src}); err != nil {
 		t.Fatalf("cached DiscoverSource: %v", err)
 	}
 	got = milestones(events)
-	want = []progress.Phase{progress.PhaseResolving, progress.PhaseResolved, progress.PhaseCached}
+	want = []progress.Phase{progress.PhaseResolving, progress.PhaseResolved}
 	if !slices.Equal(got, want) {
 		t.Fatalf("cached milestones = %v, want %v", got, want)
+	}
+	if slices.Contains(phases(events), progress.PhaseFetching) {
+		t.Error("warm re-discovery must not fetch")
 	}
 }
 

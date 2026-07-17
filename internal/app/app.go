@@ -11,6 +11,7 @@ import (
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/git"
+	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/registry"
 )
 
@@ -30,6 +31,9 @@ type App struct {
 	git        git.Runner
 	repos      RepoLister
 	gskillHome string
+	// scans memoizes repo scans per immutable commit across the per-call
+	// installer instances (spec: Layer C).
+	scans *installer.ScanCache
 }
 
 // Options configures New. Nil dependencies are replaced with safe defaults.
@@ -76,6 +80,7 @@ func New(opts Options) *App {
 	return &App{
 		cfg: cfg, log: logger, agents: agents, git: gitRunner, repos: repos,
 		gskillHome: opts.GskillHome,
+		scans:      installer.NewScanCache(),
 	}
 }
 
