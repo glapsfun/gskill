@@ -27,6 +27,7 @@ const installBarWidth = 30
 // (data-model.md phase table). Unknown phases render their wire value so a
 // new phase is never hidden.
 var phaseTitles = map[app.InstallPhase]string{
+	app.InstallPhasePrefetching:     "Prefetching sources",
 	app.InstallPhaseResolving:       "Resolving source",
 	app.InstallPhaseFetching:        "Fetching source",
 	app.InstallPhaseReadingMetadata: "Reading skill metadata",

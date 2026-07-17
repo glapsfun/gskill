@@ -13,6 +13,10 @@ type InstallPhase string
 
 // Install pipeline phases, in execution order.
 const (
+	// InstallPhasePrefetching is a run-scoped phase (SkillName empty): the
+	// pre-flight warming of source resolutions and the commit cache before
+	// per-skill processing starts.
+	InstallPhasePrefetching     InstallPhase = "prefetching"
 	InstallPhaseResolving       InstallPhase = "resolving"
 	InstallPhaseFetching        InstallPhase = "fetching"
 	InstallPhaseReadingMetadata InstallPhase = "reading-metadata"
@@ -27,16 +31,17 @@ const (
 
 // phaseOrder maps each phase to its position in the pipeline.
 var phaseOrder = map[InstallPhase]int{
-	InstallPhaseResolving:       0,
-	InstallPhaseFetching:        1,
-	InstallPhaseReadingMetadata: 2,
-	InstallPhaseHashing:         3,
-	InstallPhaseVerifying:       4,
-	InstallPhaseStoring:         5,
-	InstallPhaseLinking:         6,
-	InstallPhaseLocking:         7,
-	InstallPhaseCleaning:        8,
-	InstallPhaseComplete:        9,
+	InstallPhasePrefetching:     0,
+	InstallPhaseResolving:       1,
+	InstallPhaseFetching:        2,
+	InstallPhaseReadingMetadata: 3,
+	InstallPhaseHashing:         4,
+	InstallPhaseVerifying:       5,
+	InstallPhaseStoring:         6,
+	InstallPhaseLinking:         7,
+	InstallPhaseLocking:         8,
+	InstallPhaseCleaning:        9,
+	InstallPhaseComplete:        10,
 }
 
 // Rank returns the phase's pipeline position for monotonicity checks, or -1
