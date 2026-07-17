@@ -6,7 +6,7 @@ toolchain go1.26.5
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/alecthomas/kong v1.15.0
+	github.com/alecthomas/kong v1.16.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0
