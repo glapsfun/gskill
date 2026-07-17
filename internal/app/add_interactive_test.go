@@ -14,16 +14,16 @@ import (
 )
 
 // projectWithAgent creates an initialized project with a .claude marker so an
-// agent is detected.
-func projectWithAgent(t *testing.T) string {
-	t.Helper()
-	root := t.TempDir()
+// agent is detected. Takes testing.TB so benchmarks can share it with tests.
+func projectWithAgent(tb testing.TB) string {
+	tb.Helper()
+	root := tb.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o750); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	a := app.New(app.Options{Agents: agent.NewDefaultRegistry(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if _, err := a.Init(context.Background(), root, false); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return root
 }

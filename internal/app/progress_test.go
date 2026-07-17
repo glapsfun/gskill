@@ -3,56 +3,31 @@ package app_test
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/progress"
-	"github.com/glapsfun/gskill/internal/testutil"
 )
 
-// gitSkillRepo creates a local git repository holding one committed skill and
-// returns its path. Local git repos are promoted to git-type sources, so
-// discovery and install exercise the real fetch/cache pipeline.
+// gitSkillRepo creates a local git repository holding one committed skill at
+// its root, and returns its path. Local git repos are promoted to git-type
+// sources, so discovery and install exercise the real fetch/cache pipeline.
+// The repo directory carries the skill's identity (root-level skills are
+// keyed by the repo name), so it needs a stable basename. The body embeds
+// the test name so every test's repo hashes to a unique commit: the app
+// tests share one GSKILL_HOME (TestMain), and identical content committed by
+// two tests in the same second would collide on the commit SHA and warm the
+// shared cache across tests — turning cold-fetch assertions (PhaseFetching
+// vs PhaseCached) into shuffle-order flakes. See gitMultiSkillRepo
+// (prefetch_helpers_test.go) for the multi-skill variant sharing this scaffold.
 func gitSkillRepo(t *testing.T, name string) string {
 	t.Helper()
 
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	// The repo directory carries the skill's identity (root-level skills are
-	// keyed by the repo name), so it needs a stable basename.
 	repo := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(repo, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.CommandContext(context.Background(), "git", args...)
-		cmd.Dir = repo
-		cmd.Env = testutil.GitEnv(
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	run("init", "--quiet", "-b", "main")
-	// The body embeds the test name so every test's repo hashes to a unique
-	// commit: the app tests share one GSKILL_HOME (TestMain), and identical
-	// content committed by two tests in the same second would collide on the
-	// commit SHA and warm the shared cache across tests — turning cold-fetch
-	// assertions (PhaseFetching vs PhaseCached) into shuffle-order flakes.
 	body := "---\nname: " + name + "\ndescription: a skill\n---\n# " + name + "\n\ntest: " + t.Name() + "\n"
-	if err := os.WriteFile(filepath.Join(repo, "SKILL.md"), []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	run("add", ".")
-	run("commit", "--quiet", "-m", "initial")
-	return repo
+	return gitRepoFromFiles(t, repo, map[string]string{"SKILL.md": body})
 }
 
 func sinkCtx(events *[]progress.Event) context.Context {
@@ -99,7 +74,9 @@ func TestDiscoverSource_EmitsResolveAndFetchProgress(t *testing.T) {
 		t.Errorf("Fetching event not stamped: %+v", events[2])
 	}
 
-	// Second discovery: warm cache, no fetch.
+	// Second discovery: warm scan memo, no fetch. The scan-cache hit still
+	// fires the Cached terminal event (so a renderer's live line finishes)
+	// before returning, without touching the commit cache or git runner.
 	events = nil
 	ctx = sinkCtx(&events)
 	if _, err := a.DiscoverSource(ctx, app.DiscoverRequest{Root: root, Source: src}); err != nil {
@@ -109,6 +86,9 @@ func TestDiscoverSource_EmitsResolveAndFetchProgress(t *testing.T) {
 	want = []progress.Phase{progress.PhaseResolving, progress.PhaseResolved, progress.PhaseCached}
 	if !slices.Equal(got, want) {
 		t.Fatalf("cached milestones = %v, want %v", got, want)
+	}
+	if slices.Contains(phases(events), progress.PhaseFetching) {
+		t.Error("warm re-discovery must not fetch")
 	}
 }
 

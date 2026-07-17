@@ -16,6 +16,7 @@ import (
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/fsutil"
+	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
 
@@ -128,6 +129,7 @@ type AddResult struct {
 // It errors on an already-declared key unless Force is set (FR-047), and
 // writes nothing when no target agent is available (FR-029).
 func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
+	ctx = git.WithMemo(ctx)
 	p, err := a.openProjectScoped(req.Root)
 	if err != nil {
 		return AddResult{}, err

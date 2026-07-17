@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
@@ -74,6 +75,7 @@ type Installer struct {
 	git     git.Runner
 	cache   *cache.Cache
 	content ContentStore
+	scans   *ScanCache // nil ⇒ no scan memoization
 }
 
 // New builds an Installer over the legacy project-local store. The git runner
@@ -280,14 +282,61 @@ func identityWarning(selectedID, frontmatterName string) []string {
 // manifest/lock writes. Used by source inspection, search, and the add
 // pre-flight (contracts/discovery.md).
 func (i *Installer) DiscoverAll(ctx context.Context, req Request, opts discovery.Options) (discovery.Result, error) {
+	// RootID defaults before the memo lookup so the key sees the effective
+	// identity. A memo hit answers before materialize: the scan and even the
+	// cache check are skipped, which per-skill progress may observe as
+	// skipped phases (allowed — phases may be skipped, never regress).
+	if opts.RootID == "" {
+		opts.RootID = req.Ref.Repo
+	}
+	key, cacheable := i.scanCacheKeyFor(req, opts)
+	if cacheable {
+		if result, ok := i.scanCacheHit(ctx, req, key); ok {
+			return result, nil
+		}
+	}
 	material, err := i.materialize(ctx, req)
 	if err != nil {
 		return discovery.Result{}, err
 	}
-	if opts.RootID == "" {
-		opts.RootID = req.Ref.Repo
+	result, err := discovery.DiscoverAll(material, opts)
+	if err == nil && cacheable {
+		i.scans.put(key, material, result)
 	}
-	return discovery.DiscoverAll(material, opts)
+	return result, err
+}
+
+// scanCacheKeyFor reports the memo key for req/opts and whether this
+// installer has a scan cache to consult at all.
+func (i *Installer) scanCacheKeyFor(req Request, opts discovery.Options) (string, bool) {
+	if i.scans == nil {
+		return "", false
+	}
+	return scanCacheKey(req, opts)
+}
+
+// scanCacheHit reports a live memo hit for key, emitting the terminal cache
+// event the materialize path would have fired (so a renderer's live line
+// finishes) and handing out a defensive copy of the Skills slice so an
+// in-place sort or filter by a consumer cannot corrupt the memo. A hit whose
+// material was pruned mid-run (store gc) is forgotten so the caller falls
+// through to materialize, exactly as a pre-memo cache miss would.
+func (i *Installer) scanCacheHit(ctx context.Context, req Request, key string) (discovery.Result, bool) {
+	e, ok := i.scans.get(key)
+	if !ok {
+		return discovery.Result{}, false
+	}
+	if _, err := os.Stat(e.dir); err != nil {
+		i.scans.drop(key)
+		return discovery.Result{}, false
+	}
+	progress.Emit(ctx, progress.Event{
+		Phase: progress.PhaseCached,
+		Repo:  req.Ref.Display(), Commit: req.Revision.Commit,
+	})
+	res := e.res
+	res.Skills = slices.Clone(res.Skills)
+	return res, true
 }
 
 // materialize returns a directory holding the source tree: the local path for
@@ -337,6 +386,14 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 	}
 	progress.Emit(ctx, progress.Event{Phase: progress.PhaseDone})
 	return dir, nil
+}
+
+// EnsureCached materializes req's source into the commit cache without
+// scanning or activating: the prefetch path's cache warmer. A cache hit is
+// free; local sources are a no-op by materialize's contract.
+func (i *Installer) EnsureCached(ctx context.Context, req Request) error {
+	_, err := i.materialize(ctx, req)
+	return err
 }
 
 // activateAll materializes the active layer and links/copies it into every

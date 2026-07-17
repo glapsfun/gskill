@@ -12,6 +12,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
+	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 )
 
@@ -46,6 +47,7 @@ type SyncResult struct {
 // entries the lock no longer declares; without Prune it reports such orphans
 // instead of deleting them (FR-013).
 func (a *App) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) {
+	ctx = git.WithMemo(ctx)
 	p, err := a.openProjectScoped(req.Root)
 	if err != nil {
 		return SyncResult{}, err

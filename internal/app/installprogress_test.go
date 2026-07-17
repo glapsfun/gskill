@@ -105,6 +105,7 @@ func TestInstallPhaseRank(t *testing.T) {
 	t.Parallel()
 
 	ordered := []app.InstallPhase{
+		app.InstallPhasePrefetching,
 		app.InstallPhaseResolving,
 		app.InstallPhaseFetching,
 		app.InstallPhaseReadingMetadata,

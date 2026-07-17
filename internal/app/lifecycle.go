@@ -9,6 +9,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/git"
 
 	"github.com/glapsfun/gskill/internal/resolver"
 )
@@ -29,6 +30,7 @@ type OutdatedReport struct {
 
 // Outdated reports available updates per locked skill (FR-009).
 func (a *App) Outdated(ctx context.Context, root string) (OutdatedReport, error) {
+	ctx = git.WithMemo(ctx)
 	p := openProject(root)
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
@@ -61,6 +63,7 @@ func (a *App) Outdated(ctx context.Context, root string) (OutdatedReport, error)
 // Update re-resolves the named skills (or all when names is empty) to the newest
 // version within their constraints and rewrites the lock (FR-009).
 func (a *App) Update(ctx context.Context, root string, names []string) (InstallResult, error) {
+	ctx = git.WithMemo(ctx)
 	p, err := a.openProjectScoped(root)
 	if err != nil {
 		return InstallResult{}, err

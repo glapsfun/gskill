@@ -11,6 +11,7 @@ import (
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/git"
+	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/registry"
 )
 
@@ -30,6 +31,9 @@ type App struct {
 	git        git.Runner
 	repos      RepoLister
 	gskillHome string
+	// scans memoizes repo scans per immutable commit across the per-call
+	// installer instances (spec: Layer C).
+	scans *installer.ScanCache
 }
 
 // Options configures New. Nil dependencies are replaced with safe defaults.
@@ -65,6 +69,10 @@ func New(opts Options) *App {
 	if gitRunner == nil {
 		gitRunner = git.NewSystemRunner()
 	}
+	// Every runner — injected or default — is memoize-wrapped; caching only
+	// activates under a context armed by git.WithMemo at a batch entry
+	// point, so single-shot library calls and tests see passthrough.
+	gitRunner = git.Memoize(gitRunner)
 	repos := opts.Repos
 	if repos == nil {
 		repos = registry.New()
@@ -72,6 +80,7 @@ func New(opts Options) *App {
 	return &App{
 		cfg: cfg, log: logger, agents: agents, git: gitRunner, repos: repos,
 		gskillHome: opts.GskillHome,
+		scans:      installer.NewScanCache(),
 	}
 }
 

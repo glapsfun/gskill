@@ -153,9 +153,9 @@ func hasPopulatedProjectStore(root string) bool {
 // project-local store (spec 015 FR-006, FR-039).
 func (a *App) installerFor(p *project) *installer.Installer {
 	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
-		return installer.NewWithStore(a.git, p.cache, newGlobalContentStore(p.global, a.cfg))
+		return installer.NewWithStore(a.git, p.cache, newGlobalContentStore(p.global, a.cfg)).WithScanCache(a.scans)
 	}
-	return installer.New(a.git, p.cache, p.store)
+	return installer.New(a.git, p.cache, p.store).WithScanCache(a.scans)
 }
 
 // mutateLockPath returns the project's exclusive mutate-lock file. Project
@@ -224,7 +224,7 @@ func (a *App) installerForScope(p *project, scope string) *installer.Installer {
 	}
 	return installer.New(a.git,
 		cache.New(cacheDir),
-		store.New(filepath.Join(cfgDir, "store")))
+		store.New(filepath.Join(cfgDir, "store"))).WithScanCache(a.scans)
 }
 
 // fileExists reports whether path exists.
