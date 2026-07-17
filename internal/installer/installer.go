@@ -356,6 +356,14 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 	return dir, nil
 }
 
+// EnsureCached materializes req's source into the commit cache without
+// scanning or activating: the prefetch path's cache warmer. A cache hit is
+// free; local sources are a no-op by materialize's contract.
+func (i *Installer) EnsureCached(ctx context.Context, req Request) error {
+	_, err := i.materialize(ctx, req)
+	return err
+}
+
 // activateAll materializes the active layer and links/copies it into every
 // target agent dir, returning the representative mode (the first agent's), the
 // project-relative active path, the per-agent target paths, and the per-agent

@@ -506,6 +506,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 	var interrupted bool
 	var firstErr error
 	names := sortedLockNames(l)
+	a.maybePrefetch(ctx, p, lf, l, req, len(names))
 	for k, name := range names {
 		e, _ := l.Entry(name)
 		// Cancellation is guaranteed between skills (contract guarantee 4):
