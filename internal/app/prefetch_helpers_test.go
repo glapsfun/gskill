@@ -16,26 +16,25 @@ import (
 	"github.com/glapsfun/gskill/internal/testutil"
 )
 
-// gitMultiSkillRepo creates a local git repository holding one committed
-// skill per name under a subdirectory each, and returns its path. Mirrors
-// gitSkillRepo (progress_test.go) but takes testing.TB so benchmarks can use
-// it, and embeds tb.Name() so every test's repo hashes to a unique commit
-// (the app tests share one GSKILL_HOME; identical content would warm the
-// shared cache across tests and turn cold-fetch assertions into flakes).
-func gitMultiSkillRepo(tb testing.TB, name string, skills ...string) string {
+// gitRepoFromFiles creates a local git repository at dir containing files
+// (relative path -> content), and returns dir. The single scaffold behind
+// gitSkillRepo (progress_test.go, one skill at repo root) and
+// gitMultiSkillRepo (one skill per subdirectory) — both need the same
+// LookPath skip, git env, and init/add/commit sequence, just a different
+// file layout.
+func gitRepoFromFiles(tb testing.TB, dir string, files map[string]string) string {
 	tb.Helper()
 
 	if _, err := exec.LookPath("git"); err != nil {
 		tb.Skip("git not available")
 	}
-	repo := filepath.Join(tb.TempDir(), name)
-	if err := os.MkdirAll(repo, 0o750); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		tb.Fatal(err)
 	}
 	run := func(args ...string) {
 		tb.Helper()
 		cmd := exec.CommandContext(context.Background(), "git", args...)
-		cmd.Dir = repo
+		cmd.Dir = dir
 		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
 			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
@@ -45,34 +44,36 @@ func gitMultiSkillRepo(tb testing.TB, name string, skills ...string) string {
 		}
 	}
 	run("init", "--quiet", "-b", "main")
-	for _, s := range skills {
-		dir := filepath.Join(repo, s)
-		if err := os.MkdirAll(dir, 0o750); err != nil {
+	for rel, body := range files {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 			tb.Fatal(err)
 		}
-		body := "---\nname: " + s + "\ndescription: a skill\n---\n# " + s + "\n\ntest: " + tb.Name() + "\n"
-		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
 			tb.Fatal(err)
 		}
 	}
 	run("add", ".")
 	run("commit", "--quiet", "-m", "initial")
-	return repo
+	return dir
 }
 
-// projectWithAgentTB is projectWithAgent for benchmarks: an initialized
-// project with a .claude marker so an agent is detected.
-func projectWithAgentTB(tb testing.TB) string {
+// gitMultiSkillRepo creates a local git repository holding one committed
+// skill per name under a subdirectory each, and returns its path. Takes
+// testing.TB so benchmarks can use it, and embeds tb.Name() so every test's
+// repo hashes to a unique commit (the app tests share one GSKILL_HOME;
+// identical content would warm the shared cache across tests and turn
+// cold-fetch assertions into flakes).
+func gitMultiSkillRepo(tb testing.TB, name string, skills ...string) string {
 	tb.Helper()
-	root := tb.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o750); err != nil {
-		tb.Fatal(err)
+
+	repo := filepath.Join(tb.TempDir(), name)
+	files := make(map[string]string, len(skills))
+	for _, s := range skills {
+		body := "---\nname: " + s + "\ndescription: a skill\n---\n# " + s + "\n\ntest: " + tb.Name() + "\n"
+		files[filepath.Join(s, "SKILL.md")] = body
 	}
-	a := app.New(app.Options{Agents: agent.NewDefaultRegistry(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-	if _, err := a.Init(context.Background(), root, false); err != nil {
-		tb.Fatal(err)
-	}
-	return root
+	return gitRepoFromFiles(tb, repo, files)
 }
 
 // stripGskillExt rewrites the project's skills-lock.json without any entry's

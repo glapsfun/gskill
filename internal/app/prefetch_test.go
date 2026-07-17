@@ -19,7 +19,7 @@ func TestInstallFromLock_ResolvesEachSourceOnce(t *testing.T) {
 	t.Parallel()
 
 	repo := gitMultiSkillRepo(t, "widgets", "gcs", "gke", "iam")
-	root := projectWithAgentTB(t)
+	root := projectWithAgent(t)
 	ctx := context.Background()
 	if _, err := onboardApp().Add(ctx, app.AddRequest{Root: root, Source: repo, All: true}); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -52,7 +52,7 @@ func TestInstallFromLock_DeadSourceFailsOnceNotPerSkill(t *testing.T) {
 	t.Parallel()
 
 	repo := gitMultiSkillRepo(t, "widgets", "gcs", "gke", "iam")
-	root := projectWithAgentTB(t)
+	root := projectWithAgent(t)
 	ctx := context.Background()
 	if _, err := onboardApp().Add(ctx, app.AddRequest{Root: root, Source: repo, All: true}); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -88,7 +88,7 @@ func TestInstallFromLock_DeadSourceFailsOnceNotPerSkill(t *testing.T) {
 func TestInstallFromLock_MultiSourceFetchesEachSourceOnce(t *testing.T) {
 	t.Parallel()
 
-	root := projectWithAgentTB(t)
+	root := projectWithAgent(t)
 	ctx := context.Background()
 	seed := onboardApp()
 	for _, name := range []string{"alpha", "beta"} {
@@ -124,7 +124,7 @@ func TestInstallFromLock_PreCancelledContextStaysInterrupted(t *testing.T) {
 	t.Parallel()
 
 	repo := gitMultiSkillRepo(t, "widgets", "gcs", "gke")
-	root := projectWithAgentTB(t)
+	root := projectWithAgent(t)
 	ctx := context.Background()
 	if _, err := onboardApp().Add(ctx, app.AddRequest{Root: root, Source: repo, All: true}); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -149,7 +149,7 @@ func TestInstallFromLock_OfflineNeverFetches(t *testing.T) {
 	t.Parallel()
 
 	repo := gitMultiSkillRepo(t, "widgets", "gcs", "gke")
-	root := projectWithAgentTB(t)
+	root := projectWithAgent(t)
 	ctx := context.Background()
 	if _, err := onboardApp().Add(ctx, app.AddRequest{Root: root, Source: repo, All: true}); err != nil {
 		t.Fatalf("Add: %v", err)

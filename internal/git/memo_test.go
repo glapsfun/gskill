@@ -124,33 +124,66 @@ func TestMemoize_CachesErrors(t *testing.T) {
 	}
 }
 
-func TestFresh_BypassesMemoReadAndWrite(t *testing.T) {
+func TestFresh_RefreshesRunMemoOnce(t *testing.T) {
 	t.Parallel()
 
-	inner := &mutableRunner{sha: "old0000000000000000000000000000000000000"}
-	_, m := memoized(inner)
+	inner := &mutableRunner{sha: "old"}
+	c, m := memoized(inner)
 	ctx := git.WithMemo(context.Background())
 
-	got1, err := m.ResolveRef(ctx, "u", "main")
-	if err != nil {
-		t.Fatal(err)
+	if got, err := m.ResolveRef(ctx, "u", "main"); err != nil || got != "old" {
+		t.Fatalf("memoized = %q, %v", got, err)
 	}
-	inner.set(nil, "new0000000000000000000000000000000000000", nil)
+	inner.set(nil, "new", nil)
 
-	fresh, err := git.Fresh(m).ResolveRef(ctx, "u", "main")
-	if err != nil {
-		t.Fatal(err)
+	// First Fresh ask bypasses the stale view and re-asks the remote.
+	if got, err := git.Fresh(m).ResolveRef(ctx, "u", "main"); err != nil || got != "new" {
+		t.Fatalf("Fresh = %q, %v; must re-ask the remote", got, err)
 	}
-	if fresh == got1 {
-		t.Errorf("Fresh returned the memoized answer %q; must re-ask the remote", fresh)
+	// The refreshed answer becomes the run's view for memoized reads...
+	if got, err := m.ResolveRef(ctx, "u", "main"); err != nil || got != "new" {
+		t.Fatalf("memoized after refresh = %q, %v", got, err)
 	}
-	// The memoized view stays consistent for the rest of the run.
-	again, err := m.ResolveRef(ctx, "u", "main")
-	if err != nil {
-		t.Fatal(err)
+	// ...and later Fresh asks reuse it instead of paying another round trip
+	// (N sibling mismatch-retries on one moved source cost one refresh).
+	inner.set(nil, "newer", nil)
+	before := c.Refs.Load()
+	if got, err := git.Fresh(m).ResolveRef(ctx, "u", "main"); err != nil || got != "new" {
+		t.Fatalf("second Fresh = %q, %v; want refreshed run view %q", got, err, "new")
 	}
-	if again != got1 {
-		t.Errorf("memoized answer changed mid-run: %q → %q", got1, again)
+	if c.Refs.Load() != before {
+		t.Errorf("second Fresh call paid a network round trip; want memoized refresh")
+	}
+}
+
+func TestMemoize_DoesNotCacheWhenCallerContextDone(t *testing.T) {
+	t.Parallel()
+
+	inner := &mutableRunner{err: errors.New("boom")}
+	c, m := memoized(inner)
+	ctx := git.WithMemo(context.Background())
+	// A child context that is already done shares the same run memo (Value
+	// walks up the parent chain) but must not poison it: its own death, not
+	// the remote's answer, is what failed the call.
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+
+	if _, err := m.LsRemoteTags(cctx, "u"); err == nil {
+		t.Fatal("want an error")
+	}
+	if got := c.Tags.Load(); got != 1 {
+		t.Fatalf("Tags = %d, want 1 (one attempt on the cancelled call)", got)
+	}
+
+	// The cancelled call's answer must not have been cached: a later call on
+	// the live parent context re-asks and can succeed.
+	inner.set([]git.TagRef{{Name: "v1", Commit: "c1"}}, "", nil)
+	tags, err := m.LsRemoteTags(ctx, "u")
+	if err != nil || len(tags) != 1 {
+		t.Fatalf("tags = %v, %v; cancelled-ctx result must not have been cached", tags, err)
+	}
+	if got := c.Tags.Load(); got != 2 {
+		t.Errorf("Tags = %d, want 2 (cancelled attempt uncached, live ctx re-asked)", got)
 	}
 }
 

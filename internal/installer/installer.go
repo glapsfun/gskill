@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
@@ -288,12 +289,10 @@ func (i *Installer) DiscoverAll(ctx context.Context, req Request, opts discovery
 	if opts.RootID == "" {
 		opts.RootID = req.Ref.Repo
 	}
-	key, cacheable := "", false
-	if i.scans != nil {
-		if key, cacheable = scanCacheKey(req, opts); cacheable {
-			if r, ok := i.scans.get(key); ok {
-				return r, nil
-			}
+	key, cacheable := i.scanCacheKeyFor(req, opts)
+	if cacheable {
+		if result, ok := i.scanCacheHit(ctx, req, key); ok {
+			return result, nil
 		}
 	}
 	material, err := i.materialize(ctx, req)
@@ -302,9 +301,42 @@ func (i *Installer) DiscoverAll(ctx context.Context, req Request, opts discovery
 	}
 	result, err := discovery.DiscoverAll(material, opts)
 	if err == nil && cacheable {
-		i.scans.put(key, result)
+		i.scans.put(key, material, result)
 	}
 	return result, err
+}
+
+// scanCacheKeyFor reports the memo key for req/opts and whether this
+// installer has a scan cache to consult at all.
+func (i *Installer) scanCacheKeyFor(req Request, opts discovery.Options) (string, bool) {
+	if i.scans == nil {
+		return "", false
+	}
+	return scanCacheKey(req, opts)
+}
+
+// scanCacheHit reports a live memo hit for key, emitting the terminal cache
+// event the materialize path would have fired (so a renderer's live line
+// finishes) and handing out a defensive copy of the Skills slice so an
+// in-place sort or filter by a consumer cannot corrupt the memo. A hit whose
+// material was pruned mid-run (store gc) is forgotten so the caller falls
+// through to materialize, exactly as a pre-memo cache miss would.
+func (i *Installer) scanCacheHit(ctx context.Context, req Request, key string) (discovery.Result, bool) {
+	e, ok := i.scans.get(key)
+	if !ok {
+		return discovery.Result{}, false
+	}
+	if _, err := os.Stat(e.dir); err != nil {
+		i.scans.drop(key)
+		return discovery.Result{}, false
+	}
+	progress.Emit(ctx, progress.Event{
+		Phase: progress.PhaseCached,
+		Repo:  req.Ref.Display(), Commit: req.Revision.Commit,
+	})
+	res := e.res
+	res.Skills = slices.Clone(res.Skills)
+	return res, true
 }
 
 // materialize returns a directory holding the source tree: the local path for

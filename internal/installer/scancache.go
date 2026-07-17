@@ -14,12 +14,23 @@ import (
 // calls.
 type ScanCache struct {
 	mu sync.Mutex
-	m  map[string]discovery.Result
+	m  map[string]scanEntry
 }
 
-// NewScanCache returns an empty scan cache safe for concurrent use.
+// scanEntry pairs a memoized scan with the material directory it scanned, so
+// a hit can verify the tree still exists (cache pruning mid-run, or a hit
+// keyed from an installer over a different cache root) before handing out
+// paths into it.
+type scanEntry struct {
+	dir string
+	res discovery.Result
+}
+
+// NewScanCache returns an empty scan cache safe for concurrent use. Entries
+// are never evicted; the expected owner is one CLI run's App, where the
+// working set is the run's distinct commits.
 func NewScanCache() *ScanCache {
-	return &ScanCache{m: map[string]discovery.Result{}}
+	return &ScanCache{m: map[string]scanEntry{}}
 }
 
 // WithScanCache attaches sc to the installer and returns it for chaining.
@@ -43,15 +54,22 @@ func scanCacheKey(req Request, opts discovery.Options) (string, bool) {
 	return req.Revision.Commit + "\x00" + opts.RootID, true
 }
 
-func (s *ScanCache) get(key string) (discovery.Result, bool) {
+func (s *ScanCache) get(key string) (scanEntry, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, ok := s.m[key]
-	return r, ok
+	e, ok := s.m[key]
+	return e, ok
 }
 
-func (s *ScanCache) put(key string, r discovery.Result) {
+func (s *ScanCache) put(key, dir string, r discovery.Result) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.m[key] = r
+	s.m[key] = scanEntry{dir: dir, res: r}
+}
+
+// drop forgets a stale entry (its material directory vanished).
+func (s *ScanCache) drop(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.m, key)
 }

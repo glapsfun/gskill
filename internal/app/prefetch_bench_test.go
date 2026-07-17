@@ -18,7 +18,7 @@ import (
 // Target: ≤ ~2×S resolution round trips, parallel.
 func BenchmarkInstallFromLock(b *testing.B) {
 	const sources = 8
-	root := projectWithAgentTB(b)
+	root := projectWithAgent(b)
 	seed := onboardApp()
 	ctx := context.Background()
 	for s := range sources {

@@ -506,7 +506,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 	var interrupted bool
 	var firstErr error
 	names := sortedLockNames(l)
-	a.maybePrefetch(ctx, p, lf, l, req, len(names))
+	a.maybePrefetch(ctx, p, lf, l, req, names)
 	for k, name := range names {
 		e, _ := l.Entry(name)
 		// Cancellation is guaranteed between skills (contract guarantee 4):
@@ -1242,24 +1242,16 @@ func (a *App) resolveLockEntry(ctx context.Context, lf *skillslock.State, name s
 // external tool's update (new computedHash, stale gskill block) resolves the
 // ref's current head instead of refetching the old revision.
 func (a *App) freshResolveLockEntry(ctx context.Context, e skillslock.Entry, usePins bool) (source.Ref, resolver.Revision, error) {
-	srcStr := e.Source
-	if e.Ext != nil && e.Ext.SourceURL != "" {
-		srcStr = e.Ext.SourceURL
-	}
+	srcStr, reqRef := entrySourceRef(e)
 	ref, err := source.Parse(srcStr)
 	if err != nil {
 		return source.Ref{}, resolver.Revision{}, err
 	}
 	ref = promoteLocalGit(ref)
 
-	requested := resolver.Requested{Ref: e.Ref}
-	if e.Ext != nil {
-		if requested.Ref == "" {
-			requested.Ref = e.Ext.Ref
-		}
-		if usePins {
-			requested.Commit = e.Ext.Commit
-		}
+	requested := resolver.Requested{Ref: reqRef}
+	if e.Ext != nil && usePins {
+		requested.Commit = e.Ext.Commit
 	}
 	// usePins=false is the mismatch retry: it exists to see upstream state
 	// newer than this run's memoized view, so it bypasses the memo.
