@@ -24,11 +24,12 @@ type RepoLister interface {
 // App holds the injected dependencies shared by every use-case. Business logic
 // is added by sibling files (install.go, inspect.go, lifecycle.go, ...).
 type App struct {
-	cfg    *config.Config
-	log    *slog.Logger
-	agents *agent.Registry
-	git    git.Runner
-	repos  RepoLister
+	cfg        *config.Config
+	log        *slog.Logger
+	agents     *agent.Registry
+	git        git.Runner
+	repos      RepoLister
+	gskillHome string
 }
 
 // Options configures New. Nil dependencies are replaced with safe defaults.
@@ -38,13 +39,19 @@ type Options struct {
 	Agents *agent.Registry
 	Git    git.Runner
 	Repos  RepoLister
+	// GskillHome overrides the resolved gskill home directory (default:
+	// GSKILL_HOME env, else ~/.gskill). Tests use it for isolated stores.
+	GskillHome string
 }
 
 // New builds an App from opts, filling in defaults for any nil dependency.
 func New(opts Options) *App {
 	cfg := opts.Config
 	if cfg == nil {
-		cfg = &config.Config{}
+		// Built-in defaults, not a zero value: zero-valued fields (e.g.
+		// StoreVerifyOnUse=false, StoreLockTimeout=0) would silently disable
+		// documented safety behavior.
+		cfg = config.Default()
 	}
 	logger := opts.Logger
 	if logger == nil {
@@ -62,11 +69,18 @@ func New(opts Options) *App {
 	if repos == nil {
 		repos = registry.New()
 	}
-	return &App{cfg: cfg, log: logger, agents: agents, git: gitRunner, repos: repos}
+	return &App{
+		cfg: cfg, log: logger, agents: agents, git: gitRunner, repos: repos,
+		gskillHome: opts.GskillHome,
+	}
 }
 
 // Config returns the resolved configuration.
 func (a *App) Config() *config.Config { return a.cfg }
+
+// GskillHome returns the App-level home override ("" when the environment
+// resolution applies). Tests use it to locate their private store.
+func (a *App) GskillHome() string { return a.gskillHome }
 
 // Logger returns the structured logger.
 func (a *App) Logger() *slog.Logger { return a.log }

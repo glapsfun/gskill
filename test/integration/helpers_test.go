@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/agent"
@@ -17,18 +18,56 @@ import (
 	"github.com/glapsfun/gskill/internal/testutil"
 )
 
-// newApp builds an App with a discard logger for tests.
-func newApp() *app.App {
+// testApps memoizes one App (and therefore one private gskill home) per
+// test, so every runGskill call within a test shares state while tests stay
+// isolated from each other — identical fixture content would otherwise
+// couple parallel tests through the shared content-addressed store.
+var testApps sync.Map // t.Name() -> *app.App
+
+// newApp returns the calling test's App, creating it (with a private home)
+// on first use.
+func newApp(t *testing.T) *app.App {
+	t.Helper()
+	if a, ok := testApps.Load(t.Name()); ok {
+		cached, castOK := a.(*app.App)
+		if !castOK {
+			t.Fatalf("testApps holds a %T", a)
+		}
+		return cached
+	}
+	a := app.New(app.Options{
+		Agents:     agent.NewDefaultRegistry(),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		GskillHome: filepath.Join(t.TempDir(), "gskill-home"),
+	})
+	name := t.Name()
+	t.Cleanup(func() { testApps.Delete(name) })
+	if existing, loaded := testApps.LoadOrStore(name, a); loaded {
+		prior, castOK := existing.(*app.App)
+		if !castOK {
+			t.Fatalf("testApps holds a %T", existing)
+		}
+		return prior
+	}
+	return a
+}
+
+// newAppWithHome builds an App with a private, empty gskill home — a fresh
+// machine whose global store holds nothing.
+func newAppWithHome(t *testing.T) *app.App {
+	t.Helper()
 	return app.New(app.Options{
-		Agents: agent.NewDefaultRegistry(),
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Agents:     agent.NewDefaultRegistry(),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		GskillHome: filepath.Join(t.TempDir(), "gskill-home"),
 	})
 }
 
-// runGskill runs the CLI against root and returns stdout, stderr, and exit code.
+// runGskill runs the CLI against root and returns stdout, stderr, and exit
+// code, using the test's private-home App.
 func runGskill(t *testing.T, root string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	return runGskillWithApp(t, newApp(), root, args...)
+	return runGskillWithApp(t, newApp(t), root, args...)
 }
 
 // runGskillWithApp runs the CLI against root using a caller-provided App.

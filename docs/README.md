@@ -32,6 +32,8 @@ Problem-oriented recipes — one per feature. See the [full index](how-to/index.
 - [Reproduce exactly with `--frozen-lockfile`](how-to/reproduce-with-frozen-lockfile.md)
 - [Verify integrity](how-to/verify-integrity.md)
 - [Gate CI on drift](how-to/gate-ci-on-drift.md)
+- [Reuse skills across projects](how-to/reuse-skills-across-projects.md)
+- [Migrate to the global store](how-to/migrate-to-global-store.md)
 - [Script GSKILL with `--json`](how-to/script-with-json.md)
 
 ## Reference
@@ -51,6 +53,8 @@ Understanding-oriented discussion.
 
 - [The reproducibility model](explanation/reproducibility-model.md)
 - [Integrity and trust](explanation/integrity-and-trust.md)
+- [The global store](explanation/global-store.md)
+- [Project state vs global state](explanation/project-and-global-state.md)
 - [The store and the cache](explanation/store-and-cache.md)
 - [Multi-agent installs](explanation/multi-agent-installs.md)
 

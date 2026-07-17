@@ -40,7 +40,10 @@ type AgentHealthEntry struct {
 // to report separately (spec 013 FR-001). Health is evaluated with the same
 // non-hash-verifying call `status` used, so this adds no new I/O-heavy work.
 func (a *App) List(_ context.Context, root string) ([]ListedSkill, error) {
-	p := openProject(root)
+	p, pErr := a.openProjectScoped(root)
+	if pErr != nil {
+		return nil, pErr
+	}
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return nil, err

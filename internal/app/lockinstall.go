@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/agent"
+	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
@@ -97,6 +99,14 @@ type LockSkillResult struct {
 	Phase           InstallPhase
 	PlannedAction   string // dry-run only: would-install|would-repair|would-remove-target|would-update-lock|blocked
 	Failure         *InstallFailure
+
+	// StoreReuse reports whether the content store satisfied this skill
+	// ("reused") or its source was fetched ("downloaded") — spec 015 FR-007.
+	// Empty when the entry never reached the store (failures, plans).
+	StoreReuse string
+	// StoreScope names the physical store that served the skill: "global" or
+	// "project".
+	StoreScope string
 }
 
 // InstallFromLockResult is the run summary.
@@ -116,7 +126,10 @@ type InstallFromLockResult struct {
 // the namespaced gskill metadata (FR-016). Failures are isolated per skill:
 // verified successes stay installed and recorded (FR-016a).
 func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (InstallFromLockResult, error) {
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return InstallFromLockResult{}, err
+	}
 	var res InstallFromLockResult
 
 	// A run whose context is already cancelled fails fast with zero writes:
@@ -153,17 +166,27 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 		if err != nil {
 			return err
 		}
-		if req.Prune && !req.DryRun && !req.Frozen {
-			pruned, pErr := a.pruneToDesired(p, lf)
-			if pErr != nil {
-				return pErr
-			}
-			res.Pruned = pruned
-			res.Changed = res.Changed || len(pruned) > 0
-		}
-		return nil
+		return a.finishLockRun(ctx, p, lf, req, &res)
 	})
 	return res, installErr
+}
+
+// finishLockRun applies the post-install run steps: pruning when requested,
+// and the machine-local state.json bookkeeping (never required for
+// reproduction — FR-014/FR-015 — so its failure warns rather than fails).
+func (a *App) finishLockRun(ctx context.Context, p *project, lf *skillslock.State, req InstallFromLockRequest, res *InstallFromLockResult) error {
+	if req.Prune && !req.DryRun && !req.Frozen {
+		pruned, pErr := a.pruneToDesired(p, lf)
+		if pErr != nil {
+			return pErr
+		}
+		res.Pruned = pruned
+		res.Changed = res.Changed || len(pruned) > 0
+	}
+	if !req.DryRun {
+		a.recordProjectState(ctx, p, lf)
+	}
+	return nil
 }
 
 // entryAgents returns an entry's declared gskill agents (nil for raw entries).
@@ -222,7 +245,8 @@ func checkFrozenAgents(l *skillslock.Lock, req InstallFromLockRequest) error {
 				fmt.Errorf("%w: --agent %s conflicts with the locked agents for %q:\nlocked: %s\nrequested: %s",
 					errs.ErrLockMismatch, strings.Join(requested, ","), name,
 					strings.Join(locked, ", "), strings.Join(requested, ", ")),
-				"remove --frozen-lockfile to update the agent selection")
+				"remove --frozen-lockfile to update the agent selection",
+			)
 		}
 	}
 	return nil
@@ -579,6 +603,13 @@ func (a *App) runOneLockEntry(ctx context.Context, p *project, lf *skillslock.St
 	if r.ResolvedRef == "" {
 		r.ResolvedRef = em.resolvedRef
 	}
+	// Structured decision log (spec 015 FR-041): reuse-vs-fetch, store scope,
+	// and identity facts; privacy-sensitive paths are not included here.
+	a.log.Debug("lock entry processed",
+		"skill", name, "status", r.Status,
+		"storeReuse", r.StoreReuse, "storeScope", r.StoreScope,
+		"commit", r.Commit, "hash", r.ComputedHash)
+
 	switch {
 	case r.Err != nil:
 		if r.Phase == "" {
@@ -668,7 +699,8 @@ func (a *App) ensureLocalState(ctx context.Context, p *project, req InstallFromL
 	if req.NoInit {
 		return false, errs.WithHint(
 			fmt.Errorf("%w: project is not initialized and --no-init is set", errs.ErrInvalidLock),
-			"drop --no-init or run 'gskill init' first")
+			"drop --no-init or run 'gskill init' first",
+		)
 	}
 	if req.DryRun {
 		return true, nil
@@ -807,7 +839,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 
 	staged, err := a.stageAndVerifyLockEntry(ctx, p, lf, name, e, req, em)
 	if err != nil {
-		return fail(err)
+		return fail(enrichOfflineMiss(p, e, req, err))
 	}
 
 	if req.DryRun {
@@ -838,6 +870,8 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 		r.Phase = InstallPhaseLinking
 		return fail(err)
 	}
+	r.StoreReuse = result.StoreReuse
+	r.StoreScope = result.StoreScope
 
 	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result,
 		requestedForEntry(lf, name, e, staged.rev))
@@ -863,6 +897,28 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 	r.Status = LockSkillInstalled
 	r.Err = nil
 	return r
+}
+
+// enrichOfflineMiss upgrades an offline source-unavailable failure with the
+// content-store facts the user needs (spec 015 FR-019, error contract
+// object-not-found-offline): the required object identity that was absent
+// from the resolved store, and the remediation.
+func enrichOfflineMiss(p *project, e skillslock.Entry, req InstallFromLockRequest, err error) error {
+	if !req.Offline || !errors.Is(err, errs.ErrSourceUnavailable) {
+		return err
+	}
+	hash := ""
+	if e.Ext != nil {
+		hash = e.Ext.StoreHash
+	}
+	if hash == "" {
+		return err
+	}
+	return errs.WithHint(
+		fmt.Errorf("%w\n  required object: %s (not available in the %s store)",
+			err, hash, p.storeScope),
+		"run without --offline to fetch it",
+	)
 }
 
 // planStagedEntry reports a staged entry's dry-run plan: would-install for a
@@ -906,7 +962,8 @@ func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req Insta
 		return fail(errs.WithHint(
 			fmt.Errorf("%w: entry has no gskill metadata; --frozen-lockfile cannot enrich the lock",
 				errs.ErrLockMismatch),
-			"run 'gskill install' without --frozen-lockfile once to record it"))
+			"run 'gskill install' without --frozen-lockfile once to record it",
+		))
 	}
 
 	explicit := req.Agents != nil
@@ -926,7 +983,8 @@ func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req Insta
 			}
 			return fail(errs.WithHint(
 				fmt.Errorf("%w: no target agents selected", errs.ErrUsage),
-				"pass --agent <id>[,<id>...] (the lock entry declares none)"))
+				"pass --agent <id>[,<id>...] (the lock entry declares none)",
+			))
 		}
 		if e.Ext == nil || len(entryAgents(e)) == 0 {
 			// Explicit empty selection, but nothing was ever installed for
@@ -1034,7 +1092,8 @@ func (a *App) retryOrRejectMismatch(ctx context.Context, inst *installer.Install
 				err: fmt.Errorf("%w: computedHash mismatch: lock records %s, source content is %s",
 					errs.ErrIntegrity, e.ComputedHash, staged.compat),
 			},
-			"re-run with --force to accept the changed upstream content")
+			"re-run with --force to accept the changed upstream content",
+		)
 	}
 	return staged, nil
 }
@@ -1095,14 +1154,10 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		// output; that would silently stop catching that drift.
 		return LockSkillResult{}, false
 	}
-	if !p.store.Has(prior.Resolved.ContentHash) {
+	if !p.contentHas(prior.Resolved.ContentHash) {
 		return LockSkillResult{}, false
 	}
-	// The recorded hash must match the actual stored content — comparing the
-	// entry against itself would let an edited or corrupted computedHash pass
-	// as "up to date" (it must fail closed, or be accepted via --force, on
-	// the full path).
-	if compat, err := integrity.CompatHash(p.store.Path(prior.Resolved.ContentHash)); err != nil || compat != e.ComputedHash {
+	if !a.storedContentUpToDate(p, prior.Resolved.ContentHash, e.ComputedHash) {
 		return LockSkillResult{}, false
 	}
 
@@ -1117,6 +1172,10 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	stampResultProvenance(&r, e, req)
 	r.Agents = ids
 	r.Commit = prior.Resolved.Commit
+	// The fast path is a store hit by definition: content came from the
+	// resolved store, nothing was fetched (spec 015 FR-007).
+	r.StoreReuse = installer.StoreReused
+	r.StoreScope = p.storeScope
 	if len(missing) == 0 {
 		return r, true
 	}
@@ -1137,6 +1196,28 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	lf.Skills[name] = prior
 	r.Status = LockSkillRepaired
 	return r, true
+}
+
+// storedContentUpToDate establishes that the stored object still backs the
+// lock entry. The recorded hash must match the actual stored content —
+// comparing the entry against itself would let an edited or corrupted
+// computedHash pass as "up to date" (it must fail closed, or be accepted via
+// --force, on the full path). CompatHash skips symlinks by design, so it
+// alone cannot notice one added into (or retargeted inside) a shared object:
+// for the global store the store's own verification also runs (depth per
+// store.verify_on_use), so a tampered object never satisfies the fast path
+// (FR-020) — it falls through to the full path, which fails closed or
+// quarantines.
+func (a *App) storedContentUpToDate(p *project, contentHash, computedHash string) bool {
+	if compat, err := integrity.CompatHash(p.contentPath(contentHash)); err != nil || compat != computedHash {
+		return false
+	}
+	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
+		if err := newGlobalContentStore(p.global, a.cfg).Verify(contentHash); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveLockEntry pins an entry to a revision: a previously recorded gskill

@@ -101,7 +101,7 @@ func (h SkillHealth) IntegrityFault() bool {
 // (the integrity check); otherwise only presence is checked (the cheap path used
 // by reconcile to decide what to skip).
 func (a *App) evaluateHealth(p *project, lf *skillslock.State, verifyHash bool) ([]SkillHealth, error) {
-	storeRoot, err := filepath.Abs(p.store.Root())
+	storeRoot, err := filepath.Abs(p.contentRoot())
 	if err != nil {
 		return nil, fmt.Errorf("resolve store root: %w", err)
 	}
@@ -120,7 +120,7 @@ func (a *App) evaluateHealth(p *project, lf *skillslock.State, verifyHash bool) 
 // evaluateSkill computes the health of a single locked skill.
 func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, storeRoot string, verifyHash bool) (SkillHealth, error) {
 	hash := locked.Resolved.ContentHash
-	storePath := p.store.Path(hash)
+	storePath := p.contentPath(hash)
 	h := SkillHealth{
 		Name:        name,
 		Scope:       locked.Installation.Scope,
@@ -131,7 +131,7 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, s
 		Modes:       locked.Installation.Modes,
 	}
 
-	h.StorePresent = p.store.Has(hash)
+	h.StorePresent = p.contentHas(hash)
 	if h.StorePresent && verifyHash {
 		hashes, err := integrity.HashDir(storePath)
 		if err != nil {

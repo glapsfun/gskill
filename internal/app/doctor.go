@@ -2,10 +2,14 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/glapsfun/gskill/internal/config"
+	"github.com/glapsfun/gskill/internal/fsutil"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -47,6 +51,12 @@ func (a *App) Doctor(ctx context.Context, root string) (DoctorReport, error) {
 		report.DetectedAgents = append(report.DetectedAgents, ag.ID())
 	}
 
+	if hasPopulatedProjectStore(root) && a.cfg.StoreScope != config.StoreScopeProject {
+		report.Warnings = append(report.Warnings,
+			"this project uses the legacy project-local store; run 'gskill migrate global-store' to share content across projects")
+	}
+	a.auditGlobalHome(&report)
+
 	lf, err := loadOrNewLock(openProject(root).lockPath)
 	if err != nil {
 		return DoctorReport{}, err
@@ -55,6 +65,30 @@ func (a *App) Doctor(ctx context.Context, root string) (DoctorReport, error) {
 		checkRequirements(name, lf.Skills[name].Requires, lf, &report)
 	}
 	return report, nil
+}
+
+// auditGlobalHome appends warnings for unsafe home permissions, quarantined
+// objects, and abandoned staging (spec 015 FR-033, contracts §5).
+func (a *App) auditGlobalHome(report *DoctorReport) {
+	h, err := a.openHome()
+	if err != nil {
+		return // no home yet: nothing to audit
+	}
+	if findings, err := h.CheckPerms(); err == nil {
+		for _, f := range findings {
+			report.Warnings = append(report.Warnings, "global store: "+f.String())
+		}
+	}
+	if entries, err := os.ReadDir(h.QuarantineDir()); err == nil && len(entries) > 0 {
+		report.Warnings = append(report.Warnings, fmt.Sprintf(
+			"global store holds %d quarantined corrupted objects; inspect %s and run 'gskill store verify'",
+			len(entries), h.QuarantineDir()))
+	}
+	if stale, err := fsutil.ListStaleDirs(h.TmpDir(), time.Hour); err == nil && len(stale) > 0 {
+		report.Warnings = append(report.Warnings, fmt.Sprintf(
+			"%d abandoned staging directories under %s; 'gskill store gc --apply' cleans them",
+			len(stale), h.TmpDir()))
+	}
 }
 
 // checkRequirements verifies a skill's declared requirements and appends results

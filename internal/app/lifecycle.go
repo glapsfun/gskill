@@ -61,12 +61,15 @@ func (a *App) Outdated(ctx context.Context, root string) (OutdatedReport, error)
 // Update re-resolves the named skills (or all when names is empty) to the newest
 // version within their constraints and rewrites the lock (FR-009).
 func (a *App) Update(ctx context.Context, root string, names []string) (InstallResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return InstallResult{}, err
+	}
 	if !fileExists(p.lockPath) {
 		return InstallResult{}, errNoLock()
 	}
 	var out InstallResult
-	err := a.withLock(ctx, p, func() error {
+	err = a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr
@@ -83,7 +86,8 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 			if !ok {
 				return errs.WithHint(
 					fmt.Errorf("%w: skill %q is not declared", errs.ErrInvalidLock, name),
-					"run 'gskill list' to see installed skills")
+					"run 'gskill list' to see installed skills",
+				)
 			}
 			sctx := stampSkill(ctx, name, k+1, len(targets))
 			change, applyErr := a.installOne(sctx, p, lf, name, intentFromRecord(r), InstallRequest{Root: root})
@@ -93,7 +97,11 @@ func (a *App) Update(ctx context.Context, root string, names []string) (InstallR
 			out.Skills = append(out.Skills, change)
 			out.Changed = out.Changed || change.Changed
 		}
-		return saveLock(p.lockPath, lf)
+		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
+			return saveErr
+		}
+		a.recordProjectState(ctx, p, lf)
+		return nil
 	})
 	if err != nil {
 		return InstallResult{}, err
@@ -111,12 +119,15 @@ type RemoveResult struct {
 // Remove uninstalls the named skills from the lock and every agent directory,
 // then garbage-collects unreferenced store entries.
 func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return RemoveResult{}, err
+	}
 	if !fileExists(p.lockPath) {
 		return RemoveResult{}, errNoLock()
 	}
 	var out RemoveResult
-	err := a.withLock(ctx, p, func() error {
+	err = a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr
@@ -132,11 +143,19 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 			return saveErr
 		}
 
+		// GC is strictly the PROJECT-LOCAL store's: removing a skill from one
+		// project must never delete shared global content — global objects are
+		// deletable only through `gskill store gc` (spec 015 FR-009/FR-024).
+		// For scope=global p.store is empty, so this is a no-op by design.
 		gced, gcErr := p.store.GC(referencedHashes(lf))
 		if gcErr != nil {
 			return gcErr
 		}
 		out.StoreGCed = gced
+
+		// Drop the removed skills' machine-local bookkeeping (FR-014) and let
+		// the registry stop marking the removed objects (FR-027).
+		a.recordProjectState(ctx, p, lf)
 		return nil
 	})
 	if err != nil {

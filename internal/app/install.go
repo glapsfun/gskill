@@ -39,7 +39,10 @@ type InitResult struct {
 // manifest; an empty skills-lock.json is written only when withLock is set.
 // It is idempotent.
 func (a *App) Init(_ context.Context, root string, withLock bool) (InitResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return InitResult{}, err
+	}
 	res := InitResult{LockPath: p.lockPath}
 
 	for _, dir := range []string{filepath.Join(root, stateDirName), active.Dir(root)} {
@@ -125,7 +128,10 @@ type AddResult struct {
 // It errors on an already-declared key unless Force is set (FR-047), and
 // writes nothing when no target agent is available (FR-029).
 func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return AddResult{}, err
+	}
 
 	// Adding an agent to an already-installed skill is a local relink: reuse the
 	// locked revision and existing store, with no resolve or network (FR-001).
@@ -341,7 +347,8 @@ func (a *App) resolveSelection(scan discovery.Result, req AddRequest, explicitPa
 		}
 		return nil, fmt.Errorf(
 			"%w: source contains %d skills; select with --skill <name>, repeated --skill, or --skill '*'",
-			errs.ErrUsage, len(valid))
+			errs.ErrUsage, len(valid),
+		)
 	case len(invalid) > 0:
 		return nil, fmt.Errorf("%w: skill %q is invalid: %s",
 			errs.ErrInvalidLock, invalid[0].ID, firstProblem(invalid[0]))
@@ -453,6 +460,10 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 			rollback()
 			return saveErr
 		}
+		// Without this bookkeeping, a project populated only via `gskill add`
+		// is invisible to store GC's marking and its global objects become
+		// deletable while still referenced.
+		a.recordProjectState(ctx, p, lf)
 		return nil
 	})
 	if err != nil {
@@ -481,7 +492,8 @@ func (a *App) planAdd(lf *skillslock.State, external map[string]bool, id string,
 	if !exists && external[id] {
 		return addPlan{}, &ConflictError{Skill: id, Kind: ConflictCrossSource, err: fmt.Errorf(
 			"%w: skill %q is already declared in %s by another tool; run 'gskill install' to adopt that entry, or use a different name",
-			errs.ErrInvalidLock, id, skillslock.FileName)}
+			errs.ErrInvalidLock, id, skillslock.FileName,
+		)}
 	}
 	if !exists || req.Force {
 		ags, err := a.agentsByID(reqIDs)
@@ -491,7 +503,8 @@ func (a *App) planAdd(lf *skillslock.State, external map[string]bool, id string,
 	if existing.Source.Original != req.Source {
 		return addPlan{}, &ConflictError{Skill: id, Kind: ConflictCrossSource, err: fmt.Errorf(
 			"%w: skill %q is already declared from a different source %q (name collision); use a different name or 'gskill remove %s' first",
-			errs.ErrInvalidLock, id, existing.Source.Original, id)}
+			errs.ErrInvalidLock, id, existing.Source.Original, id,
+		)}
 	}
 
 	current := existing.Installation.Agents
@@ -511,7 +524,8 @@ func (a *App) planAdd(lf *skillslock.State, external map[string]bool, id string,
 func conflictErr(id string) error {
 	return &ConflictError{Skill: id, Kind: ConflictNoopReadd, err: fmt.Errorf(
 		"%w: skill %q already declared; use 'gskill update %s' or --force",
-		errs.ErrInvalidLock, id, id)}
+		errs.ErrInvalidLock, id, id,
+	)}
 }
 
 // mergeAgentInstall folds an agent-add install result into an existing lock
@@ -679,7 +693,8 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 	// Backfill the tracking intent before building the lock entry, so the
 	// record's `requested` stays satisfied on the next run.
 	rq := backfillRequested(
-		skillslock.Requested{Version: in.Version, Ref: in.Ref, Commit: in.Commit}, rev)
+		skillslock.Requested{Version: in.Version, Ref: in.Ref, Commit: in.Commit}, rev,
+	)
 
 	ireq := a.installRequest(p.root, ref, rev, agents, cmp.Or(in.Scope, req.Scope), modeOr(req.Mode, in.Mode))
 	ireq.Name = name
@@ -712,7 +727,8 @@ func (a *App) agentsByID(ids []string) ([]agent.Agent, error) {
 		if !ok {
 			return nil, errs.WithHint(
 				fmt.Errorf("%w: locked agent %q is not available", errs.ErrUnsupportedAgent, id),
-				"run 'gskill doctor' to list detected agents")
+				"run 'gskill doctor' to list detected agents",
+			)
 		}
 		out = append(out, ag)
 	}
@@ -733,7 +749,8 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 			if !ok {
 				return nil, errs.WithHint(
 					fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, id),
-					"run 'gskill doctor' to list detected agents")
+					"run 'gskill doctor' to list detected agents",
+				)
 			}
 			out = append(out, ag)
 		}
@@ -760,7 +777,8 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 	return nil, errs.WithHint(
 		fmt.Errorf("%w: no target agent specified and none detected (known: %s)",
 			errs.ErrUnsupportedAgent, strings.Join(known, ", ")),
-		"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing")
+		"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing",
+	)
 }
 
 // installRequest assembles an installer.Request with shared defaults.
@@ -778,12 +796,14 @@ func (a *App) installRequest(root string, ref source.Ref, rev resolver.Revision,
 	}
 }
 
-// withLock runs fn while holding the project's exclusive mutate lock (FR-021).
+// withLock runs fn while holding the project's exclusive mutate lock
+// (FR-021, spec 015 FR-030): it covers the project-active links, agent
+// links, machine-local state, and lockfile updates of exactly one project.
 func (a *App) withLock(ctx context.Context, p *project, fn func() error) error {
 	if err := os.MkdirAll(p.locksDir, 0o750); err != nil {
 		return fmt.Errorf("create locks dir: %w", err)
 	}
-	lock, err := fsutil.Acquire(ctx, filepath.Join(p.locksDir, "mutate.lock"), fsutil.LockExclusive, defaultLockTimeout)
+	lock, err := fsutil.Acquire(ctx, p.mutateLockPath(), fsutil.LockExclusive, defaultLockTimeout)
 	if err != nil {
 		return err
 	}
@@ -829,7 +849,8 @@ func recordAdd(lf *skillslock.State, req AddRequest, s discovery.DiscoveredSkill
 		return nil
 	}
 	rq := backfillRequested(
-		skillslock.Requested{Version: req.Version, Ref: req.Ref, Commit: req.Commit}, rev)
+		skillslock.Requested{Version: req.Version, Ref: req.Ref, Commit: req.Commit}, rev,
+	)
 	locked, err := buildLockEntry(ref, rev, ireq, result, rq)
 	if err != nil {
 		return err

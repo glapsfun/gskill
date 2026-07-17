@@ -158,6 +158,16 @@ Install all declared skills (additive, idempotent).
 List installed skills, their status, and per-agent health.
 
 
+## `migrate`
+
+Migrate this project to the shared global store.
+
+
+## `migrate global-store`
+
+Move this project's skill content into the shared global store.
+
+
 ## `onboard`
 
 Guided skill installation without a predefined source.
@@ -208,6 +218,35 @@ Reconcile disk to the lock's declared state (--prune removes managed orphans).
 ## `project verify`
 
 Re-hash installed content against the lockfile.
+
+
+## `projects`
+
+Inspect the advisory project registry.
+
+
+## `projects inspect`
+
+Show one registered project's details.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `project-id` | yes | Registered project identifier. |
+
+
+## `projects list`
+
+List projects known to use the global store.
+
+
+## `projects prune`
+
+Drop registry entries for projects that no longer exist.
+
+
+## `projects refresh`
+
+Re-derive every registry entry from its project.
 
 
 ## `remove`
@@ -285,6 +324,77 @@ List all skills discovered in a source.
 | `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
 | `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
 | `--ref` | string | Branch or tag to scan. |
+
+
+## `store`
+
+Manage the global content store.
+
+
+## `store gc`
+
+Report (default) or delete unused store objects.
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--apply` | bool | Delete the unused objects (default is a dry-run report). |
+| `--older-than` | string | Override the grace period for this run (e.g. 90d). |
+
+
+## `store inspect`
+
+Show one object's integrity, origins, and users.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `hash` | yes | Content key of the object (sha256:<hex>). |
+
+
+## `store list`
+
+List stored objects and their users.
+
+
+## `store pin`
+
+Exempt an object from garbage collection.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `hash` | yes | Content key to pin. |
+
+
+## `store pins`
+
+List pinned objects.
+
+
+## `store repair`
+
+Restore a corrupted object from its recorded origin.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `hash` | yes | Content key of the object to repair (sha256:<hex>). |
+
+
+## `store status`
+
+Summarize the global store.
+
+
+## `store unpin`
+
+Remove an object's GC exemption.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `hash` | yes | Content key to unpin. |
+
+
+## `store verify`
+
+Verify every global store object's integrity.
 
 
 ## `unlink`

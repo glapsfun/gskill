@@ -101,7 +101,10 @@ func (a *App) DiscoverSource(ctx context.Context, req DiscoverRequest) (Discover
 		return DiscoverResult{}, err
 	}
 
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return DiscoverResult{}, err
+	}
 	ireq := a.installRequest(req.Root, ref, rev, nil, req.Scope, req.Mode)
 	inst := a.installerForScope(p, string(ireq.Scope))
 	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{
@@ -207,7 +210,8 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 				// not the lockfile's "locked agent" message (review finding).
 				return nil, errs.WithHint(
 					fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, id),
-					"run 'gskill doctor' to list detected agents")
+					"run 'gskill doctor' to list detected agents",
+				)
 			}
 			pre = append(pre, ag)
 		}
@@ -223,7 +227,8 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 			return nil, errs.WithHint(
 				fmt.Errorf("%w: no target agent specified and none detected (known: %s)",
 					errs.ErrUnsupportedAgent, strings.Join(known, ", ")),
-				"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing")
+				"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing",
+			)
 		}
 		pre = []agent.Agent{def}
 	}
@@ -289,7 +294,10 @@ func (a *App) ExecutePlan(ctx context.Context, plan InstallPlan, progress func(I
 		return AddResult{}, fmt.Errorf("%w: no skill selected", errs.ErrUsage)
 	}
 
-	p := openProject(plan.Root)
+	p, err := a.openProjectScoped(plan.Root)
+	if err != nil {
+		return AddResult{}, err
+	}
 	if plan.InitProject {
 		if _, err := a.Init(ctx, plan.Root, false); err != nil {
 			return AddResult{}, err

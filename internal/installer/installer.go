@@ -59,25 +59,45 @@ type Result struct {
 	ActivePath    string            // project-relative active entry (empty for global scope)
 	Targets       map[string]string // agentID -> recorded dir (relative for project scope)
 	Warnings      []string
+	// StoreReuse reports whether the content store satisfied the install
+	// (StoreReused) or the source was fetched (StoreDownloaded) — spec 015
+	// FR-007.
+	StoreReuse string
+	// StoreScope names the physical store that served the install: "project"
+	// or "global".
+	StoreScope string
 }
 
-// Installer runs the staging-verify-activate transaction over the store, cache,
-// and git runner.
+// Installer runs the staging-verify-activate transaction over the content
+// store, cache, and git runner.
 type Installer struct {
-	git   git.Runner
-	cache *cache.Cache
-	store *store.Store
+	git     git.Runner
+	cache   *cache.Cache
+	content ContentStore
 }
 
-// New builds an Installer. The git runner may be nil for local-only installs.
+// New builds an Installer over the legacy project-local store. The git runner
+// may be nil for local-only installs.
 func New(g git.Runner, c *cache.Cache, s *store.Store) *Installer {
-	return &Installer{git: g, cache: c, store: s}
+	return NewWithStore(g, c, legacyStore{s: s})
+}
+
+// NewWithStore builds an Installer over any ContentStore (spec 015: the
+// user-level global store, or the legacy project store).
+func NewWithStore(g git.Runner, c *cache.Cache, cs ContentStore) *Installer {
+	return &Installer{git: g, cache: c, content: cs}
 }
 
 // Install materializes, verifies, and activates the requested skill (FR-015,
-// FR-018, FR-019, FR-020). It verifies content before activating into any agent
-// directory, failing closed on a checksum mismatch.
+// FR-018, FR-019, FR-020). When the expected content already sits verified in
+// the content store, the source is not fetched at all — the stored object is
+// reused (spec 015 FR-006). Content is always verified before activating into
+// any agent directory, failing closed on a checksum mismatch.
 func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
+	if req.ExpectContentHash != "" && i.content.Has(req.ExpectContentHash) {
+		return i.installFromStore(ctx, req)
+	}
+
 	material, err := i.materialize(ctx, req)
 	if err != nil {
 		return Result{}, err
@@ -103,7 +123,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 			errs.ErrIntegrity, hashes.ContentHash, req.ExpectContentHash)
 	}
 
-	storePath, err := i.stageAndVerify(hashes.ContentHash, skill.Dir)
+	storePath, err := i.content.Put(ctx, hashes.ContentHash, skill.Dir, originFrom(req))
 	if err != nil {
 		return Result{}, err
 	}
@@ -123,7 +143,97 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		ActivePath:    activePath,
 		Targets:       targets,
 		Warnings:      warnings,
+		StoreReuse:    StoreDownloaded,
+		StoreScope:    i.content.ScopeLabel(),
 	}, nil
+}
+
+// installFromStore activates req directly from the verified content store,
+// with no source fetch (spec 015 FR-006, FR-018). The stored object is
+// verified before activation and fails closed on corruption (FR-020/021).
+func (i *Installer) installFromStore(ctx context.Context, req Request) (Result, error) {
+	hash := req.ExpectContentHash
+	if err := i.content.Verify(hash); err != nil {
+		return Result{}, err
+	}
+	contentPath := i.content.Path(hash)
+
+	skill, err := discovery.Discover(contentPath, "")
+	if err != nil {
+		return Result{}, fmt.Errorf("discover stored content %s: %w", hash, err)
+	}
+	// Reused content gets the same validation a fresh fetch gets (FR-043):
+	// admission validated it once, but the executable-bit warnings were not
+	// persisted, and a symlink planted after admission must still fail closed
+	// before this project activates the shared object.
+	warnings, err := validateContent(contentPath)
+	if err != nil {
+		return Result{}, err
+	}
+	warnings = append(warnings, identityWarning(req.Name, skill.Frontmatter.Name)...)
+
+	skillFile, err := os.ReadFile(filepath.Join(contentPath, integrity.SkillFileName)) //nolint:gosec // store-internal path
+	if err != nil {
+		return Result{}, fmt.Errorf("read stored %s: %w", integrity.SkillFileName, err)
+	}
+
+	// Close any live progress line: nothing is fetched for a store hit.
+	progress.Emit(ctx, progress.Event{Phase: progress.PhaseDone, Repo: req.Ref.Display()})
+	i.content.Touch(ctx, hash)
+
+	if origin := originFrom(req); origin.Commit != "" {
+		// Best-effort origin enrichment; identity never changes (FR-003).
+		// Stores that record origins expose the metadata-only path; falling
+		// back to Put would re-copy and re-verify the whole object just to
+		// merge one metadata record.
+		if rec, ok := i.content.(OriginRecorder); ok {
+			if recErr := rec.RecordOrigin(ctx, hash, origin); recErr != nil {
+				warnings = append(warnings, fmt.Sprintf("record origin for %s: %v", hash, recErr))
+			}
+		}
+	}
+
+	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), contentPath)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return Result{
+		Skill:         skill,
+		ContentHash:   hash,
+		SkillFileHash: integrity.HashContent(skillFile),
+		Mode:          mode,
+		Modes:         modes,
+		Agents:        agentIDs(req.Agents),
+		ActivePath:    activePath,
+		Targets:       targets,
+		Warnings:      warnings,
+		StoreReuse:    StoreReused,
+		StoreScope:    i.content.ScopeLabel(),
+	}, nil
+}
+
+// originFrom derives the descriptive store origin from an install request.
+func originFrom(req Request) ObjectOrigin {
+	ref := req.Revision.Tag
+	if ref == "" {
+		ref = req.Revision.Branch
+	}
+	src := req.Ref.URL
+	if src == "" {
+		src = req.Ref.LocalPath
+	}
+	if src == "" {
+		src = req.Ref.Display()
+	}
+	return ObjectOrigin{
+		SourceType: string(req.Ref.Type),
+		Source:     src,
+		SkillPath:  req.Path,
+		Version:    req.Revision.Version,
+		Ref:        ref,
+		Commit:     req.Revision.Commit,
+	}
 }
 
 // Discover materializes the source and discovers the skill without activating
@@ -229,24 +339,6 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 	return dir, nil
 }
 
-// stageAndVerify stores the skill content and re-hashes the stored copy,
-// failing closed if it does not match the expected hash (FR-015).
-func (i *Installer) stageAndVerify(contentHash, skillDir string) (string, error) {
-	storePath, err := i.store.Put(contentHash, skillDir)
-	if err != nil {
-		return "", err
-	}
-	check, err := integrity.HashDir(storePath)
-	if err != nil {
-		return "", err
-	}
-	if check.ContentHash != contentHash {
-		return "", fmt.Errorf("%w: stored content %s != expected %s",
-			errs.ErrIntegrity, check.ContentHash, contentHash)
-	}
-	return storePath, nil
-}
-
 // activateAll materializes the active layer and links/copies it into every
 // target agent dir, returning the representative mode (the first agent's), the
 // project-relative active path, the per-agent target paths, and the per-agent
@@ -267,7 +359,12 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 		// Propagate EnsureActive's error code verbatim so a foreign-occupant
 		// collision fails closed with its own exit code rather than being masked
 		// as a generic partial install.
-		activePath, err := active.EnsureActive(req.ProjectRoot, name, storePath, i.store.Root())
+		// Both the resolved content root and the legacy project-local store
+		// root are gskill-owned link targets: a stale link into either (e.g.
+		// after the project transitions to the global store) re-points rather
+		// than failing as foreign (spec 015 FR-011).
+		activePath, err := active.EnsureActive(req.ProjectRoot, name, storePath,
+			i.content.Root(), filepath.Join(req.ProjectRoot, ".gskill", "store"))
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("ensure active %s: %w", name, err)
 		}
@@ -312,7 +409,10 @@ func (i *Installer) guardForeignTarget(req Request, dest, storePath string) erro
 	if _, err := os.Lstat(dest); err != nil {
 		return nil //nolint:nilerr // absent destination: nothing to protect, activation proceeds
 	}
-	roots := []string{i.store.Root(), active.Dir(req.ProjectRoot)}
+	roots := []string{
+		i.content.Root(), active.Dir(req.ProjectRoot),
+		filepath.Join(req.ProjectRoot, ".gskill", "store"),
+	}
 	hashes := []string{req.PriorContentHash, req.ExpectContentHash}
 	if h, err := integrity.HashDir(storePath); err == nil {
 		hashes = append(hashes, h.ContentHash)

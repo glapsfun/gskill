@@ -223,7 +223,10 @@ func (a *App) PlanInstall(ctx context.Context, req PlanRequest) (InstallPlan, er
 // check) do not pay for a second registry-wide detection pass (review
 // finding). agents == nil resolves here.
 func (a *App) planInstallResolved(ctx context.Context, req PlanRequest, agents []agent.Agent) (InstallPlan, error) {
-	p := openProject(req.Root)
+	p, err := a.openProjectScoped(req.Root)
+	if err != nil {
+		return InstallPlan{}, err
+	}
 
 	plan := InstallPlan{
 		Root:            req.Root,
@@ -460,7 +463,8 @@ func appendSkillActions(plan *InstallPlan, req PlanRequest, s discovery.Discover
 func overwriteConflict(skill, dest string) PlanConflict {
 	err := &ConflictError{Skill: skill, Kind: ConflictFileOverwrite, err: fmt.Errorf(
 		"%w: destination %s already exists and is not managed by gskill; remove it, or re-run with --force to overwrite",
-		errs.ErrInvalidLock, dest)}
+		errs.ErrInvalidLock, dest,
+	)}
 	return PlanConflict{Skill: skill, Kind: ConflictFileOverwrite, Detail: err.Error(), Err: err}
 }
 

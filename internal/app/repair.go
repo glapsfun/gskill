@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/installer"
 )
 
@@ -18,11 +19,22 @@ type RepairResult struct {
 // without changing the lockfile, and cleans up orphaned staging left by an
 // interrupted install (FR-024, SC-007).
 func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
-	p := openProject(root)
+	p, err := a.openProjectScoped(root)
+	if err != nil {
+		return RepairResult{}, err
+	}
 
 	var out RepairResult
-	err := a.withLock(ctx, p, func() error {
-		cleaned, cleanErr := installer.CleanupStaging(p.store.Root(), p.cache.Root())
+	err = a.withLock(ctx, p, func() error {
+		// Staging cleanup only touches roots this project's lock covers. For
+		// scope=global, p.cache is the SHARED home cache where other projects
+		// stage concurrent fetches (only the per-project lock is held here),
+		// so it is left to the age-thresholded sweep in store GC (FR-032).
+		stagingRoots := []string{p.store.Root()}
+		if p.storeScope != config.StoreScopeGlobal {
+			stagingRoots = append(stagingRoots, p.cache.Root())
+		}
+		cleaned, cleanErr := installer.CleanupStaging(stagingRoots...)
 		if cleanErr != nil {
 			return cleanErr
 		}
@@ -32,7 +44,7 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 		if err != nil {
 			return err
 		}
-		storeRoot, err := filepath.Abs(p.store.Root())
+		storeRoot, err := filepath.Abs(p.contentRoot())
 		if err != nil {
 			return fmt.Errorf("resolve store root: %w", err)
 		}
@@ -59,6 +71,7 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 			}
 			out.Repaired = append(out.Repaired, name)
 		}
+		a.recordProjectState(ctx, p, lf)
 		return nil
 	})
 	if err != nil {

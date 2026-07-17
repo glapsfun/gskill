@@ -29,7 +29,10 @@ type VerifyReport struct {
 // Verify re-hashes every installed skill against the lockfile, failing closed on
 // the first mismatch (exit 6, FR-015).
 func (a *App) Verify(_ context.Context, root string) (VerifyReport, error) {
-	p := openProject(root)
+	p, pErr := a.openProjectScoped(root)
+	if pErr != nil {
+		return VerifyReport{}, pErr
+	}
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return VerifyReport{}, err
@@ -86,7 +89,10 @@ type CheckReport struct {
 // agent). With failOnDrift, any drift returns exit 7 (FR-016). A present-but-
 // corrupt store fails closed with exit 6 regardless of the flag (FR-018).
 func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckReport, error) {
-	p := openProject(root)
+	p, pErr := a.openProjectScoped(root)
+	if pErr != nil {
+		return CheckReport{}, pErr
+	}
 	lf, err := loadOrNewLock(p.lockPath)
 	if err != nil {
 		return CheckReport{}, err

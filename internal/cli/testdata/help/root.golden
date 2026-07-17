@@ -67,6 +67,15 @@ MORE
   doctor [flags]
     Check the environment and declared requirements.
 
+  store <command> [flags]
+    Manage the global content store.
+
+  migrate <command> [flags]
+    Migrate this project to the shared global store.
+
+  projects <command> [flags]
+    Inspect the advisory project registry.
+
   dashboard (tui) [flags]
     Launch the interactive dashboard.
 

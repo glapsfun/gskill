@@ -31,6 +31,11 @@ GSKILL? Start with the [tutorial](../tutorials/getting-started.md) first.
 
 - [Cut and verify a release](releasing.md) — publish a version and verify its checksums, signature, and provenance.
 - [Manage the cache](manage-the-cache.md).
+- [Reuse skills across projects](reuse-skills-across-projects.md).
+- [Use different skill versions per project](use-different-skill-versions.md).
+- [Migrate to the global store](migrate-to-global-store.md).
+- [Manage the global store](manage-the-global-store.md).
+- [Clean unused store objects](clean-unused-store-objects.md).
 - [Configure GSKILL](configure-gskill.md).
 - [Set up shell completion](shell-completion.md).
 - [Run doctor](run-doctor.md).

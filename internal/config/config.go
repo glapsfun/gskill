@@ -6,10 +6,13 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/knadh/koanf/parsers/toml/v2"
 	"github.com/knadh/koanf/providers/confmap"
@@ -35,7 +38,39 @@ type Config struct {
 	// (FR-038). Configured in a config file (TOML array) or via
 	// GSKILL_REPOSITORIES (comma-separated).
 	Repositories []string
+	// StoreScope selects the physical content-store location: "global"
+	// (user-level store under the gskill home) or "project" (legacy
+	// <project>/.gskill/store). Empty means auto-detect per project. Distinct
+	// from the installer's agent-target scope.
+	StoreScope string
+	// StoreVerifyOnUse re-hashes a global store object's content on every
+	// activation when true (the default).
+	StoreVerifyOnUse bool
+	// StoreGCGracePeriod is the minimum age before an unreferenced global
+	// store object becomes eligible for garbage collection.
+	StoreGCGracePeriod time.Duration
+	// StoreLockTimeout bounds how long a contended global-store or project
+	// lock is waited on before failing.
+	StoreLockTimeout time.Duration
+	// ProjectsRegistry enables the advisory per-user project registry.
+	ProjectsRegistry bool
+	// PrivacyProjectRegistry controls how much project detail the registry
+	// records: "full", "minimal" (no absolute paths), or "disabled".
+	PrivacyProjectRegistry string
 }
+
+// Store scope values accepted for StoreScope (empty = auto-detect).
+const (
+	StoreScopeGlobal  = "global"
+	StoreScopeProject = "project"
+)
+
+// Privacy modes accepted for PrivacyProjectRegistry.
+const (
+	PrivacyFull     = "full"
+	PrivacyMinimal  = "minimal"
+	PrivacyDisabled = "disabled"
+)
 
 // Sources are the inputs to Load. Empty fields are skipped; later layers
 // override earlier ones in the documented precedence order.
@@ -57,13 +92,29 @@ type Sources struct {
 // DefaultMap returns the built-in configuration defaults.
 func DefaultMap() map[string]any {
 	return map[string]any{
-		"log_level":    "info",
-		"log_format":   "text",
-		"offline":      false,
-		"no_cache":     false,
-		"jobs":         0,
-		"repositories": []string{},
+		"log_level":                "info",
+		"log_format":               "text",
+		"offline":                  false,
+		"no_cache":                 false,
+		"jobs":                     0,
+		"repositories":             []string{},
+		"store.scope":              "",
+		"store.verify_on_use":      true,
+		"store.gc_grace_period":    "30d",
+		"store.lock_timeout":       "60s",
+		"projects.registry":        true,
+		"privacy.project_registry": PrivacyFull,
 	}
+}
+
+// Default returns the built-in defaults as a resolved Config, with no file,
+// environment, or flag layers consulted.
+func Default() *Config {
+	cfg, err := Load(Sources{Environ: []string{}})
+	if err != nil {
+		panic("config: built-in defaults failed to load: " + err.Error())
+	}
+	return cfg
 }
 
 // Load merges the configuration layers in Sources and returns the result.
@@ -100,14 +151,78 @@ func Load(s Sources) (*Config, error) {
 		}
 	}
 
-	return &Config{
-		LogLevel:     k.String("log_level"),
-		LogFormat:    k.String("log_format"),
-		Offline:      k.Bool("offline"),
-		NoCache:      k.Bool("no_cache"),
-		Jobs:         k.Int("jobs"),
-		Repositories: k.Strings("repositories"),
-	}, nil
+	grace, err := ParseFlexDuration(k.String("store.gc_grace_period"))
+	if err != nil {
+		return nil, fmt.Errorf("store.gc_grace_period: %w", err)
+	}
+	lockTimeout, err := ParseFlexDuration(k.String("store.lock_timeout"))
+	if err != nil {
+		return nil, fmt.Errorf("store.lock_timeout: %w", err)
+	}
+
+	cfg := &Config{
+		LogLevel:               k.String("log_level"),
+		LogFormat:              k.String("log_format"),
+		Offline:                k.Bool("offline"),
+		NoCache:                k.Bool("no_cache"),
+		Jobs:                   k.Int("jobs"),
+		Repositories:           k.Strings("repositories"),
+		StoreScope:             k.String("store.scope"),
+		StoreVerifyOnUse:       k.Bool("store.verify_on_use"),
+		StoreGCGracePeriod:     grace,
+		StoreLockTimeout:       lockTimeout,
+		ProjectsRegistry:       k.Bool("projects.registry"),
+		PrivacyProjectRegistry: k.String("privacy.project_registry"),
+	}
+
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// validate rejects enum values outside their documented sets.
+func (c *Config) validate() error {
+	switch c.StoreScope {
+	case "", StoreScopeGlobal, StoreScopeProject:
+	default:
+		return fmt.Errorf("store.scope: invalid value %q (want %q or %q)",
+			c.StoreScope, StoreScopeGlobal, StoreScopeProject)
+	}
+	switch c.PrivacyProjectRegistry {
+	case PrivacyFull, PrivacyMinimal, PrivacyDisabled:
+	default:
+		return fmt.Errorf("privacy.project_registry: invalid value %q (want %q, %q, or %q)",
+			c.PrivacyProjectRegistry, PrivacyFull, PrivacyMinimal, PrivacyDisabled)
+	}
+	return nil
+}
+
+// ParseFlexDuration parses a duration that may use a whole-day suffix ("30d")
+// in addition to the standard time.ParseDuration units. Negative durations are
+// rejected.
+func ParseFlexDuration(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, errors.New("empty duration")
+	}
+	var d time.Duration
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+		d = time.Duration(n) * 24 * time.Hour
+	} else {
+		var err error
+		d, err = time.ParseDuration(s)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q: %w", s, err)
+		}
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("negative duration %q", s)
+	}
+	return d, nil
 }
 
 // loadFile merges a TOML config file into k, skipping a missing path.
@@ -139,10 +254,17 @@ func parseEnviron(environ []string) map[string]any {
 		}
 		name := strings.ToLower(strings.TrimPrefix(key, EnvPrefix))
 		switch name {
-		case "config_dir", "cache_dir":
+		case "config_dir", "cache_dir", "home":
+			// Path overrides are resolved separately (Dir, CacheDir, home.Dir).
 			continue
 		case "repositories":
 			out[name] = splitList(val)
+		case "store_scope":
+			out["store.scope"] = val
+		case "store_verify":
+			out["store.verify_on_use"] = val
+		case "project_registry":
+			out["projects.registry"] = val
 		default:
 			out[name] = val
 		}

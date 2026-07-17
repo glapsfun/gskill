@@ -68,6 +68,9 @@ type rootCLI struct {
 	ConfigCmd  configCmd     `cmd:"" name:"config" group:"more" help:"Inspect layered configuration."`
 	Unlink     unlinkCmd     `cmd:"" group:"more" help:"Detach one agent from a skill (--prune removes it when the last agent goes)."`
 	Doctor     doctorCmd     `cmd:"" group:"more" help:"Check the environment and declared requirements."`
+	Store      storeCmd      `cmd:"" group:"more" help:"Manage the global content store."`
+	Migrate    migrateCmd    `cmd:"" group:"more" help:"Migrate this project to the shared global store."`
+	Projects   projectsCmd   `cmd:"" group:"more" help:"Inspect the advisory project registry."`
 	Dashboard  tuiCmd        `cmd:"" name:"dashboard" group:"more" aliases:"tui" help:"Launch the interactive dashboard."`
 	Completion completionCmd `cmd:"" group:"more" help:"Print a shell completion script."`
 	Version    versionCmd    `cmd:"" group:"more" help:"Print the gskill version."`

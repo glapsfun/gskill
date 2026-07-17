@@ -32,6 +32,9 @@ byte-for-byte from a single committed file.
   hash; `gskill verify` re-checks on demand; skill content is never executed.
 - **Multi-agent, one store** — a skill is resolved and stored once and shared by
   every agent that targets it, via symlinks (or copies where unsupported).
+- **Cross-project reuse** — a user-level global store (`~/.gskill`) holds each
+  skill version once per machine; other projects link to it with no re-download,
+  restore offline from it, and clean it with a conservative `store gc`.
 - **Scriptable** — every capability is reachable from the CLI, with `--json`
   output and documented exit codes for CI.
 - **Signed releases** — checksummed, cosign-signed archives with SBOMs and
