@@ -41,7 +41,12 @@ func gitSkillRepo(t *testing.T, name string) string {
 		}
 	}
 	run("init", "--quiet", "-b", "main")
-	body := "---\nname: " + name + "\ndescription: a skill\n---\n# " + name + "\n"
+	// The body embeds the test name so every test's repo hashes to a unique
+	// commit: the app tests share one GSKILL_HOME (TestMain), and identical
+	// content committed by two tests in the same second would collide on the
+	// commit SHA and warm the shared cache across tests — turning cold-fetch
+	// assertions (PhaseFetching vs PhaseCached) into shuffle-order flakes.
+	body := "---\nname: " + name + "\ndescription: a skill\n---\n# " + name + "\n\ntest: " + t.Name() + "\n"
 	if err := os.WriteFile(filepath.Join(repo, "SKILL.md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
