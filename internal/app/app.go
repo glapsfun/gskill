@@ -65,6 +65,10 @@ func New(opts Options) *App {
 	if gitRunner == nil {
 		gitRunner = git.NewSystemRunner()
 	}
+	// Every runner — injected or default — is memoize-wrapped; caching only
+	// activates under a context armed by git.WithMemo at a batch entry
+	// point, so single-shot library calls and tests see passthrough.
+	gitRunner = git.Memoize(gitRunner)
 	repos := opts.Repos
 	if repos == nil {
 		repos = registry.New()

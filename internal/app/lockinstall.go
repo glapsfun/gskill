@@ -15,6 +15,7 @@ import (
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
 
@@ -126,6 +127,7 @@ type InstallFromLockResult struct {
 // the namespaced gskill metadata (FR-016). Failures are isolated per skill:
 // verified successes stay installed and recorded (FR-016a).
 func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (InstallFromLockResult, error) {
+	ctx = git.WithMemo(ctx)
 	p, err := a.openProjectScoped(req.Root)
 	if err != nil {
 		return InstallFromLockResult{}, err
@@ -1258,7 +1260,13 @@ func (a *App) freshResolveLockEntry(ctx context.Context, e skillslock.Entry, use
 			requested.Commit = e.Ext.Commit
 		}
 	}
-	rev, _, err := resolver.Resolve(ctx, a.git, ref, requested)
+	// usePins=false is the mismatch retry: it exists to see upstream state
+	// newer than this run's memoized view, so it bypasses the memo.
+	runner := a.git
+	if !usePins {
+		runner = git.Fresh(a.git)
+	}
+	rev, _, err := resolver.Resolve(ctx, runner, ref, requested)
 	if err != nil {
 		return source.Ref{}, resolver.Revision{}, err
 	}
