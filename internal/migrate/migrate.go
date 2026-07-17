@@ -47,6 +47,11 @@ type Result struct {
 	// LocalStoreRemoved reports whether the legacy store directory was
 	// deleted (only after complete success).
 	LocalStoreRemoved bool
+	// BlockedLinks lists active-layer entries that still resolve into the
+	// legacy store but are not re-pointed by this migration — typically
+	// entries another tool manages. Their presence blocks link switching
+	// and legacy-store removal (FR-038).
+	BlockedLinks []string
 }
 
 // LockedSkill is one lock entry's migration-relevant facts, supplied by the
@@ -188,6 +193,7 @@ func Run(ctx context.Context, root string, gs *globalstore.Store, skills []Locke
 	if err != nil {
 		return res, err
 	}
+	res.BlockedLinks = unmanaged
 	if !complete || len(unmanaged) > 0 {
 		return res, nil
 	}
@@ -249,7 +255,11 @@ func admitAll(ctx context.Context, gs *globalstore.Store, root string, keys []st
 // legacyActiveLinks returns the active-layer entries that resolve into the
 // legacy store but are NOT among the skills this migration re-points —
 // typically entries another tool manages (no gskill block). Removing the
-// legacy store would break them, so their presence blocks removal.
+// legacy store would break them, so their presence blocks removal. Both
+// sides of the comparison are symlink-resolved: a literal prefix match
+// would fail OPEN for links reaching the store through a symlinked prefix
+// (macOS /tmp → /private/tmp, symlinked home dirs), which is exactly the
+// data-loss class this guard exists to close.
 func legacyActiveLinks(root string, relinkable map[string]bool) ([]string, error) {
 	names, err := active.List(root)
 	if err != nil {
@@ -259,6 +269,7 @@ func legacyActiveLinks(root string, relinkable map[string]bool) ([]string, error
 	if err != nil {
 		return nil, err
 	}
+	storeRoot = resolvePath(storeRoot)
 	var blocked []string
 	for _, name := range names {
 		if relinkable[name] {
@@ -271,7 +282,9 @@ func legacyActiveLinks(root string, relinkable map[string]bool) ([]string, error
 		if !filepath.IsAbs(target) {
 			target = filepath.Join(active.Dir(root), target)
 		}
-		rel, err := filepath.Rel(storeRoot, filepath.Clean(target))
+		// A dangling link fails EvalSymlinks and keeps its literal path; it
+		// no longer reaches the store, so failing open for it loses nothing.
+		rel, err := filepath.Rel(storeRoot, resolvePath(filepath.Clean(target)))
 		if err != nil || strings.HasPrefix(filepath.ToSlash(rel), "..") {
 			continue // resolves outside the legacy store
 		}
@@ -279,6 +292,15 @@ func legacyActiveLinks(root string, relinkable map[string]bool) ([]string, error
 	}
 	sort.Strings(blocked)
 	return blocked, nil
+}
+
+// resolvePath follows symlinks in path, falling back to the input when the
+// path (or a prefix of it) does not exist.
+func resolvePath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
 }
 
 // relinkAll re-points each relinkable lock entry's active link at its

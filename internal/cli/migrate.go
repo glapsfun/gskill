@@ -50,6 +50,9 @@ func (migrateGlobalStoreCmd) Run(ctx context.Context, out *Output, a *app.App, r
 		doc["admittedObjects"] = rep.Result.AdmittedObjects
 		doc["relinked"] = rep.Result.Relinked
 		doc["localStoreRemoved"] = rep.Result.LocalStoreRemoved
+		if len(rep.Result.BlockedLinks) > 0 {
+			doc["blockedLinks"] = rep.Result.BlockedLinks
+		}
 	}
 	return out.Result(humanMigrate(rep, string(root)), doc)
 }
@@ -80,8 +83,18 @@ func humanMigrate(rep app.MigrateReport, root string) string {
 	fmt.Fprintf(&b, "\n  Relinked skills:  %d", len(rep.Result.Relinked))
 	if rep.Result.LocalStoreRemoved {
 		b.WriteString("\n\nlegacy project-local store removed; this project now shares the global store")
-	} else {
-		b.WriteString("\n\nlegacy store preserved (some objects were skipped); the project remains fully usable")
+		return b.String()
+	}
+	for _, name := range rep.Result.BlockedLinks {
+		fmt.Fprintf(&b, "\n  blocked: active link %q (managed by another tool) still resolves into the legacy store", tui.Sanitize(name))
+	}
+	switch {
+	case len(rep.Result.BlockedLinks) > 0:
+		b.WriteString("\n\nlegacy store preserved (the links above still depend on it); the project remains fully usable")
+	case len(rep.Plan.Corrupt) > 0:
+		b.WriteString("\n\nlegacy store preserved (corrupt objects were skipped); the project remains fully usable")
+	default:
+		b.WriteString("\n\nlegacy store preserved (not every skill could be migrated); the project remains fully usable")
 	}
 	return b.String()
 }
