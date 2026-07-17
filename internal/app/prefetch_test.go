@@ -165,3 +165,37 @@ func TestInstallFromLock_OfflineNeverFetches(t *testing.T) {
 		t.Errorf("fetches under --offline = %d, want 0", got)
 	}
 }
+
+// TestInstallFromLock_NarrowToZeroPrefetchesNoNetwork: an explicit
+// narrow-to-zero (Agents: []string{} on an entry with recorded agents) is a
+// pure local unlink — no staging, resolution, or fetch, even with a cold
+// commit cache and no --offline (FR-018, narrowEntryToZeroAgents). Prefetch
+// must recognize this exact case and skip it, not just the fully-empty
+// (never-installed) case: entryNeedsNetwork's naive "explicit agent-set
+// mismatch" check would otherwise schedule a prefetch job for it.
+func TestInstallFromLock_NarrowToZeroPrefetchesNoNetwork(t *testing.T) {
+	t.Parallel()
+
+	repo := gitMultiSkillRepo(t, "widgets", "gcs")
+	root := projectWithAgent(t)
+	ctx := context.Background()
+	if _, err := onboardApp().Add(ctx, app.AddRequest{Root: root, Source: repo, All: true, Agents: []string{agent.DefaultID}}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	// A fresh App with a cold GskillHome: nothing is cached, so any network
+	// attempt during prefetch would be a real, countable call — the lock
+	// entry (with its gskill ext and recorded agents) is untouched.
+	counting := &testutil.CountingGit{Inner: git.NewSystemRunner()}
+	a := countingGitApp(t, counting)
+	res, err := a.InstallFromLock(ctx, app.InstallFromLockRequest{Root: root, Agents: []string{}})
+	if err != nil {
+		t.Fatalf("narrow-to-zero InstallFromLock: %v", err)
+	}
+	if got := counting.ResolutionCalls() + counting.Fetches.Load(); got != 0 {
+		t.Errorf("network calls for a narrow-to-zero entry = %d, want 0 (FR-018: no network even with a cold cache)", got)
+	}
+	if len(res.Skills) != 1 || res.Skills[0].Err != nil {
+		t.Fatalf("narrow-to-zero result = %+v, want one healthy skill result", res.Skills)
+	}
+}

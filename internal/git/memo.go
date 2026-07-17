@@ -67,27 +67,36 @@ func memoized[T any](ctx context.Context, s *memoStore, table map[string]result[
 // refreshed serves a Fresh runner's call: the first ask for a key this run
 // bypasses the memoized view, re-asks the remote, and the answer becomes the
 // run's view (memoized reads included); later Fresh asks for the same key
-// reuse it. Without an armed context it is a plain passthrough.
+// reuse it. Without an armed context it is a plain passthrough. Routed
+// through the store's singleflight group (a distinct "fresh" key namespace,
+// so it never collides with a concurrent Memoized call on the same
+// underlying key) so concurrent Fresh callers for the same key — e.g. N
+// sibling skills independently hitting a computedHash mismatch against one
+// externally-moved source — collapse to one round trip, not N.
 func refreshed[T any](ctx context.Context, table func(*memoStore) map[string]result[T], kind, key string, fetch func() (T, error)) (T, error) {
 	s := memoFrom(ctx)
 	if s == nil {
 		return fetch()
 	}
-	fkey := kind + "\x00" + key
-	s.mu.Lock()
-	if s.freshKeys[fkey] {
-		r := table(s)[key]
-		s.mu.Unlock()
-		return r.val, r.err
-	}
-	s.mu.Unlock()
-	val, err := fetch()
-	if cacheable(ctx) {
+	fkey := "fresh\x00" + kind + "\x00" + key
+	v, err, _ := s.sf.Do(fkey, func() (any, error) {
 		s.mu.Lock()
-		table(s)[key] = result[T]{val: val, err: err}
-		s.freshKeys[fkey] = true
+		if s.freshKeys[fkey] {
+			r := table(s)[key]
+			s.mu.Unlock()
+			return r.val, r.err
+		}
 		s.mu.Unlock()
-	}
+		val, err := fetch()
+		if cacheable(ctx) {
+			s.mu.Lock()
+			table(s)[key] = result[T]{val: val, err: err}
+			s.freshKeys[fkey] = true
+			s.mu.Unlock()
+		}
+		return val, err
+	})
+	val, _ := v.(T)
 	return val, err
 }
 

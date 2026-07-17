@@ -222,6 +222,30 @@ func TestMemoize_SingleflightCollapsesConcurrentCalls(t *testing.T) {
 	}
 }
 
+// TestFresh_SingleflightCollapsesConcurrentCalls: N sibling skills that
+// independently hit a computedHash mismatch against one externally-moved
+// source must cost one refresh round trip, not N — the same singleflight
+// guarantee Memoized has, applied to Fresh's first-ask-per-key path.
+func TestFresh_SingleflightCollapsesConcurrentCalls(t *testing.T) {
+	t.Parallel()
+
+	inner := &mutableRunner{sha: "new", delay: 20 * time.Millisecond}
+	c, m := memoized(inner)
+	ctx := git.WithMemo(context.Background())
+	fresh := git.Fresh(m)
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			_, _ = fresh.ResolveRef(ctx, "u", "main")
+		})
+	}
+	wg.Wait()
+	if got := c.Refs.Load(); got != 1 {
+		t.Errorf("Refs = %d, want 1 (Fresh calls must singleflight-collapse)", got)
+	}
+}
+
 func TestMemoize_Idempotent(t *testing.T) {
 	t.Parallel()
 

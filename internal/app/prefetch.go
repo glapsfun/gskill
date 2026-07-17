@@ -140,10 +140,28 @@ func (a *App) entryNeedsNetwork(p *project, lf *skillslock.State, name string, e
 	if !ok || e.ComputedHash == "" {
 		return true
 	}
-	if req.Agents != nil && !sameStringSet(normalizeAgentIDs(req.Agents), prior.Installation.Agents) {
-		// An explicit agent-set change falls through to the full pipeline
-		// regardless of content state (lockEntryUpToDate, FR-012): prefetch
-		// so that fallthrough isn't also an unwarmed sequential fetch.
+	if req.Agents != nil {
+		ids := normalizeAgentIDs(req.Agents)
+		if len(ids) == 0 && len(prior.Installation.Agents) > 0 {
+			// Genuine narrow-to-zero (FR-012, lockEntryTargets/
+			// narrowEntryToZeroAgents): a pure local unlink with no
+			// resolution, fetch, or hash re-verification — network access
+			// here would be exactly the cold-cache network access FR-018
+			// forbids for this path.
+			return false
+		}
+		if !sameStringSet(ids, prior.Installation.Agents) {
+			// A non-empty explicit agent-set change falls through to the
+			// full pipeline regardless of content state (lockEntryUpToDate,
+			// FR-012): prefetch so that fallthrough isn't also an unwarmed
+			// sequential fetch.
+			return true
+		}
+	} else if !sameStringSet(entryAgents(e), prior.Installation.Agents) {
+		// No explicit selection, but the lock's declared agents still
+		// disagree with what's recorded installed (e.g. gskill.agents was
+		// hand-edited) — lockEntryUpToDate falls through to the full
+		// pipeline in this case too (lockinstall.go's up-to-date fast path).
 		return true
 	}
 	return !p.contentHas(prior.Resolved.ContentHash)
