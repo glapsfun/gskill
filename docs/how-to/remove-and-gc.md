@@ -13,6 +13,20 @@ content from the store.
 gskill remove <name>
 ```
 
+At an interactive terminal this asks for confirmation before removing
+anything. In an unattended session (CI, a script, any run with no terminal
+attached), `remove` now requires an explicit opt-in — pass `--force` (or the
+existing `--yes`) so it knows deletion is intended:
+
+```bash
+gskill remove <name> --force
+gskill remove <name-1> <name-2> --force   # multiple skills, one invocation
+```
+
+Without `--force`/`--yes` in a non-interactive session, `remove` aborts with
+a non-zero exit and nothing is changed — no accidental deletes from a script
+or CI job that forgot to opt in.
+
 ## Expected result
 
 - The skill is uninstalled from every agent directory it was in.
