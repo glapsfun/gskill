@@ -5,6 +5,8 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -41,6 +43,45 @@ func initedProject(t *testing.T) string {
 		t.Fatalf("init: exit code = %d, stderr: %q", code, stderr)
 	}
 	return dir
+}
+
+// assertNoLocalProjectState fails the test unless dir has none of the local
+// project state (.gskill, .agents, .gitignore) that Init creates — the
+// precondition for characterizing auto-init from a virgin directory (spec
+// 017 FR-001/FR-002).
+func assertNoLocalProjectState(t *testing.T, dir string) {
+	t.Helper()
+	for _, missing := range []string{".gskill", ".agents", ".gitignore"} {
+		if _, err := os.Stat(filepath.Join(dir, missing)); !os.IsNotExist(err) {
+			t.Fatalf("precondition failed: %s already exists", missing)
+		}
+	}
+}
+
+// assertLocalProjectStateCreated fails the test unless .gskill and .agents
+// exist as directories under dir and .gitignore contains both managed
+// patterns (spec 017 FR-001/FR-002/FR-004).
+func assertLocalProjectStateCreated(t *testing.T, dir string) {
+	t.Helper()
+	for _, want := range []string{".gskill", ".agents"} {
+		info, err := os.Stat(filepath.Join(dir, want))
+		if err != nil {
+			t.Errorf("%s was not created: %v", want, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("%s is not a directory", want)
+		}
+	}
+	gitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore")) //nolint:gosec // test-controlled temp path
+	if err != nil {
+		t.Fatalf(".gitignore was not created: %v", err)
+	}
+	for _, pattern := range []string{".gskill/", ".agents/"} {
+		if !strings.Contains(string(gitignore), pattern) {
+			t.Errorf(".gitignore missing %q:\n%s", pattern, gitignore)
+		}
+	}
 }
 
 func TestAliasTable_EveryOldFormParses(t *testing.T) {

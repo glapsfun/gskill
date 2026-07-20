@@ -36,7 +36,10 @@ type installCmd struct {
 
 // Help returns the detailed help shown by `gskill install --help`.
 func (installCmd) Help() string {
-	return examplesHelp(
+	return describedHelp(
+		"If the project has no local gskill state yet, install creates it automatically "+
+			"(.gskill/, .agents/, .gitignore) before installing from skills-lock.json. Pass "+
+			"--no-init to require the project be initialized already and fail instead.",
 		"gskill install",
 		"gskill install --agent claude,codex",
 		"gskill install --frozen-lockfile",

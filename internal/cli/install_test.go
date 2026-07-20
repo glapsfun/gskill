@@ -131,6 +131,8 @@ func TestInstall_CopyAliasRecordsMode(t *testing.T) {
 
 // TestInstall_NoInitRefuses (T024/FR-019): --no-init on an uninitialized
 // project fails instead of scaffolding.
+// TestInstall_NoInitRefuses also covers spec 017 FR-003/SC-004: refusing must
+// leave zero partial local project state behind, not just exit non-zero.
 func TestInstall_NoInitRefuses(t *testing.T) {
 	t.Parallel()
 	dir := lockOnlyProject(t)
@@ -144,6 +146,29 @@ func TestInstall_NoInitRefuses(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "gskill.toml")); err == nil {
 		t.Error("gskill.toml was created despite --no-init")
 	}
+	for _, notCreated := range []string{".gskill", ".agents", ".gitignore"} {
+		if _, err := os.Stat(filepath.Join(dir, notCreated)); !os.IsNotExist(err) {
+			t.Errorf("%s was created despite --no-init refusing to initialize (no partial state allowed)", notCreated)
+		}
+	}
+}
+
+// TestInstall_FreshLockOnlyProjectAutoInitializes (spec 017 FR-002/SC-001):
+// lockOnlyProject creates only skills-lock.json — no .gskill, .agents, or
+// .gitignore. A plain `install` (no --no-init) must still succeed, creating
+// the missing local project state as a side effect.
+func TestInstall_FreshLockOnlyProjectAutoInitializes(t *testing.T) {
+	t.Parallel()
+	dir := lockOnlyProject(t)
+	assertNoLocalProjectState(t, dir)
+
+	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "install", "--agent", "claude")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %q", code, stderr)
+	}
+
+	assertLocalProjectStateCreated(t, dir)
+	agentDirsExist(t, dir, "claude")
 }
 
 // TestInstall_DryRunWritesNothing (T026/FR-015): the plan is reported and the

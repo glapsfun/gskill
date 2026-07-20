@@ -31,6 +31,10 @@ gskill init
 **Expected:** GSKILL prepares a `.gskill/` state directory, the `.agents/skills/` layer, and `.gitignore`
 hints. `gskill init` exits `0`.
 
+> **This step is optional.** `gskill add` (Step 3) creates this same local state automatically if it's
+> missing, so you never have to run `init` by hand first. It's shown here so you can see exactly what
+> gets created before moving on.
+
 ## Step 3 — Add a skill
 
 For a first run we'll add a **local** skill folder (a directory containing a `SKILL.md`). If you have

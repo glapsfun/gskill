@@ -34,9 +34,9 @@ type rootCLI struct {
 	Dir           string `short:"C" help:"Run as if gskill started in this directory." type:"path"`
 
 	Init    initCmd    `cmd:"" group:"core" help:"Initialize local gskill state (.gskill, .agents/skills, gitignore)."`
-	Add     addCmd     `cmd:"" group:"core" help:"Add and install a new skill."`
+	Add     addCmd     `cmd:"" group:"core" help:"Add and install a new skill (auto-initializes the project if needed)."`
 	Onboard onboardCmd `cmd:"" group:"core" help:"Guided skill installation without a predefined source."`
-	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent)."`
+	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent, auto-initializes the project if needed)."`
 	Update  updateCmd  `cmd:"" group:"core" help:"Advance skills within their version constraints."`
 	Remove  removeCmd  `cmd:"" group:"core" help:"Uninstall skills and clean up."`
 

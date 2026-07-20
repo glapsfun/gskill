@@ -48,7 +48,9 @@ type addCmd struct {
 
 // Help returns the detailed help shown by `gskill add --help`.
 func (addCmd) Help() string {
-	return examplesHelp(
+	return describedHelp(
+		"If the project has no local gskill state yet, add creates it automatically "+
+			"(.gskill/, .agents/, .gitignore) — there is no separate setup step to run first.",
 		"gskill add github.com/owner/repo                # guided wizard on a terminal",
 		"gskill add github.com/owner/repo --agent claude",
 		"gskill add github.com/owner/repo --skill deploy-helper --version '^2.0.0'",

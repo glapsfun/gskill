@@ -2,6 +2,10 @@ Usage: gskill init [flags]
 
 Initialize local gskill state (.gskill, .agents/skills, gitignore).
 
+add and install already perform this initialization automatically when needed
+(.gskill/, .agents/, .gitignore) — running init directly is only necessary to
+prepare a project ahead of time or to pass --lock.
+
 Examples:
 
     gskill init

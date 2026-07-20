@@ -197,6 +197,35 @@ func TestAddRun_NoStdinTTYKeepsDirectPath(t *testing.T) {
 	}
 }
 
+// TestAddCmd_FreshDirectoryAutoInitializes (spec 017 FR-001/SC-001): `add`
+// succeeds in a directory that has never run `gskill init` — no .gskill,
+// .agents, or .gitignore exist beforehand — creating all of them as a side
+// effect instead of requiring a separate setup step.
+func TestAddCmd_FreshDirectoryAutoInitializes(t *testing.T) {
+	t.Parallel()
+
+	src := addSourceTree(t, "solo")
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	assertNoLocalProjectState(t, dir)
+
+	stdout, stderr, code := runCLI(t, newTestApp(), "-C", dir, "add", src)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "solo") {
+		t.Errorf("stdout = %q, want it to mention the installed skill", stdout)
+	}
+
+	assertLocalProjectStateCreated(t, dir)
+
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "solo", "SKILL.md")); err != nil {
+		t.Errorf("skill not installed: %v", err)
+	}
+}
+
 // ---- FR-024: add --dry-run renders the plan without executing ------------------
 
 func TestAddDryRun_RendersPlanWritesNothing(t *testing.T) {

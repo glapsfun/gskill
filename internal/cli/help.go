@@ -14,3 +14,10 @@ func examplesHelp(lines ...string) string {
 	}
 	return b.String()
 }
+
+// describedHelp prepends a prose description paragraph to the standard
+// Examples: block, for commands whose Help() needs to explain behavior
+// beyond what the examples alone convey.
+func describedHelp(description string, examples ...string) string {
+	return description + "\n\n" + examplesHelp(examples...)
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1072,12 +1073,36 @@ var gskillIgnorePatterns = []string{".gskill/", ".agents/"}
 // changed the file.
 func ensureGitignore(root string) (bool, error) {
 	path := filepath.Join(root, ".gitignore")
-	existing, err := os.ReadFile(path) //nolint:gosec // project-root .gitignore
-	if err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("read .gitignore: %w", err)
+	mode := os.FileMode(0o644)
+	content := ""
+
+	f, err := os.Open(path) //nolint:gosec // project-root .gitignore
+	switch {
+	case err == nil:
+		// Fstat on the already-open handle (rather than a second path-based
+		// stat) reads the mode of the exact file just opened, so there is no
+		// gap for it to be replaced in between.
+		info, statErr := f.Stat()
+		if statErr != nil {
+			_ = f.Close()
+			return false, fmt.Errorf("stat .gitignore: %w", statErr)
+		}
+		mode = info.Mode().Perm()
+		data, readErr := io.ReadAll(f)
+		closeErr := f.Close()
+		if readErr != nil {
+			return false, fmt.Errorf("read .gitignore: %w", readErr)
+		}
+		if closeErr != nil {
+			return false, fmt.Errorf("close .gitignore: %w", closeErr)
+		}
+		content = string(data)
+	case os.IsNotExist(err):
+		// Fresh file: default mode and empty content above.
+	default:
+		return false, fmt.Errorf("open .gitignore: %w", err)
 	}
 
-	content := string(existing)
 	changed := false
 	for _, pattern := range gskillIgnorePatterns {
 		if lineContains(content, pattern) {
@@ -1092,7 +1117,7 @@ func ensureGitignore(root string) (bool, error) {
 	if !changed {
 		return false, nil
 	}
-	if err := fsutil.WriteFileAtomic(path, []byte(content), 0o600); err != nil {
+	if err := fsutil.WriteFileAtomic(path, []byte(content), mode); err != nil {
 		return false, err
 	}
 	return true, nil

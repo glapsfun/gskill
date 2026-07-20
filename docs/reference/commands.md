@@ -24,7 +24,7 @@ These apply to every command.
 
 ## `add`
 
-Add and install a new skill.
+Add and install a new skill (auto-initializes the project if needed).
 
 | Argument | Required | Description |
 | --- | --- | --- |
@@ -140,7 +140,7 @@ Initialize local gskill state (.gskill, .agents/skills, gitignore).
 
 ## `install`
 
-Install all declared skills (additive, idempotent).
+Install all declared skills (additive, idempotent, auto-initializes the project if needed).
 
 | Flag | Type | Description |
 | --- | --- | --- |

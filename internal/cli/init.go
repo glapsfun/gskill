@@ -14,7 +14,10 @@ type initCmd struct {
 
 // Help returns the detailed help shown by `gskill init --help`.
 func (initCmd) Help() string {
-	return examplesHelp(
+	return describedHelp(
+		"add and install already perform this initialization automatically when needed "+
+			"(.gskill/, .agents/, .gitignore) — running init directly is only necessary to "+
+			"prepare a project ahead of time or to pass --lock.",
 		"gskill init",
 		"gskill init --lock",
 		"gskill -C path/to/repo init",
