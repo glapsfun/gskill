@@ -257,6 +257,10 @@ Uninstall skills and clean up.
 | --- | --- | --- |
 | `skills` | yes | Skills to remove. |
 
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--force` | bool | Skip confirmation and remove without a terminal. |
+
 
 ## `search` (alias: `find`)
 

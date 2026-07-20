@@ -38,7 +38,7 @@ func TestAdversarial_MaliciousLockPathNotDeleted(t *testing.T) {
 	// Point codex's recorded target at the sentinel directory (absolute escape).
 	patchLock(t, proj, `".codex/skills/demo"`, `"`+sentinel+`"`)
 
-	if _, stderr, code := runGskill(t, proj, "remove", "demo"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "remove", "demo", "--force"); code != 0 {
 		t.Fatalf("remove: %s", stderr)
 	}
 	// The out-of-bounds path is untouched; the valid claude target is removed.
