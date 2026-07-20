@@ -103,7 +103,7 @@ homebrew_casks:
   - name: gskill
     repository:
       owner: glapsfun
-      name: homebrew-tap
+      name: homebrew-gskill
       branch: main
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/glapsfun/gskill"
