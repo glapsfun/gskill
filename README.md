@@ -3,11 +3,10 @@ Reproducible package management for AI agent skills.
 
 [![CI](https://github.com/glapsfun/gskill/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/glapsfun/gskill/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/glapsfun/gskill)](https://github.com/glapsfun/gskill/releases/latest)
-[![Go](https://img.shields.io/github/go-mod/go-version/glapsfun/gskill)](go.mod)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg)](go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20amd64%20%7C%20arm64-blue)](#project-status-and-compatibility)
-[![License](https://img.shields.io/github/license/glapsfun/gskill)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/glapsfun/gskill/badge)](https://scorecard.dev/viewer/?uri=github.com/glapsfun/gskill)
-[![Go Report Card](https://goreportcard.com/badge/github.com/glapsfun/gskill)](https://goreportcard.com/report/github.com/glapsfun/gskill)
 [![Downloads](https://img.shields.io/github/downloads/glapsfun/gskill/total)](https://github.com/glapsfun/gskill/releases)
 
 GSKILL installs, versions, locks, verifies, and restores `SKILL.md`-based AI agent
