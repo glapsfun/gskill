@@ -177,9 +177,24 @@ func TestInstall_StampsSkillAndCounter(t *testing.T) {
 func TestUpdate_StampsSkillAndCounter(t *testing.T) {
 	t.Parallel()
 
-	root, a := twoSkillProject(t)
+	// Update now processes only actionable skills, so both branch heads must
+	// move for both skills to emit stamped fetch events.
+	root := projectWithAgent(t)
+	a := onboardApp()
+	for _, name := range []string{"alpha", "beta"} {
+		src := gitSkillRepo(t, name)
+		if _, err := a.Add(context.Background(), app.AddRequest{Root: root, Source: src, All: true}); err != nil {
+			t.Fatalf("add %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(src, "SKILL.md"),
+			[]byte("---\nname: "+name+"\ndescription: moved\n---\n# "+name+" v2\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		updGit(t, src, "add", ".")
+		updGit(t, src, "commit", "--quiet", "-m", "move head")
+	}
 	var events []progress.Event
-	if _, err := a.Update(sinkCtx(&events), root, nil); err != nil {
+	if _, err := a.Update(sinkCtx(&events), app.UpdateRequest{Root: root}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	assertStamped(t, events)

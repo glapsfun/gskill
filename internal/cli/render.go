@@ -212,6 +212,211 @@ func renderDoctorStyled(report app.DoctorReport) string {
 	return b.String()
 }
 
+// updateStatusText maps a plan status to its human table cell.
+func updateStatusText(s app.UpdateStatus) string {
+	switch s {
+	case app.StatusUpdateAvailable:
+		return "update available"
+	case app.StatusUpToDate:
+		return "up to date"
+	case app.StatusPinnedTag:
+		return "pinned tag"
+	case app.StatusPinnedCommit:
+		return "pinned commit"
+	case app.StatusLocalSource:
+		return "local source"
+	case app.StatusNoCompatibleUpdate:
+		return "no compatible update"
+	case app.StatusUnknown:
+		return "not checked"
+	default:
+		return "unknown"
+	}
+}
+
+// countUnknown counts the plan items whose eligibility could not be
+// determined (discovery failure or offline skip).
+func countUnknown(plan app.UpdatePlan) int {
+	n := 0
+	for _, it := range plan.Items {
+		if it.Status == app.StatusUnknown {
+			n++
+		}
+	}
+	return n
+}
+
+// orDash substitutes the empty-cell placeholder.
+func orDash(s string) string {
+	if s == "" {
+		return "--"
+	}
+	return s
+}
+
+// renderUpdateList renders the human update report shared by
+// `gskill update --list` and `gskill outdated` (spec 018 FR-006/FR-007):
+// candidate rows, an optional STATUS column under --all, and a count summary.
+// The rows are primary stdout output in both TTY and piped runs (FR-017).
+func renderUpdateList(out *Output, plan app.UpdatePlan, all bool) string {
+	if len(plan.Items) == 0 {
+		return "No skills installed."
+	}
+	items := plan.Actionable()
+	if all {
+		items = plan.Items
+	}
+	summary := updateListSummary(out, plan)
+	if len(items) == 0 {
+		return summary
+	}
+
+	headers := []string{"NAME", "CURRENT", "AVAILABLE", "POLICY"}
+	if all {
+		headers = append(headers, "STATUS")
+	}
+	rows := make([][]string, 0, len(items))
+	for _, it := range items {
+		rows = append(rows, updateListRow(out, it, all))
+	}
+	return renderAligned(tui.DefaultTheme(), headers, rows) + "\n\n" + summary
+}
+
+// updateListSummary composes the report's count line. It never claims
+// freshness that was not verified: unchecked skills (discovery failures,
+// offline skips) are called out instead of silently folding into
+// "up to date".
+func updateListSummary(out *Output, plan app.UpdatePlan) string {
+	available := len(plan.Actionable())
+	unknown := countUnknown(plan)
+
+	var summary string
+	warn := available > 0
+	switch {
+	case available == 0 && unknown > 0:
+		summary = fmt.Sprintf("%d of %d skills could not be checked for updates", unknown, len(plan.Items))
+		warn = true
+	case available == 0:
+		summary = "All skills are up to date"
+	case available == 1:
+		summary = "1 update available"
+	default:
+		summary = fmt.Sprintf("%d updates available", available)
+	}
+	if available > 0 && unknown > 0 {
+		summary += fmt.Sprintf(" (%d not checked)", unknown)
+	}
+	if warn {
+		return out.warnSummary(summary)
+	}
+	return out.summary(summary)
+}
+
+// updateListRow renders one plan item's table cells.
+func updateListRow(out *Output, it app.UpdatePlanItem, all bool) []string {
+	name, policy, status := it.Name, it.Policy, updateStatusText(it.Status)
+	// A newer release the policy forbids is labeled informational right in
+	// the status cell (FR-007) — AVAILABLE stays `--` because it is not
+	// applicable by a normal update. A pin whose informational lookup failed
+	// says so instead of masquerading as a verified pin.
+	switch {
+	case it.Informational != "":
+		status += " (newer: " + it.Informational + ")"
+	case it.DiscoveryErr != "" && it.Status != app.StatusUnknown:
+		status += " (lookup failed)"
+	}
+	if out.Interactive() {
+		st := tui.DefaultTheme()
+		name = st.Accent.Render(name)
+		policy = st.Subtitle.Render(policy)
+		if it.Status == app.StatusUpdateAvailable {
+			status = st.Warning.Render(status)
+		} else {
+			status = st.Subtitle.Render(status)
+		}
+	}
+	row := []string{name, it.Current, orDash(it.Candidate), policy}
+	if all {
+		row = append(row, status)
+	}
+	return row
+}
+
+// updateOutcomeText maps one execution row to its RESULT cell.
+func updateOutcomeText(s app.UpdateSkillResult) string {
+	switch s.Outcome {
+	case app.UpdateOutcomeUpdated:
+		return "updated"
+	case app.UpdateOutcomeWould:
+		return "would update"
+	case app.UpdateOutcomeFailed:
+		return "failed"
+	case app.UpdateOutcomeNoChange:
+		if s.Status != "" {
+			return updateStatusText(s.Status)
+		}
+		return "no change"
+	default:
+		return "no change"
+	}
+}
+
+// renderUpdateResult renders an update execution: per-skill NAME/FROM/TO/
+// RESULT rows plus a run summary (spec 018 FR-015) — never a bare content
+// hash.
+func renderUpdateResult(out *Output, res app.UpdateResult) string {
+	summary := updateSummary(res)
+	if len(res.Skills) == 0 {
+		return out.summary(summary)
+	}
+
+	st := tui.DefaultTheme()
+	styled := out.Interactive()
+	rows := make([][]string, 0, len(res.Skills))
+	for _, s := range res.Skills {
+		name, result := s.Name, updateOutcomeText(s)
+		if styled {
+			name = st.Accent.Render(name)
+			switch s.Outcome {
+			case app.UpdateOutcomeFailed:
+				result = st.Error.Render(result)
+			case app.UpdateOutcomeUpdated, app.UpdateOutcomeWould:
+				result = st.Success.Render(result)
+			case app.UpdateOutcomeNoChange:
+				result = st.Subtitle.Render(result)
+			default:
+				result = st.Subtitle.Render(result)
+			}
+		}
+		rows = append(rows, []string{name, s.From, s.To, result})
+	}
+	table := renderAligned(st, []string{"NAME", "FROM", "TO", "RESULT"}, rows)
+
+	// Failed rows carry their reason below the table — a bare "failed" cell
+	// would force the user into --json to learn why.
+	var details []string
+	for _, s := range res.Skills {
+		if s.Outcome == app.UpdateOutcomeFailed && s.Reason != "" {
+			details = append(details, "  "+s.Name+": "+s.Reason)
+		}
+	}
+	if len(details) > 0 {
+		table += "\n\n" + strings.Join(details, "\n")
+	}
+
+	switch {
+	case res.Failed > 0:
+		summary = out.errSummary(summary)
+	default:
+		summary = out.summary(summary)
+	}
+	rendered := table + "\n\n" + summary
+	if res.DryRun {
+		rendered += "\nDry run: no changes made."
+	}
+	return rendered
+}
+
 // renderPlanTextStyled renders the `add --dry-run` plan for a TTY: the exact
 // text of renderPlanText with the wizard preview's per-kind colors, so the
 // two plan surfaces read identically (FR-015/FR-024).

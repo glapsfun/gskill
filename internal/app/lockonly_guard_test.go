@@ -40,7 +40,7 @@ func TestNoLegacyFilesEverCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustNoLegacy("install")
-	if _, err := a.Update(ctx, root, nil); err != nil {
+	if _, err := a.Update(ctx, app.UpdateRequest{Root: root}); err != nil {
 		t.Fatal(err)
 	}
 	mustNoLegacy("update")

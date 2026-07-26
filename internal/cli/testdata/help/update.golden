@@ -5,10 +5,12 @@ Advance skills within their version constraints.
 Examples:
 
     gskill update
+    gskill update --list
+    gskill update --list --all
     gskill update my-skill
 
 Arguments:
-  [<skills> ...]    Skills to update (default: all declared).
+  [<skills> ...]    Skills to update (default: all with available updates).
 
 Flags:
   -h, --help              Show context-sensitive help.
@@ -22,3 +24,7 @@ Flags:
       --config=STRING     Path to a config file.
   -v, --verbose           Enable verbose diagnostics.
   -C, --dir=STRING        Run as if gskill started in this directory.
+
+      --list              List available updates without applying them.
+      --all               With --list: also report up-to-date, pinned, and local
+                          skills.

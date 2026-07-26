@@ -421,7 +421,12 @@ Advance skills within their version constraints.
 
 | Argument | Required | Description |
 | --- | --- | --- |
-| `skills` | no | Skills to update (default: all declared). |
+| `skills` | no | Skills to update (default: all with available updates). |
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--all` | bool | With --list: also report up-to-date, pinned, and local skills. |
+| `--list` | bool | List available updates without applying them. |
 
 
 ## `version`

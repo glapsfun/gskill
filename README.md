@@ -125,10 +125,11 @@ gskill verify
 
 ### 6. Update
 
-Advance within your version constraints and re-lock:
+See what can move, then advance within your version constraints and re-lock:
 
 ```bash
-gskill update
+gskill update --list   # read-only report: current vs available versions
+gskill update          # in a terminal: pick updates interactively
 ```
 
 ## Common examples
@@ -167,8 +168,9 @@ gskill verify
 **Update skills:**
 
 ```bash
-gskill outdated
-gskill update
+gskill update --list             # what would update, and to which version
+gskill update                    # choose interactively in a terminal
+gskill --no-interactive update   # CI-safe: apply every available update
 ```
 
 ## Documentation
