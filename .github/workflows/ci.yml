@@ -27,6 +27,11 @@ jobs:
           go-version: "1.26.5"
           cache: true
 
+      # The gate's npm-test step runs on the same Node 24 line as npm-release.yml.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
       # Restore the pinned dev tools instead of `go install`-ing them every run.
       # Keyed on the exact pinned versions, so a pin bump misses and rebuilds clean.
       - name: Cache pinned tools (./bin)
@@ -105,6 +110,24 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: release --snapshot --clean --skip=sign,sbom
+
+  # Isolated npm-channel signal (spec 019 FR-015): the same script also runs
+  # inside the verify job's gate — this clearly-labeled job exists so an npm
+  # failure is distinguishable at a glance, additive like build-test. Node is
+  # pinned to the same 24 line as verify and npm-release.yml.
+  npm-test:
+    name: npm-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Run npm channel tests
+        run: ./scripts/npm-test.sh
 
   # Static analysis of the workflows themselves: actionlint (correctness) + zizmor
   # (security, incl. hash-pin enforcement). Same invocation as scripts/audit-workflows.sh.

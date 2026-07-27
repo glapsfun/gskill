@@ -1,0 +1,33 @@
+{
+  "name": "@glapsfun/gskill",
+  "version": "0.0.0-dev",
+  "description": "Reproducible package manager for agentic AI skills (native binary launcher)",
+  "type": "module",
+  "bin": {
+    "gskill": "bin/gskill.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/glapsfun/gskill.git"
+  },
+  "homepage": "https://github.com/glapsfun/gskill",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "optionalDependencies": {
+    "@glapsfun/gskill-darwin-x64": "0.0.0-dev",
+    "@glapsfun/gskill-darwin-arm64": "0.0.0-dev",
+    "@glapsfun/gskill-linux-x64": "0.0.0-dev",
+    "@glapsfun/gskill-linux-arm64": "0.0.0-dev"
+  }
+}

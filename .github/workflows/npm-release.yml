@@ -1,0 +1,134 @@
+name: npm Release
+
+# Dedicated npm publish pipeline, separate from the tag-release job so a failed
+# registry operation never forces rebuilding the immutable GitHub Release. It
+# reads the already-published release archives, verifies the cosign signature
+# and checksums, assembles the five npm packages, and publishes them via npm
+# trusted publishing (OIDC, no tokens) with mandatory provenance — platform
+# packages first, launcher last, retry-safe per package.
+# See specs/019-npm-distribution/contracts/npm-release-workflow.md.
+#
+# Normal flow: release.yml dispatches this workflow on the tag ref after the
+# GitHub Release is published (GITHUB_TOKEN-created release events never start
+# workflows, so `release: published` below only covers manually published
+# releases). Manual dispatch retries a failed run or backfills an older tag —
+# dispatch from main for tags that predate the npm channel sources.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to (re)publish, e.g. v0.5.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read # download release assets only
+  id-token: write # npm trusted publishing (OIDC) — the only credential
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Validate release tag
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::invalid release tag '$TAG' — expected vX.Y.Z or vX.Y.Z-<prerelease>"
+            exit 1
+          fi
+
+      # No explicit ref: automatic runs are dispatched on the tag ref, so this
+      # is the tag's content; operator dispatches use the chosen ref (normally
+      # main), which is what lets pre-019 tags be backfilled. Release assets
+      # always come from the $TAG release, never from this checkout.
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      # No dependency caching here: this is a privileged publish job and a
+      # poisonable cache must not feed it (same posture as release.yml).
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Guard — npm channel sources present, tag shape authoritative
+        run: |
+          set -euo pipefail
+          if [ ! -f npm/scripts/build-packages.mjs ]; then
+            echo "::error::this checkout has no npm channel sources (npm/) — the ref predates npm distribution; re-dispatch this workflow from main"
+            exit 1
+          fi
+          node -e 'import("./npm/lib/platforms.js").then((m) => m.versionFromTag(process.env.TAG)).catch((e) => { console.error(e.message); process.exit(1); })'
+
+      - name: Assert npm supports trusted publishing (>= 11.5.1)
+        run: |
+          set -euo pipefail
+          npm --version
+          node -e '
+            const [maj, min, pat] = require("node:child_process")
+              .execSync("npm --version").toString().trim().split(".").map(Number);
+            const ok = maj > 11 || (maj === 11 && (min > 5 || (min === 5 && pat >= 1)));
+            if (!ok) { console.error("npm too old for trusted publishing"); process.exit(1); }
+          '
+
+      - name: Download release archives and checksum material
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "$TAG" --dir release-assets \
+            --pattern 'gskill_*.tar.gz' \
+            --pattern 'checksums.txt' \
+            --pattern 'checksums.txt.sigstore.json'
+          count="$(find release-assets -name 'gskill_*.tar.gz' | wc -l)"
+          if [ "$count" -ne 4 ]; then
+            echo "::error::expected 4 release archives for $TAG, found $count"
+            exit 1
+          fi
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Verify checksums.txt signature (cosign keyless)
+        run: |
+          set -euo pipefail
+          cosign verify-blob \
+            --bundle release-assets/checksums.txt.sigstore.json \
+            --certificate-identity "https://github.com/glapsfun/gskill/.github/workflows/release.yml@refs/tags/${TAG}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            release-assets/checksums.txt
+
+      - name: Verify archive checksums
+        run: |
+          set -euo pipefail
+          cd release-assets
+          grep -E ' gskill_.*\.tar\.gz$' checksums.txt | sha256sum --check --strict
+
+      - name: Build npm packages
+        run: node npm/scripts/build-packages.mjs --version "${TAG#v}" --archives release-assets --out npm/dist
+
+      - name: npm pack dry-run (all five packages)
+        run: |
+          set -euo pipefail
+          for dir in npm/dist/*/; do
+            (cd "$dir" && npm pack --dry-run)
+          done
+
+      - name: Publish (platforms first, launcher last, retry-safe)
+        run: node npm/scripts/publish-packages.mjs --version "${TAG#v}" --dist npm/dist

@@ -40,6 +40,9 @@ machine, the AI agent, the git hooks, and CI all run byte-identical tool version
 5. **coverage floor** — total coverage must be ≥ `COVERAGE_MIN` (default `0`)
 6. **vulnerabilities** — `govulncheck` on called code paths
 7. **secrets** — `gitleaks` scan of the working tree
+8. **npm channel** — `node --test npm/test/*.test.mjs` for the npm distribution launcher/packaging
+   (requires Node.js ≥ 20 — a platform prerequisite like Go, not vendored into `./bin`;
+   CI runs the same script in a dedicated `npm-test` job)
 
 ## Scripts reference
 
@@ -57,6 +60,7 @@ tools from `./bin` first.
 | `scripts/cover.sh` | Enforce `COVERAGE_MIN` against the profile | reads `COVERAGE_MIN` env |
 | `scripts/vuln.sh` | `govulncheck` | — |
 | `scripts/secrets.sh` | `gitleaks` secret scan | — |
+| `scripts/npm-test.sh` | npm distribution channel tests (`node --test npm/test/*.test.mjs`) | — |
 
 ## TDD workflow (red → green → refactor)
 
