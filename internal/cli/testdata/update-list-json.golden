@@ -1,0 +1,16 @@
+{
+  "not_checked": 0,
+  "skills": [
+    {
+      "candidate": "1.4.1",
+      "current": "1.2.0",
+      "informational": "",
+      "name": "kubernetes",
+      "policy": "^1.2.0",
+      "reason": "",
+      "source": "github.com/acme/k8s",
+      "status": "update-available"
+    }
+  ],
+  "updates_available": 1
+}

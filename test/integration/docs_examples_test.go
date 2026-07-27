@@ -138,13 +138,20 @@ func TestDocsExamples_JSONStatusCommands(t *testing.T) {
 		t.Fatalf("add: %s", stderr)
 	}
 
-	for _, cmd := range []string{"check", "outdated", "verify"} {
-		stdout, stderr, code := runGskill(t, proj, cmd, "--json")
+	for _, args := range [][]string{
+		{"check"},
+		{"outdated"},
+		{"verify"},
+		{"update", "--list"},
+		{"update", "--list", "--all"},
+	} {
+		full := append([]string{"--json"}, args...)
+		stdout, stderr, code := runGskill(t, proj, full...)
 		if code != 0 {
-			t.Fatalf("%s --json exit %d: %s", cmd, code, stderr)
+			t.Fatalf("%v exit %d: %s", full, code, stderr)
 		}
 		if !json.Valid([]byte(stdout)) {
-			t.Errorf("%s --json stdout is not valid JSON:\n%s", cmd, stdout)
+			t.Errorf("%v stdout is not valid JSON:\n%s", full, stdout)
 		}
 	}
 }

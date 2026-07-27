@@ -48,7 +48,7 @@ func TestUpdateRemoveMissingLockFail(t *testing.T) {
 	root := t.TempDir()
 	a := lockOnlyApp()
 	ctx := context.Background()
-	if _, err := a.Update(ctx, root, nil); err == nil {
+	if _, err := a.Update(ctx, app.UpdateRequest{Root: root}); err == nil {
 		t.Error("update without a lock succeeded, want error")
 	}
 	if _, err := a.Remove(ctx, root, []string{"x"}); err == nil {

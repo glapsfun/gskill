@@ -2,13 +2,14 @@ package cli
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
 )
 
-// outdatedCmd reports available updates.
+// outdatedCmd reports available updates. It renders the same shared update
+// plan as `gskill update --list` (spec 018 FR-008), so the two commands can
+// never disagree about eligibility.
 type outdatedCmd struct {
 	ExitCode bool `name:"exit-code" help:"Exit 8 if any update is available."`
 }
@@ -22,33 +23,51 @@ func (outdatedCmd) Help() string {
 }
 
 // Run executes `gskill outdated`.
-func (c outdatedCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
-	report, err := a.Outdated(ctx, string(root))
+func (c outdatedCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
+	ctx, done := out.withFetchProgress(ctx)
+	defer done()
+	plan, err := a.PlanUpdate(ctx, app.UpdatePlanRequest{
+		Root: string(root), Offline: g.Offline, NoCache: g.NoCache,
+	})
+	done()
 	if err != nil {
 		return err
 	}
 
-	skills := make([]map[string]any, 0, len(report.Skills))
-	available := 0
-	for _, s := range report.Skills {
-		if s.Available {
-			available++
-			out.Info("%s: %s -> %s", s.Name, s.Current, s.Latest)
-		}
-		skills = append(skills, map[string]any{
-			"name": s.Name, "current": s.Current, "latest": s.Latest, "available": s.Available,
-		})
-	}
-
-	human := out.summary(fmt.Sprintf("%d skill(s) up to date", len(report.Skills)))
-	if report.AnyAvailable {
-		human = out.warnSummary(fmt.Sprintf("%d update(s) available", available))
-	}
-	if rErr := out.Result(human, map[string]any{"any_available": report.AnyAvailable, "skills": skills}); rErr != nil {
+	if rErr := out.Result(renderUpdateList(out, plan, false), OutdatedJSON(plan)); rErr != nil {
 		return rErr
 	}
-	if c.ExitCode && report.AnyAvailable {
+	if c.ExitCode && plan.AnyAvailable() {
 		return errs.WithHint(errs.ErrUpdateAvailable, "run 'gskill update' to advance skills within their constraints")
 	}
-	return nil
+	// A run that could not check its remotes must not exit like a verified
+	// one — CI gates would otherwise pass green during an outage.
+	return discoveryFailureErr(plan)
+}
+
+// OutdatedJSON keeps the historical `outdated --json` fields (name, current,
+// latest, available, any_available) and adds the plan's candidate/status
+// detail additively (spec 018 FR-016).
+func OutdatedJSON(plan app.UpdatePlan) map[string]any {
+	skills := make([]map[string]any, 0, len(plan.Items))
+	for _, it := range plan.Items {
+		latest := it.Candidate
+		if latest == "" {
+			latest = it.Current
+		}
+		skills = append(skills, map[string]any{
+			"name":      it.Name,
+			"current":   it.Current,
+			"latest":    latest,
+			"available": it.Actionable(),
+			"policy":    it.Policy,
+			"status":    string(it.Status),
+			"reason":    it.Reason,
+		})
+	}
+	return map[string]any{
+		"any_available": plan.AnyAvailable(),
+		"skills":        skills,
+		"not_checked":   countUnknown(plan),
+	}
 }

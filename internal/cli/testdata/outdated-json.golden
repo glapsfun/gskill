@@ -1,0 +1,60 @@
+{
+  "any_available": true,
+  "not_checked": 0,
+  "skills": [
+    {
+      "available": false,
+      "current": "eeeeeeeeeeee",
+      "latest": "eeeeeeeeeeee",
+      "name": "cdep",
+      "policy": "commit:eeeeeeeeeeee",
+      "reason": "pinned to an exact commit; not changed by a normal update",
+      "status": "pinned-commit"
+    },
+    {
+      "available": false,
+      "current": "v1.0.0",
+      "latest": "v1.0.0",
+      "name": "deploy",
+      "policy": "tag:v1.0.0",
+      "reason": "pinned to an exact tag; not changed by a normal update",
+      "status": "pinned-tag"
+    },
+    {
+      "available": true,
+      "current": "1.2.0",
+      "latest": "1.4.1",
+      "name": "kubernetes",
+      "policy": "^1.2.0",
+      "reason": "",
+      "status": "update-available"
+    },
+    {
+      "available": false,
+      "current": "1.3.0",
+      "latest": "1.3.0",
+      "name": "legacy",
+      "policy": "^1.0.0",
+      "reason": "newer releases exist outside the version constraint",
+      "status": "no-compatible-update"
+    },
+    {
+      "available": false,
+      "current": "local",
+      "latest": "local",
+      "name": "local-tools",
+      "policy": "local",
+      "reason": "local source has no remote update candidate",
+      "status": "local-source"
+    },
+    {
+      "available": false,
+      "current": "2.3.2",
+      "latest": "2.3.2",
+      "name": "security",
+      "policy": "^2.0.0",
+      "reason": "already the newest revision the policy allows",
+      "status": "up-to-date"
+    }
+  ]
+}

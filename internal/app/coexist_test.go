@@ -76,7 +76,7 @@ func TestCoexist_LockTouchingCommandsPreserveForeignData(t *testing.T) {
 		run  func(a *app.App, root string) error
 	}{
 		{"update", func(a *app.App, root string) error {
-			_, err := a.Update(context.Background(), root, nil)
+			_, err := a.Update(context.Background(), app.UpdateRequest{Root: root})
 			return err
 		}},
 		{"sync", func(a *app.App, root string) error {
@@ -139,7 +139,7 @@ func TestCoexist_FailClosedOnUnparsableLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := lockApp().Update(context.Background(), root, nil); err == nil {
+	if _, err := lockApp().Update(context.Background(), app.UpdateRequest{Root: root}); err == nil {
 		t.Fatal("Update on a corrupt shared lock should fail")
 	}
 	after, _ := os.ReadFile(lockPath) //nolint:gosec // test-controlled temp path
