@@ -20,6 +20,7 @@ fi
 "${repo_root}/scripts/cover.sh"
 "${repo_root}/scripts/vuln.sh"
 "${repo_root}/scripts/secrets.sh"
+"${repo_root}/scripts/npm-test.sh"
 
 section "verify: PASSED"
 log_info "all checks passed — safe to call this done"

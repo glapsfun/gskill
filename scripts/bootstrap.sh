@@ -25,6 +25,14 @@ if ! have uv; then
 	log_warn "uv not found — install it (https://docs.astral.sh/uv) so scripts/audit-workflows.sh can run zizmor via uvx"
 fi
 
+# Node is a platform prerequisite (like Go), not vendored into ./bin; the npm
+# distribution channel's tests (scripts/npm-test.sh) hard-require Node >= 20.
+if ! have node; then
+	log_warn "node not found — install Node.js >= 20 (https://nodejs.org) so scripts/npm-test.sh can run"
+elif [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
+	log_warn "node $(node --version) is older than the required Node.js >= 20 — scripts/npm-test.sh will fail"
+fi
+
 if ! have pre-commit; then
 	log_warn "pre-commit not found — install it (https://pre-commit.com) then re-run to enable git hooks"
 elif [ ! -f "${repo_root}/.pre-commit-config.yaml" ]; then

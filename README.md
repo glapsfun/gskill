@@ -65,6 +65,11 @@ brew install glapsfun/tap/gskill
 
 # Go (requires a Go toolchain)
 go install github.com/glapsfun/gskill/cmd/gskill@latest
+
+# npm — or run directly with npx, no install needed (requires Node.js >= 20)
+npm install --global @glapsfun/gskill
+npx @glapsfun/gskill version
+npx @glapsfun/gskill add github.com/owner/repo --skill example --agent claude
 ```
 
 Verify the install with `gskill version`.
@@ -190,7 +195,8 @@ Full documentation lives in [`docs/`](docs/README.md), organized by the
 
 ## Project status and compatibility
 
-GSKILL is under active development. The current release is `v0.2.0` (pre-1.0). It
+GSKILL is under active development (pre-1.0); the current version is listed on the
+[releases page](https://github.com/glapsfun/gskill/releases). It
 supports Linux and macOS on amd64 and arm64; Windows is not currently supported. It
 targets Claude Code, Codex, Cursor, and Gemini CLI. The lockfile format
 (`skills-lock.json`) is versioned; breaking CLI or schema changes may occur before

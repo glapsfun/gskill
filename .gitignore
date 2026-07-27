@@ -23,6 +23,9 @@ profile.cov
 # GoReleaser build output
 /dist/
 
+# Generated npm packages (npm/scripts/build-packages.mjs)
+/npm/dist/
+
 # Go workspace file
 go.work
 go.work.sum
