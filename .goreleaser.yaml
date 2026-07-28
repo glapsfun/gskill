@@ -96,14 +96,14 @@ signs:
       - "--yes"
     output: true
 
-# --- Homebrew (dedicated tap repo) -----------------------------------------
+# --- Homebrew (shared org tap) ----------------------------------------------
 # `homebrew_casks` (NOT the deprecated `brews`) is the supported mechanism for a
 # prebuilt CLI binary. skip_upload: auto keeps prereleases off the stable channel.
 homebrew_casks:
   - name: gskill
     repository:
       owner: glapsfun
-      name: homebrew-gskill
+      name: homebrew-tap
       branch: main
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/glapsfun/gskill"
