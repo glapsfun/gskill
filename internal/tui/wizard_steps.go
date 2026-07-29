@@ -770,8 +770,7 @@ func (m wizardModel) viewSummary() string {
 		b.WriteString("  " + m.st.Warning.Render("warning: "+Sanitize(w)) + "\n")
 	}
 	b.WriteString("\n" + m.st.Subtitle.Render("Next steps:") + "\n")
-	b.WriteString("  " + m.st.Accent.Render("gskill list") + "      " + m.st.Subtitle.Render("view installed skills") + "\n")
-	b.WriteString("  " + m.st.Accent.Render("gskill status") + "    " + m.st.Subtitle.Render("check per-agent health") + "\n")
+	b.WriteString("  " + m.st.Accent.Render("gskill list") + "      " + m.st.Subtitle.Render("view skills and per-agent health") + "\n")
 	b.WriteString("  " + m.st.Accent.Render("gskill update") + "    " + m.st.Subtitle.Render("advance versions later") + "\n")
 	b.WriteString("  " + m.st.Accent.Render("gskill remove") + "    " + m.st.Subtitle.Render("uninstall a skill") + "\n")
 	b.WriteString(m.hintLine("enter/q exit"))

@@ -64,7 +64,7 @@ func (a *App) unlinkOne(ctx context.Context, p *project, lf *skillslock.State, s
 	if !contains(current, agentID) {
 		return errs.WithHint(
 			fmt.Errorf("%w: skill %q is not installed for agent %q", errs.ErrInvalidLock, skill, agentID),
-			"run 'gskill status' to see each skill's agents",
+			"run 'gskill list' to see each skill's agents",
 		)
 	}
 

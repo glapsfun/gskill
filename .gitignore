@@ -50,6 +50,8 @@ t1
 
 # AI
 .claude
+.codex
+.gskill
 CLAUDE.md
 .agents
 skills-lock.json

@@ -10,7 +10,8 @@ import (
 
 // listCmd lists installed skills with their drift status, active-layer
 // health, and per-agent health — the merged view that used to require a
-// separate `gskill status` command (spec 013).
+// separate top-level status command (merged in spec 013; the alias was
+// removed in spec 020).
 type listCmd struct{}
 
 // Help returns the detailed help shown by `gskill list --help`.
@@ -36,9 +37,9 @@ func (listCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoo
 
 // ListJSON builds the stable --json object for a list result. `agents` keeps
 // its existing shape (plain agent-ID strings); `active`, `agent_health`,
-// `commit`, and `content_hash` are additive fields carrying what `gskill
-// status --json` used to report on its own (spec 013 FR-005, clarification
-// Q2).
+// `commit`, and `content_hash` are additive fields carrying what the former
+// separate status command used to report on its own (spec 013 FR-005,
+// clarification Q2; the alias was removed in spec 020).
 func ListJSON(skills []app.ListedSkill) map[string]any {
 	rows := make([]map[string]any, 0, len(skills))
 	for _, s := range skills {
