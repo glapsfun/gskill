@@ -478,7 +478,7 @@ func TestWizardSummary_ShowsPathsAndNextCommands(t *testing.T) {
 	m = drive(t, m, key("enter")) // approve
 
 	view := m.View()
-	for _, want := range []string{".claude/skills/alpha", "gskill list", "gskill status", "gskill update", "gskill remove"} {
+	for _, want := range []string{".claude/skills/alpha", "gskill list", "gskill update", "gskill remove"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("summary missing %q (FR-021):\n%s", want, view)
 		}

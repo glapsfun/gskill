@@ -60,8 +60,9 @@ func renderAligned(st tui.Theme, headers []string, rows [][]string) string {
 }
 
 // renderListStyled renders `gskill list` for a TTY, including the
-// active-layer and per-agent health columns that `gskill status` used to
-// show on its own (spec 013).
+// active-layer and per-agent health columns that a separate status command
+// used to show on its own (merged in spec 013; the alias was removed in
+// spec 020).
 func renderListStyled(skills []app.ListedSkill) string {
 	if len(skills) == 0 {
 		return noSkillsInstalled

@@ -12,7 +12,7 @@ import (
 func completionWords() []string {
 	words := []string{
 		"init", "add", "install", "update", "remove",
-		"list", "status", "info", "search", "outdated",
+		"list", "info", "search", "outdated",
 		"project",
 		"source", "cache", "config", "unlink", "doctor", "dashboard", "completion", "version",
 	}

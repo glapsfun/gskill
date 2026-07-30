@@ -7,38 +7,38 @@ import (
 	"testing"
 )
 
-// TestStatus_ReportsAgentsAndHealth covers US4 scenario 1 / FR-021: status lists
+// TestList_ReportsAgentsAndHealth covers US4 scenario 1 / FR-021: list reports
 // each skill's source, identity, active health, and per-agent mode + health.
-func TestStatus_ReportsAgentsAndHealth(t *testing.T) {
+func TestList_ReportsAgentsAndHealth(t *testing.T) {
 	t.Parallel()
 	proj, _ := addShared(t)
 
-	stdout, stderr, code := runGskill(t, proj, "--json", "status")
+	stdout, stderr, code := runGskill(t, proj, "--json", "list")
 	if code != 0 {
-		t.Fatalf("status exit %d: %s", code, stderr)
+		t.Fatalf("list exit %d: %s", code, stderr)
 	}
 	for _, want := range []string{`"name": "demo"`, `"active": "ok"`, `"id": "claude"`, `"id": "codex"`, `"health": "ok-symlink"`} {
 		if !strings.Contains(stdout, want) {
-			t.Errorf("status JSON missing %q:\n%s", want, stdout)
+			t.Errorf("list JSON missing %q:\n%s", want, stdout)
 		}
 	}
 }
 
-// TestStatus_ExitsZeroOnDrift covers the contract: status is informational and
+// TestList_ExitsZeroOnDrift covers the contract: list is informational and
 // exits 0 even when drift exists (contrast with check).
-func TestStatus_ExitsZeroOnDrift(t *testing.T) {
+func TestList_ExitsZeroOnDrift(t *testing.T) {
 	t.Parallel()
 	proj, _ := addShared(t)
 
 	if err := os.RemoveAll(filepath.Join(proj, ".codex", "skills", "demo")); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, code := runGskill(t, proj, "--json", "status")
+	stdout, _, code := runGskill(t, proj, "--json", "list")
 	if code != 0 {
-		t.Errorf("status on drift exit = %d, want 0", code)
+		t.Errorf("list on drift exit = %d, want 0", code)
 	}
 	if !strings.Contains(stdout, `"health": "missing"`) {
-		t.Errorf("status did not surface the missing target:\n%s", stdout)
+		t.Errorf("list did not surface the missing target:\n%s", stdout)
 	}
 }
 

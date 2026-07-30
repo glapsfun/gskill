@@ -139,7 +139,8 @@ func TestRootHelp_GroupedSections(t *testing.T) {
 	}
 	// The regrouped maintenance commands must not appear as top-level entries
 	// (FR-004); they live under `project` and as hidden aliases only. `status`
-	// joins this list as a hidden alias of `list` (spec 013 FR-006).
+	// stays in this list because the command was removed outright (spec 020):
+	// it must never resurface in root help.
 	for _, old := range []string{"sync", "repair", "lock", "verify", "check", "diff", "status"} {
 		re := regexp.MustCompile(`(?m)^\s{2,4}` + old + `\b`)
 		if re.MatchString(stdout) {

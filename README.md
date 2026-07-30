@@ -166,7 +166,7 @@ gskill install --dry-run
 **Check project health:**
 
 ```bash
-gskill status
+gskill list
 gskill verify
 ```
 

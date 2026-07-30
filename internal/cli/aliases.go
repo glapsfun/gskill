@@ -23,7 +23,9 @@ type aliasMapping struct {
 // aliasTable is the single source of truth for backward-compatible aliases:
 // it drives the alias-equivalence tests, typo suggestions, and shell
 // completion. Every entry here must keep behaving identically to its
-// canonical form, silently and forever (no deprecation nags).
+// canonical form, silently (no deprecation nags), for as long as it exists;
+// removing a row is a breaking change that requires its own spec (as spec
+// 020 did for the former `status` -> `list` alias).
 var aliasTable = []aliasMapping{
 	{Old: "find", Canonical: "search", Kind: aliasKindCommand, Mechanism: aliasMechKong},
 	{Old: "tui", Canonical: "dashboard", Kind: aliasKindCommand, Mechanism: aliasMechKong},
@@ -32,7 +34,6 @@ var aliasTable = []aliasMapping{
 	{Old: "verify", Canonical: "project verify", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 	{Old: "check", Canonical: "project check", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 	{Old: "diff", Canonical: "project diff", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
-	{Old: "status", Canonical: "list", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 
 	// Flag audit result (spec FR-009): the shared vocabulary — --agent
 	// (repeatable), --global/--project, --force, --all, --dry-run, --yes,
