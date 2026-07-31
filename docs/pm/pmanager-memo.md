@@ -1,6 +1,6 @@
 # PManager memo
 
-_Last updated: 2026-07-29_
+_Last updated: 2026-07-31_
 
 ## 1. Product context
 
@@ -14,6 +14,7 @@ Diataxis documentation are all maintained in this repository.
 | Goal | Metric / north star | Source |
 | :--- | :--- | :--- |
 | Keep the core CLI workflow small and discoverable | Visible canonical top-level command count | [user, 2026-07-29] |
+| A gskill project is shareable via git alone | Fresh clone has working skills with zero gskill commands | [user, 2026-07-31] |
 
 ## 3. Stakeholders
 
@@ -25,6 +26,9 @@ Diataxis documentation are all maintained in this repository.
 ## 4. Conventions & constraints
 
 - The full definition-of-done gate is `./scripts/verify.sh`.
+- Storage direction (2026-07-31 decision): repo owns skill content
+  (committed `.agents/skills` + relative agent links); `$HOME/.gskill` is a
+  clone cache only; global store / dedup was explicitly traded away.
 - Generated command documentation must be regenerated from the CLI grammar.
 - Existing dirty worktree changes are user-owned unless explicitly included in
   an approved task; preserve them while implementing adjacent work.
@@ -35,3 +39,6 @@ Diataxis documentation are all maintained in this repository.
 
 - 2026-07-29 — spec'd `cli-surface-cleanup`; recorded the requested immediate
   removal of unused CLI paths and preservation of internal auto-init/search.
+- 2026-07-31 — spec'd `repo-owned-storage`; user chose vendored committed
+  skill content, committed relative agent links, full removal of the spec-015
+  global store, and auto-migration; sequences after cli-surface-cleanup.
