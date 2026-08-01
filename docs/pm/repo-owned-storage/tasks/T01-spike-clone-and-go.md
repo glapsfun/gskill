@@ -8,7 +8,7 @@ priority: must
 depends-on: []
 estimate: S
 owner: unassigned
-updated: 2026-07-31
+updated: 2026-08-01
 ---
 
 # T01 — Spike: prove committed relative links survive git clone-and-go
@@ -30,10 +30,10 @@ evidence and a decision, not shipped code.
   `.claude/skills/`, both committed.
 - Clone it into a fresh temp dir; assert the skill file is readable through
   the agent path. Run on macOS and Linux CI runners.
-- Exercise the failure mode: clone with `git -c core.symlinks=false` and
-  record what appears (a plain file containing the link text). From this,
-  write the copy-fallback + `gskill sync` reconciliation rule: how gskill
-  detects a degraded checkout and converts links to copies (and back).
+- Windows is unsupported (epic non-goal, 2026-08-01), so no fallback design:
+  just verify that a symlink-less checkout (`git -c core.symlinks=false`)
+  is *detectable* (plain file containing link text) and specify the one
+  error message `check`/`doctor` should emit for it.
 - Record findings and the decision in this file's Notes and in the epic's
   Open questions.
 
@@ -42,14 +42,16 @@ evidence and a decision, not shipped code.
 - [ ] e2e demonstration passes on macOS and Linux: fresh clone → skill
       content readable at `.claude/skills/<name>/SKILL.md` with zero gskill
       commands.
-- [ ] The `core.symlinks=false` degraded state is documented with the exact
-      observed artifact and the specified reconciliation rule for `sync`.
+- [ ] The `core.symlinks=false` state is documented with the exact observed
+      artifact and the specified `check`/`doctor` error message (no
+      fallback/reconciliation designed — Windows is out of scope).
 - [ ] Go/no-go note written; epic Open question 1 marked answered.
 
 ## Out of scope
 
 - Any change to installer/activation production code (T03).
-- Windows CI wiring — the degraded-checkout simulation covers the semantics.
+- Windows in any form — unsupported platform (epic non-goal); no fallback or
+  reconciliation design.
 
 ## Notes
 

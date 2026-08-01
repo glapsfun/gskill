@@ -8,7 +8,7 @@ priority: must
 depends-on: [T06, T07]
 estimate: M
 owner: unassigned
-updated: 2026-07-31
+updated: 2026-08-01
 ---
 
 # T08 — Update documentation, command reference, and breaking-change release notes
@@ -34,7 +34,8 @@ with, not after, the behavior.
   `docs/reference/configuration.md`, `docs/reference/lockfile-schema.md`.
 - New explanation page: the repo-owned model — committed `.agents/skills`,
   relative agent links, home clone cache, clone-and-go, repo-size trade-off,
-  degraded-checkout (no-symlink) behavior and how `sync` reconciles it.
+  and the platform requirement (macOS/Linux with symlinks; Windows
+  unsupported).
 - Update tutorials/how-tos (`getting-started`, `add-a-git-skill`,
   `install-a-local-skill`) to show committed skills in `git status`.
 - Regenerate `docs/reference/commands.md` from the CLI grammar.

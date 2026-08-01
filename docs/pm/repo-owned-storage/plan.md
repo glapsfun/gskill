@@ -1,7 +1,7 @@
 ---
 epic: repo-owned-storage
 status: active
-updated: 2026-07-31
+updated: 2026-08-01
 ---
 
 # Plan — Repo-owned skill storage with home reduced to a clone cache
@@ -31,8 +31,9 @@ Exit criteria:
 - [ ] A throwaway e2e demonstrates: repo with committed `.agents/skills/<name>`
       + committed relative `.claude/skills/<name>` link → fresh clone → skill
       readable at the agent path, no gskill run (macOS + Linux).
-- [ ] Copy-fallback behavior (symlink-incapable checkout) is specified with a
-      reconciliation rule for `gskill sync`.
+- [ ] Symlink availability is recorded as a platform requirement
+      (macOS/Linux only — Windows unsupported), with the error `check`/
+      `doctor` report when a checkout lost its symlinks.
 - [ ] New lock-extension and `state.json` field sets are written down,
       including what is removed (`storeHash`, `storeScope`) and what every
       recorded path is relative to.
@@ -95,15 +96,16 @@ Exit criteria:
   the cheapest point to kill the epic if the assumption fails.
 - **Should:** none.
 - **Could:** none — deliberately; scope discipline is the epic's own goal.
-- **Won't (this epic):** cross-project dedup, XDG/home relocation, native
-  Windows symlinks, core lock-field changes, per-project vendored/restored
-  choice, GC of orphaned home stores (mirrors epic non-goals).
+- **Won't (this epic):** cross-project dedup, XDG/home relocation, Windows
+  support (and any symlink-fallback machinery for it), core lock-field
+  changes, per-project vendored/restored choice, GC of orphaned home stores
+  (mirrors epic non-goals).
 
 ## Risk register
 
 | Risk | Likelihood | Impact | Mitigation | Trigger / early signal |
 | :--- | :--- | :--- | :--- | :--- |
-| Committed symlinks break on some platform/tooling (Windows checkout, agent readers) | med | high | T01 spike first; copy fallback + `sync` reconciliation specified before build | T01 e2e fails on any platform |
+| Committed symlinks break in git round-trips or agent readers on macOS/Linux | low | high | T01 spike first; symlinks declared a platform requirement (Windows out of support) | T01 e2e fails on either platform |
 | Ownership predicates re-keying misses a path and `remove`/`sync` deletes user files or fails closed everywhere | med | high | T03 is a dedicated task; adversarial/foreign-target integration tests (`test/integration/adversarial_test.go`) extended before flows change | foreign-target guard failures in CI |
 | Vendored content bloats repos with large skills | med | low | Accepted trade-off; document repo-size implications; lock hash detects drift | user reports; none blocking |
 | Conflict with in-flight 021 worktree (same CLI files, goldens, command docs) | high | med | Sequence: start after 021 merges; rebase spec docs only | merge conflicts in `internal/cli` |
@@ -142,3 +144,4 @@ Exit criteria:
 | Date | Change | Why |
 | :--- | :--- | :--- |
 | 2026-07-31 | Plan created | — |
+| 2026-08-01 | Windows dropped from scope: no copy-fallback/degraded-checkout design; symlinks are a platform requirement (macOS/Linux) | User: "we dont suport windows yet" |

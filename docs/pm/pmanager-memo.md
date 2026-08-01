@@ -1,6 +1,6 @@
 # PManager memo
 
-_Last updated: 2026-07-31_
+_Last updated: 2026-08-01_
 
 ## 1. Product context
 
@@ -29,6 +29,8 @@ Diataxis documentation are all maintained in this repository.
 - Storage direction (2026-07-31 decision): repo owns skill content
   (committed `.agents/skills` + relative agent links); `$HOME/.gskill` is a
   clone cache only; global store / dedup was explicitly traded away.
+- Supported platforms are macOS and Linux only — Windows is not supported
+  yet [user, 2026-08-01]; do not design Windows fallbacks into specs.
 - Generated command documentation must be regenerated from the CLI grammar.
 - Existing dirty worktree changes are user-owned unless explicitly included in
   an approved task; preserve them while implementing adjacent work.
@@ -42,3 +44,5 @@ Diataxis documentation are all maintained in this repository.
 - 2026-07-31 — spec'd `repo-owned-storage`; user chose vendored committed
   skill content, committed relative agent links, full removal of the spec-015
   global store, and auto-migration; sequences after cli-surface-cleanup.
+- 2026-08-01 — descoped Windows from `repo-owned-storage` (no copy-fallback
+  design); learned Windows is not a supported platform product-wide.

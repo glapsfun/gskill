@@ -8,7 +8,7 @@ priority: must
 depends-on: [T02]
 estimate: L
 owner: unassigned
-updated: 2026-07-31
+updated: 2026-08-01
 ---
 
 # T03 — Re-key activation and ownership predicates to `.agents/skills`
@@ -31,9 +31,10 @@ against the repo's `.agents/skills` root. Everything in T04 sits on this.
   clone-cache materialization) instead of symlinking into a store; content
   hash verified after copy against the lock's expected hash.
 - Agent links: `activateAgent` creates symlinks whose stored target is
-  *relative* (e.g. `../../.agents/skills/<name>`); copy mode unchanged in
-  spirit but sourced from the repo copy. Apply T01's reconciliation rule for
-  degraded checkouts in link-health checks.
+  *relative* (e.g. `../../.agents/skills/<name>`); the user-chosen `--copy`
+  mode is unchanged in spirit but sourced from the repo copy. Link-health
+  checks report T01's specified error for a symlink-less checkout (no
+  auto-reconciliation — Windows is out of scope).
 - Re-key `Owned`, `HealthOf`, `guardForeignTarget`, `managedRoots`,
   `checkSafeTargetRemoval` to the `.agents/skills` root; foreign links
   (including legacy absolute home-store links) still fail closed — T07
@@ -51,7 +52,8 @@ against the repo's `.agents/skills` root. Everything in T04 sits on this.
 - [ ] `remove`/`sync` refuse to touch a link pointing outside
       `.agents/skills` (foreign-target tests green).
 - [ ] `active.Owned`/`HealthOf` report correctly for: healthy relative link,
-      degraded-checkout plain file, legacy absolute link, foreign link.
+      symlink-less-checkout plain file (T01's error), legacy absolute link,
+      foreign link.
 - [ ] `./scripts/verify.sh` exits 0.
 
 ## Out of scope

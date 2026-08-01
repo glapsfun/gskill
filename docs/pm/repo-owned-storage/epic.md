@@ -6,7 +6,7 @@ status: approved
 business-goal: A gskill project is shareable via git alone — clone equals working skills
 owner: vladtara
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
 ---
 
 # Repo-owned skill storage with home reduced to a clone cache
@@ -48,11 +48,11 @@ round-trips and agent tooling) is tested by the first task.
 
 We believe that inverting storage ownership — skill content copied into the
 repo at `.agents/skills/<name>` and committed, agent directories holding
-committed *relative* symlinks (copy fallback where symlinks are unavailable),
+committed *relative* symlinks,
 and `$HOME/.gskill` reduced to a commit-keyed clone cache — will make a fresh
 `git clone` yield working skills for teammates and CI with zero gskill
-commands, measured by a clone-and-go e2e test passing on all
-symlink-capable platforms from the first release of this epic.
+commands, measured by a clone-and-go e2e test passing on the supported
+platforms (macOS and Linux) from the first release of this epic.
 
 ## Business goal alignment
 
@@ -74,7 +74,7 @@ standing goal of a small, maintainable surface [docs/pm/pmanager-memo.md].
 
 | Metric | Role | Current | Target | Window | Measured via |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| Fresh clone has working skills with zero gskill commands | primary | 0% (impossible) | 100% on symlink-capable platforms | first release | clone-and-go e2e test in CI |
+| Fresh clone has working skills with zero gskill commands | primary | 0% (impossible) | 100% on macOS and Linux | first release | clone-and-go e2e test in CI |
 | Second install of same skill@commit performs no network fetch | guardrail | pass (store/cache hit) | pass (clone-cache hit) | same | integration test |
 | `gskill update` to a newer version remains one command | guardrail | pass | pass | same | integration test |
 | `./scripts/verify.sh` | guardrail | green | green throughout | every task | CI |
@@ -99,8 +99,10 @@ standing goal of a small, maintainable surface [docs/pm/pmanager-memo.md].
   prevents re-downloads, which is the expensive part.
 - **XDG or home-relocation changes** — `~/.gskill` + `GSKILL_HOME` stay as-is
   (spec 015 clarification stands).
-- **Native Windows symlink support** — copy fallback remains the Windows
-  answer; no privilege elevation or junction work.
+- **Windows support** — gskill does not support Windows yet [user,
+  2026-08-01]; symlink availability is a platform requirement, and no
+  degraded-checkout fallback or reconciliation machinery is designed for it.
+  Copy mode survives only as the existing user-chosen `--copy` install mode.
 - **Lock schema core-field changes** — the tool-shared fields of
   `skills-lock.json` (spec 012 compatibility) are untouched; only the
   namespaced `gskill` extension may change.
@@ -111,8 +113,8 @@ standing goal of a small, maintainable surface [docs/pm/pmanager-memo.md].
 
 ## Open questions
 
-- Do committed relative symlinks survive git round-trips on all supported
-  platforms and remain readable by agent tooling in copy-fallback mode?
+- Do committed relative symlinks survive git round-trips on macOS and Linux
+  and remain readable by agent tooling?
   → answered by T01 (spike), the first task.
 - What exactly shrinks in `.gskill/state.json` once targets are committed?
   → answered by T02 (schema design).

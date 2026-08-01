@@ -8,7 +8,7 @@ priority: must
 depends-on: [T03]
 estimate: L
 owner: unassigned
-updated: 2026-07-31
+updated: 2026-08-01
 ---
 
 # T04 — Rework add/install/update/sync onto the repo-owned pipeline
@@ -37,8 +37,8 @@ the store-hit shortcuts (`installFromStore`, `lockEntryUpToDate`,
   into cache, replace repo copy, refresh links, rewrite lock — one command,
   as today.
 - `sync` (`internal/app/sync.go:50`): reconcile against `.agents/skills` as
-  the managed root; orphan sweeps updated; apply T01's degraded-checkout
-  link reconciliation.
+  the managed root; orphan sweeps updated; a symlink-less checkout gets
+  T01's error, not silent repair.
 - Apply T02's schema note: write the new lock-extension and state fields;
   drop store fields from written records (readers of old records: T07).
 - Guardrail tests: same skill@commit added in a second project performs no
