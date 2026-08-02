@@ -57,9 +57,7 @@ func TestExitCodes_NoAgentIsExit9(t *testing.T) {
 	}
 	a := app.New(app.Options{Agents: reg, Logger: discardLogger()})
 
-	if _, stderr, code := runGskillWithApp(t, a, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProjectWithApp(t, a, proj)
 	_, _, code := runGskillWithApp(t, a, proj, "add", src)
 	if code != 9 {
 		t.Errorf("exit = %d, want 9 (no target agent and no default available)", code)

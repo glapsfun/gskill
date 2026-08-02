@@ -151,7 +151,8 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 		// lf, so lockEntryTargets' narrow-to-zero detection (which reads l)
 		// and agentDiff's removal computation (which reads lf) always see a
 		// consistent snapshot. Loading l before the lock (as before) left a
-		// window where a concurrent mutation (e.g. `unlink --prune`) could
+		// window where a concurrent mutation (e.g. a remove or an agent
+		// narrowing in another process) could
 		// make the two disagree about whether a zero-agent narrow is genuine,
 		// misrouting it onto the network-requiring resolve path and
 		// violating the zero-network guarantee for narrow-to-zero (FR-018).
@@ -336,8 +337,8 @@ func (a *App) verifyDroppedAgentsRemovable(p *project, lf *skillslock.State, nam
 // always uses prune=false semantics (research.md Decision 2/6): the lock
 // entry itself, and the canonical store/active content, are never touched
 // here — only the per-agent managed targets. Actual pruning of the lock
-// entry remains exclusively gskill unlink --prune's / --prune's job
-// (spec 013 FR-003/FR-012/FR-013).
+// entry remains exclusively the job of remove / install --prune
+// (spec 013 FR-003/FR-012/FR-013; spec 021 retired the unlink command).
 //
 // Every target is verified removable (checkSafeTargetRemoval) before any of
 // them are actually removed, and the entry's Targets/Modes maps are only
@@ -702,7 +703,7 @@ func (a *App) ensureLocalState(ctx context.Context, p *project, req InstallFromL
 	if req.NoInit {
 		return false, errs.WithHint(
 			fmt.Errorf("%w: project is not initialized and --no-init is set", errs.ErrInvalidLock),
-			"drop --no-init or run 'gskill init' first",
+			"drop --no-init so the project is initialized automatically",
 		)
 	}
 	if req.DryRun {

@@ -63,8 +63,8 @@ func TestRun_JSONStdoutStaysCleanOnHintedError(t *testing.T) {
 //     already says another gskill process holds the lock.
 //   - generic internal errors (exit 1): unexpected by definition; no single
 //     next step exists.
-//   - `source check` problems (exit 3): the command's own stdout lists every
-//     invalid/duplicate skill with per-skill diagnostics — the output IS the
+//   - per-skill problem reports (exit 3): the command's own stdout lists
+//     every affected skill with per-skill diagnostics — the output IS the
 //     next step.
 func TestHintAudit_RepresentativeSites(t *testing.T) {
 	t.Parallel()
@@ -76,8 +76,6 @@ func TestHintAudit_RepresentativeSites(t *testing.T) {
 		wantHint string
 	}{
 		{"install without lock", false, []string{"install"}, "run 'gskill add <source>' to install a first skill"},
-		{"unlink unknown agent", true, []string{"unlink", "foo", "--agent", "no-such-agent"}, "run 'gskill doctor' to list detected agents"},
-		{"unlink undeclared skill", true, []string{"unlink", "foo", "--agent", "claude"}, "run 'gskill list' to see installed skills"},
 		{"config get unknown key", false, []string{"config", "get", "no_such_key"}, "run 'gskill config list' to see available keys"},
 	}
 	for _, tt := range tests {

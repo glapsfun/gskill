@@ -58,9 +58,7 @@ func TestAdapterExtensibility_NewAgentEndToEnd(t *testing.T) {
 	proj := newProject(t)
 	a := appWithAcme()
 
-	if _, stderr, code := runGskillWithApp(t, a, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProjectWithApp(t, a, proj)
 	// add → the new agent gets a target through the shared active layer.
 	if _, stderr, code := runGskillWithApp(t, a, proj, "add", repo, "--version", "^1.0.0", "--agent", "acme"); code != 0 {
 		t.Fatalf("add acme: %s", stderr)
@@ -84,9 +82,9 @@ func TestAdapterExtensibility_NewAgentEndToEnd(t *testing.T) {
 	}
 	requireResolvesActive(t, proj, ".acme", "demo")
 
-	// unlink --prune removes the last agent and the skill.
-	if _, stderr, code := runGskillWithApp(t, a, proj, "unlink", "demo", "--agent", "acme", "--prune"); code != 0 {
-		t.Fatalf("unlink: %s", stderr)
+	// remove detaches the last agent and cleans up the skill.
+	if _, stderr, code := runGskillWithApp(t, a, proj, "--yes", "remove", "demo"); code != 0 {
+		t.Fatalf("remove: %s", stderr)
 	}
 	if n := countActiveEntries(t, proj); n != 0 {
 		t.Errorf("active entry not pruned for new agent (count=%d)", n)
@@ -100,9 +98,7 @@ func TestCopyFallback_SharedContentIsReal(t *testing.T) {
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--agent", "claude", "--copy"); code != 0 {
 		t.Fatalf("add claude --copy: %s", stderr)
 	}

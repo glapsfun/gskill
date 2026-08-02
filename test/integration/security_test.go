@@ -20,9 +20,7 @@ func TestSecurity_UnsafeSymlinkRejected(t *testing.T) {
 	}
 
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 
 	_, stderr, code := runGskill(t, proj, "add", src, "--agent", "claude")
 	if code == 0 {
@@ -45,9 +43,7 @@ func TestSecurity_ExecBitWarnsButInstalls(t *testing.T) {
 	}
 
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 
 	_, stderr, code := runGskill(t, proj, "add", src, "--agent", "claude")
 	if code != 0 {

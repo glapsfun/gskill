@@ -19,9 +19,7 @@ func TestMultiAgent_OneAddInstallsIntoAllDetected(t *testing.T) {
 		}
 	}
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}

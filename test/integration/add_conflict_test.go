@@ -11,9 +11,7 @@ func TestAddConflict_ErrorsAndPointsToUpdateOrForce(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo); code != 0 {
 		t.Fatalf("first add: %s", stderr)
 	}

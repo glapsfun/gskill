@@ -35,7 +35,8 @@ const (
 // Error carries a gskill exit Code and, optionally, an underlying cause that
 // remains reachable through errors.Is, errors.As, and errors.Unwrap, plus an
 // optional Hint: a one-line actionable next step the CLI renders after the
-// error message ("→ run 'gskill init' to create one"). Hint never changes
+// error message ("→ run 'gskill add <source>' to install a first skill").
+// Hint never changes
 // Error() output, code mapping, or errors.Is/As matching.
 type Error struct {
 	Code Code

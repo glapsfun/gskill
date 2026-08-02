@@ -175,12 +175,10 @@ func TestAddSelect_AtomicOnCollision(t *testing.T) {
 	}
 }
 
-// mustInit runs `gskill init`, failing the test on error.
+// mustInit prepares the project's local gskill state via the app layer.
 func mustInit(t *testing.T, proj string) {
 	t.Helper()
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 }
 
 // TestAddSelect_AgentTargetingUnattended covers FR-023: explicit --agent installs

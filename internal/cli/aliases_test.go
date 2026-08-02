@@ -38,9 +38,8 @@ func initedProject(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	_, stderr, code := runCLI(t, newTestApp(), "-C", dir, "init")
-	if code != 0 {
-		t.Fatalf("init: exit code = %d, stderr: %q", code, stderr)
+	if _, err := newTestApp().Init(context.Background(), dir, false); err != nil {
+		t.Fatalf("init: %v", err)
 	}
 	return dir
 }

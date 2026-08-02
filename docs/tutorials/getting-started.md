@@ -22,20 +22,11 @@ mkdir .claude          # marks this as a Claude Code project so GSKILL detects t
 
 **Expected:** an empty project directory with a `.claude/` marker. Nothing is installed yet.
 
-## Step 2 — Initialise GSKILL
+## Step 2 — Add a skill
 
-```bash
-gskill init
-```
-
-**Expected:** GSKILL prepares a `.gskill/` state directory, the `.agents/skills/` layer, and `.gitignore`
-hints. `gskill init` exits `0`.
-
-> **This step is optional.** `gskill add` (Step 3) creates this same local state automatically if it's
-> missing, so you never have to run `init` by hand first. It's shown here so you can see exactly what
-> gets created before moving on.
-
-## Step 3 — Add a skill
+> **No setup step needed.** The first `gskill add` (or `gskill install`) automatically prepares the
+> local state GSKILL needs — a `.gskill/` state directory, the `.agents/skills/` layer, and
+> `.gitignore` hints — so you go straight from an empty project to installing a skill.
 
 For a first run we'll add a **local** skill folder (a directory containing a `SKILL.md`). If you have
 a Git source instead, see [Add a skill from Git](../how-to/add-a-git-skill.md) — the rest of this
@@ -49,7 +40,7 @@ gskill add ./path/to/a/skill        # a folder containing SKILL.md
 both **intent** and **resolved reality** in `skills-lock.json`. You'll see
 `Added <name> (<content-hash>) into 1 agent(s)`.
 
-## Step 4 — Inspect what you have
+## Step 3 — Inspect what you have
 
 ```bash
 gskill list                 # installed skills + status
@@ -59,7 +50,7 @@ gskill list --json          # the same, machine-readable
 **Expected:** your skill appears in the list with an "ok" status. The `--json` form prints a single
 JSON object on stdout — handy for scripts (see [Script with --json](../how-to/script-with-json.md)).
 
-## Step 5 — Commit the lockfile
+## Step 4 — Commit the lockfile
 
 ```bash
 git init
@@ -72,7 +63,7 @@ constraint, agents) and the resolved reality (content hash, exact version, targe
 machine-generated, deterministic record that makes restores reproducible. To understand the model,
 read [The reproducibility model](../explanation/reproducibility-model.md).
 
-## Step 6 — Prove reproducibility
+## Step 5 — Prove reproducibility
 
 Simulate a fresh checkout, then restore **exactly** from the lockfile:
 

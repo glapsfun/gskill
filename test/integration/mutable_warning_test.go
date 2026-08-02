@@ -13,9 +13,7 @@ func TestAddBranch_EmitsMutableWarning(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"))
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 
 	stdout, stderr, code := runGskill(t, proj, "add", repo, "--ref", "main", "--json")
 	if code != 0 {

@@ -27,9 +27,7 @@ func TestDocsExamples_LocalSkillLifecycle(t *testing.T) {
 	skill := localSkillDir(t, "demo")
 
 	// init
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init exit %d: %s", code, stderr)
-	}
+	initProject(t, proj)
 
 	// add a local skill (offline, no network)
 	if _, stderr, code := runGskill(t, proj, "add", skill); code != 0 {
@@ -75,9 +73,7 @@ func TestDocsExamples_VerifyDetectsTampering(t *testing.T) {
 	proj := newProject(t)
 	skill := localSkillDir(t, "demo")
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", skill); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -104,9 +100,7 @@ func TestDocsExamples_FrozenLockfile(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0", "v1.2.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -131,9 +125,7 @@ func TestDocsExamples_JSONStatusCommands(t *testing.T) {
 	proj := newProject(t)
 	skill := localSkillDir(t, "demo")
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", skill); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}

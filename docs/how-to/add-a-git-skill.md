@@ -8,7 +8,7 @@ the install is reproducible.
 
 ## Before you start
 
-- A project with an agent marker and `gskill init` run.
+- A project with an agent marker (`gskill add` initializes the rest automatically).
 - Network access to the Git host (or a warm cache — see [Work offline](work-offline.md)).
 - A system `git` binary on `PATH` (`gskill doctor` checks this).
 
