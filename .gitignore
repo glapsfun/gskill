@@ -46,6 +46,7 @@ specs
 .specify
 .docs
 .sddx
+docs/pm
 t1
 
 # AI
