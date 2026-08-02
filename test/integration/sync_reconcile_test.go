@@ -105,10 +105,10 @@ func TestSyncReconcile_AddAgentOnlyMissingTarget(t *testing.T) {
 	}
 }
 
-// TestSyncReconcile_UnlinkRemovesAgentTarget covers US2 scenario 3 / SC-008:
-// unlinking one agent removes only that agent's target, keeping the active
-// entry and other agents.
-func TestSyncReconcile_UnlinkRemovesAgentTarget(t *testing.T) {
+// TestSyncReconcile_NarrowedAgentSetRemovesTarget covers US2 scenario 3 /
+// SC-008: re-running install with a narrower exact agent set removes only the
+// dropped agent's target, keeping the active entry and remaining agents.
+func TestSyncReconcile_NarrowedAgentSetRemovesTarget(t *testing.T) {
 	t.Parallel()
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
@@ -117,8 +117,8 @@ func TestSyncReconcile_UnlinkRemovesAgentTarget(t *testing.T) {
 		t.Fatalf("add: %s", stderr)
 	}
 
-	if _, stderr, code := runGskill(t, proj, "unlink", "demo", "--agent", "codex"); code != 0 {
-		t.Fatalf("unlink: %s", stderr)
+	if _, stderr, code := runGskill(t, proj, "install", "--agent", "claude"); code != 0 {
+		t.Fatalf("install --agent claude: %s", stderr)
 	}
 	if _, err := os.Lstat(filepath.Join(proj, ".codex", "skills", "demo")); !os.IsNotExist(err) {
 		t.Errorf("codex target not removed (err=%v)", err)

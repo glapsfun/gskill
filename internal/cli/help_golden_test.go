@@ -18,7 +18,6 @@ var helpPages = []struct {
 	{"root", nil},
 	{"project", []string{"project"}},
 
-	{"init", []string{"init"}},
 	{"add", []string{"add"}},
 	{"onboard", []string{"onboard"}},
 	{"install", []string{"install"}},
@@ -36,9 +35,6 @@ var helpPages = []struct {
 	{"project-check", []string{"project", "check"}},
 	{"project-diff", []string{"project", "diff"}},
 
-	{"source-list", []string{"source", "list"}},
-	{"source-inspect", []string{"source", "inspect"}},
-	{"source-check", []string{"source", "check"}},
 	{"cache-path", []string{"cache", "path"}},
 	{"cache-stats", []string{"cache", "stats"}},
 	{"cache-list", []string{"cache", "list"}},
@@ -64,20 +60,21 @@ var helpPages = []struct {
 	{"config-path", []string{"config", "path"}},
 	{"config-list", []string{"config", "list"}},
 	{"config-get", []string{"config", "get"}},
-	{"unlink", []string{"unlink"}},
 	{"doctor", []string{"doctor"}},
 	{"dashboard", []string{"dashboard"}},
 	{"completion", []string{"completion"}},
 	{"version", []string{"version"}},
 }
 
-// visibleTopLevel is the canonical 20-entry command surface (spec 010 FR-001
-// + spec 011 onboard).
+// visibleTopLevel is the canonical 19-entry command surface (spec 010 FR-001
+// + spec 011 onboard + spec 015 store/migrate/projects, minus the commands
+// retired by spec 021).
 var visibleTopLevel = []string{
-	"init", "add", "onboard", "install", "update", "remove",
+	"add", "onboard", "install", "update", "remove",
 	"list", "info", "search", "outdated",
 	"project",
-	"source", "cache", "config", "unlink", "doctor", "dashboard", "completion", "version",
+	"cache", "config", "doctor", "store", "migrate", "projects",
+	"dashboard", "completion", "version",
 }
 
 // TestHelpPages_CoverEveryVisibleLeaf guards helpPages against drift: every
@@ -139,9 +136,10 @@ func TestRootHelp_GroupedSections(t *testing.T) {
 	}
 	// The regrouped maintenance commands must not appear as top-level entries
 	// (FR-004); they live under `project` and as hidden aliases only. `status`
-	// stays in this list because the command was removed outright (spec 020):
-	// it must never resurface in root help.
-	for _, old := range []string{"sync", "repair", "lock", "verify", "check", "diff", "status"} {
+	// (spec 020) and `init`/`source`/`unlink` (spec 021) stay in this list
+	// because those commands were removed outright: they must never resurface
+	// in root help.
+	for _, old := range []string{"sync", "repair", "lock", "verify", "check", "diff", "status", "init", "source", "unlink"} {
 		re := regexp.MustCompile(`(?m)^\s{2,4}` + old + `\b`)
 		if re.MatchString(stdout) {
 			t.Errorf("root help lists hidden alias %q as a top-level entry", old)

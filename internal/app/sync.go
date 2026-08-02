@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -337,7 +338,7 @@ func (a *App) sweepAgentOrphans(p *project, lf *skillslock.State, external map[s
 			if external[name] {
 				continue
 			}
-			if locked, ok := lf.Skills[name]; ok && contains(locked.Installation.Agents, ag.ID()) {
+			if locked, ok := lf.Skills[name]; ok && slices.Contains(locked.Installation.Agents, ag.ID()) {
 				continue
 			}
 			target := filepath.Join(container, name)

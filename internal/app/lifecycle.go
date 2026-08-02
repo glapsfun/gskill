@@ -332,7 +332,7 @@ func (a *App) removeSkills(p *project, lf *skillslock.State, names []string, out
 			// Ownership-checked (not the bare confined-path deletion): a
 			// copy-mode target whose content no longer matches what gskill
 			// installed fails closed here too, matching the guarantee
-			// unlink and install --agent narrowing already enforce.
+			// remove and install --agent narrowing already enforce.
 			target, safe, chkErr := a.checkSafeTargetRemoval(p, scope, id, name, locked.Installation.Targets[id], locked.Resolved.ContentHash)
 			if chkErr != nil {
 				return fmt.Errorf("remove target for %q: %w", name, chkErr)

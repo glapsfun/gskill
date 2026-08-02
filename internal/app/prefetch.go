@@ -144,7 +144,7 @@ func (a *App) entryNeedsNetwork(p *project, lf *skillslock.State, name string, e
 		ids := normalizeAgentIDs(req.Agents)
 		if len(ids) == 0 && len(prior.Installation.Agents) > 0 {
 			// Genuine narrow-to-zero (FR-012, lockEntryTargets/
-			// narrowEntryToZeroAgents): a pure local unlink with no
+			// narrowEntryToZeroAgents): a pure local agent detach with no
 			// resolution, fetch, or hash re-verification — network access
 			// here would be exactly the cold-cache network access FR-018
 			// forbids for this path.

@@ -80,6 +80,23 @@ func runGskillWithApp(t *testing.T, a *app.App, root string, args ...string) (st
 	return out.String(), errb.String(), code
 }
 
+// initProject prepares root's local gskill state through the app layer,
+// using the test's private-home App. Setup goes through App.Init directly:
+// there is no public init command, and production auto-init has its own
+// dedicated add/install coverage.
+func initProject(t *testing.T, root string) {
+	t.Helper()
+	initProjectWithApp(t, newApp(t), root)
+}
+
+// initProjectWithApp is initProject for a caller-provided App.
+func initProjectWithApp(t *testing.T, a *app.App, root string) {
+	t.Helper()
+	if _, err := a.Init(context.Background(), root, false); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+}
+
 // readFile reads a project file, failing the test on error.
 func readFile(t *testing.T, path string) []byte {
 	t.Helper()

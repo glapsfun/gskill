@@ -113,7 +113,8 @@ func TestPruneRemovesDroppedAgentTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Simulate a teammate's unlink+commit: shrink the entry's agents/targets.
+	// Simulate a teammate narrowing the entry's agents and committing the
+	// shrunken lock.
 	lockPath := filepath.Join(root, skillslock.FileName)
 	l, err := skillslock.Load(lockPath)
 	if err != nil {
@@ -173,8 +174,10 @@ func TestAddRefusesExternalEntryCollision(t *testing.T) {
 	}
 }
 
-// A managed entry whose every agent was unlinked (empty gskill.agents) must
-// not block the rest of the install run.
+// A managed entry with an empty gskill.agents set must not block the rest of
+// the install run. gskill itself no longer produces that state (the unlink
+// command was retired by spec 021), but external tooling co-owning
+// skills-lock.json still can.
 func TestInstallSkipsAgentlessManagedEntry(t *testing.T) {
 	t.Parallel()
 
@@ -187,13 +190,27 @@ func TestInstallSkipsAgentlessManagedEntry(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Unlink(ctx, root, "demo-skill", "claude", false); err != nil {
+	lockPath := filepath.Join(root, skillslock.FileName)
+	l, err := skillslock.Load(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := l.Entry("demo-skill")
+	if !ok || e.Ext == nil {
+		t.Fatal("demo-skill entry missing its gskill extension")
+	}
+	e.Ext.Agents = nil
+	l.SetEntry("demo-skill", e)
+	if err := skillslock.Save(lockPath, l); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, ".claude", "skills", "demo-skill")); err != nil {
 		t.Fatal(err)
 	}
 
 	res, err := a.InstallFromLock(ctx, app.InstallFromLockRequest{Root: root})
 	if err != nil {
-		t.Fatalf("install after unlink: %v", err)
+		t.Fatalf("install after agent strip: %v", err)
 	}
 	byName := map[string]string{}
 	for _, s := range res.Skills {

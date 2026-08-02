@@ -77,8 +77,7 @@ Verify the install with `gskill version`.
 **Use it:**
 
 ```bash
-gskill init                                                      # prepare .gskill/ + .agents/skills/
-gskill add github.com/owner/repo --skill example --agent claude  # resolve, install, lock
+gskill add github.com/owner/repo --skill example --agent claude  # resolve, install, lock (auto-initializes the project)
 gskill install --frozen-lockfile                                 # reproduce exactly elsewhere
 gskill verify                                                    # re-hash installed content vs the lock
 ```
@@ -202,7 +201,7 @@ targets Claude Code, Codex, Cursor, and Gemini CLI. The lockfile format
 (`skills-lock.json`) is versioned; breaking CLI or schema changes may occur before
 v1.0 and are documented in release notes.
 
-`init`, `add`, `onboard`, `install` (incl. `--frozen-lockfile`/`--offline`),
+`add`, `onboard`, `install` (incl. `--frozen-lockfile`/`--offline`),
 `verify`, `check`, `outdated`, `update`, `remove`, `sync`, `repair`, `list`,
 `info`, `search`, `diff`, `doctor`, `cache`, `config`, `completion`, and `dashboard`
 (`tui`) all work today against Git and local sources.

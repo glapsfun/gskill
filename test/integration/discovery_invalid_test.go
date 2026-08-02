@@ -14,9 +14,7 @@ func TestAddInvalidFrontmatter_Rejected(t *testing.T) {
 	repo := gitRepo(t, "---\nname: demo\n---\n# body\n", "v1.0.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 
 	_, stderr, code := runGskill(t, proj, "add", repo)
 	if code == 0 {

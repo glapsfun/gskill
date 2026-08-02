@@ -44,9 +44,7 @@ func TestExitCodes_AuthFailureIsExit11Redacted(t *testing.T) {
 	proj := newProject(t)
 	a := app.New(app.Options{Agents: agent.NewDefaultRegistry(), Git: authFailRunner{}, Logger: discardLogger()})
 
-	if _, stderr, code := runGskillWithApp(t, a, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProjectWithApp(t, a, proj)
 
 	_, stderr, code := runGskillWithApp(t, a, proj, "add", "github.com/acme/demo", "--version", "^1.0.0")
 	if code != 11 {
@@ -85,9 +83,7 @@ func TestOutdated_MatchesUpdateListEligibility(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	pinRepo := gitRepo(t, validSkill("deploy"), "v1.0.0", "v2.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -121,9 +117,7 @@ func TestOutdated_ExitCode8OnlyForActionableUpdates(t *testing.T) {
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -145,9 +139,7 @@ func TestOutdated_ExactTagPinNeverTriggersExit8(t *testing.T) {
 	// exit 8 even though `gskill update` preserves the pin (FR-004).
 	pinRepo := gitRepo(t, validSkill("deploy"), "v1.0.0", "v2.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", pinRepo, "--ref", "v1.0.0"); code != 0 {
 		t.Fatalf("add pin: %s", stderr)
 	}
@@ -166,9 +158,7 @@ func TestOutdated_DiscoveryFailureNeverExitsLikeVerified(t *testing.T) {
 	// pass green during an outage.
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -200,9 +190,7 @@ func TestOutdated_PinOnlyOutageStaysExitZero(t *testing.T) {
 	// --all STATUS cell instead of flipping the exit code.
 	pinRepo := gitRepo(t, validSkill("deploy"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", pinRepo, "--ref", "v1.0.0"); code != 0 {
 		t.Fatalf("add pin: %s", stderr)
 	}
@@ -241,9 +229,7 @@ func TestExitCodes_PartialInstallationIsExit10(t *testing.T) {
 	proj := newProject(t)
 	skill := localSkillDir(t, "demo")
 
-	if _, stderr, code := runGskillWithApp(t, a, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProjectWithApp(t, a, proj)
 
 	_, _, code := runGskillWithApp(t, a, proj, "add", skill, "--agent", "fail-agent")
 	if code != 10 {

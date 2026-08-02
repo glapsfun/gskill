@@ -11,10 +11,11 @@ import (
 // contract independently of the grammar the production code derives from.
 func completionWords() []string {
 	words := []string{
-		"init", "add", "install", "update", "remove",
+		"add", "onboard", "install", "update", "remove",
 		"list", "info", "search", "outdated",
 		"project",
-		"source", "cache", "config", "unlink", "doctor", "dashboard", "completion", "version",
+		"cache", "config", "doctor", "store", "migrate", "projects",
+		"dashboard", "completion", "version",
 	}
 	for _, m := range aliasTable {
 		if m.Kind == aliasKindCommand {

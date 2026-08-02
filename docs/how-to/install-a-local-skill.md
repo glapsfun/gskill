@@ -8,13 +8,11 @@ try GSKILL and works completely offline.
 - A project with an agent marker (e.g. a `.claude/` directory for Claude Code).
 - A local skill folder containing a valid `SKILL.md` (see the
   [frontmatter schema](../reference/frontmatter-schema.md)).
-- `gskill init` has been run in the project.
 
 ## Steps
 
 ```bash
-gskill init                      # once per project, if not already done
-gskill add ./path/to/skill       # the folder that contains SKILL.md
+gskill add ./path/to/skill       # the folder that contains SKILL.md (auto-initializes the project)
 gskill list                      # confirm it installed
 ```
 

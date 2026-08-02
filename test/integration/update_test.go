@@ -31,9 +31,7 @@ func TestUpdateList_ReportsCandidatesOnStdout(t *testing.T) {
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -78,9 +76,7 @@ func TestUpdateList_AllReportsNonActionableStatuses(t *testing.T) {
 	freshRepo := gitRepo(t, validSkill("fresh"), "v3.0.0")
 	local := localSkillDir(t, "local-tools")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", pinRepo, "--ref", "v1.0.0"); code != 0 {
 		t.Fatalf("add pin: %s", stderr)
 	}
@@ -125,9 +121,7 @@ func TestUpdateNamed_RendersFromToResult(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	other := gitRepo(t, validSkill("other"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -165,9 +159,7 @@ func TestUpdateNamed_UpToDateIsHonestNoOp(t *testing.T) {
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -193,9 +185,7 @@ func TestUpdateNamed_UnknownSkillFails(t *testing.T) {
 
 	proj := newProject(t)
 	local := localSkillDir(t, "present")
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", local); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -210,9 +200,7 @@ func TestUpdate_PartialFailureContinuesAndExits10(t *testing.T) {
 	repoA := gitRepo(t, validSkill("alpha"), "v1.0.0")
 	repoB := gitRepo(t, validSkill("beta"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	for _, repo := range []string{repoA, repoB} {
 		if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 			t.Fatalf("add: %s", stderr)
@@ -248,9 +236,7 @@ func TestUpdate_NoInteractiveUpdatesAllActionableWithoutPrompt(t *testing.T) {
 	repoA := gitRepo(t, validSkill("alpha"), "v1.0.0")
 	repoB := gitRepo(t, validSkill("beta"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	for _, repo := range []string{repoA, repoB} {
 		if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 			t.Fatalf("add: %s", stderr)
@@ -282,9 +268,7 @@ func jsonUpdateProject(t *testing.T) string {
 	t.Helper()
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -361,9 +345,7 @@ func TestUpdate_DryRunWritesNothing(t *testing.T) {
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -411,9 +393,7 @@ func TestUpdate_OfflineMakesNoNetworkCalls(t *testing.T) {
 		Git:        counting,
 		GskillHome: filepath.Join(t.TempDir(), "home"),
 	})
-	if _, stderr, code := runGskillWithApp(t, a, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProjectWithApp(t, a, proj)
 	if _, stderr, code := runGskillWithApp(t, a, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -452,9 +432,7 @@ func TestUpdateList_UsageErrors(t *testing.T) {
 	t.Parallel()
 
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, _, code := runGskill(t, proj, "update", "--list", "some-skill"); code == 0 {
 		t.Error("update --list with names must be a usage error")
 	}
@@ -469,9 +447,7 @@ func TestUpdate_AdvancesLockWithinConstraint(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}

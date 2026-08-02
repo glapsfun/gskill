@@ -168,7 +168,7 @@ func TestInstallFromLock_OfflineNeverFetches(t *testing.T) {
 
 // TestInstallFromLock_NarrowToZeroPrefetchesNoNetwork: an explicit
 // narrow-to-zero (Agents: []string{} on an entry with recorded agents) is a
-// pure local unlink — no staging, resolution, or fetch, even with a cold
+// pure local agent detach — no staging, resolution, or fetch, even with a cold
 // commit cache and no --offline (FR-018, narrowEntryToZeroAgents). Prefetch
 // must recognize this exact case and skip it, not just the fully-empty
 // (never-installed) case: entryNeedsNetwork's naive "explicit agent-set

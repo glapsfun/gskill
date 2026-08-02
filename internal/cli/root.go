@@ -33,7 +33,6 @@ type rootCLI struct {
 	Verbose       bool   `short:"v" help:"Enable verbose diagnostics."`
 	Dir           string `short:"C" help:"Run as if gskill started in this directory." type:"path"`
 
-	Init    initCmd    `cmd:"" group:"core" help:"Initialize local gskill state (.gskill, .agents/skills, gitignore)."`
 	Add     addCmd     `cmd:"" group:"core" help:"Add and install a new skill (auto-initializes the project if needed)."`
 	Onboard onboardCmd `cmd:"" group:"core" help:"Guided skill installation without a predefined source."`
 	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent, auto-initializes the project if needed)."`
@@ -62,10 +61,8 @@ type rootCLI struct {
 
 	Project projectCmd `cmd:"" group:"project" help:"Manage this project's lockfile and installed state."`
 
-	Source     sourceCmd     `cmd:"" group:"more" help:"Inspect a skill source (list/inspect/check) without installing."`
 	Cache      cacheCmd      `cmd:"" group:"more" help:"Manage the content cache."`
 	ConfigCmd  configCmd     `cmd:"" name:"config" group:"more" help:"Inspect layered configuration."`
-	Unlink     unlinkCmd     `cmd:"" group:"more" help:"Detach one agent from a skill (--prune removes it when the last agent goes)."`
 	Doctor     doctorCmd     `cmd:"" group:"more" help:"Check the environment and declared requirements."`
 	Store      storeCmd      `cmd:"" group:"more" help:"Manage the global content store."`
 	Migrate    migrateCmd    `cmd:"" group:"more" help:"Migrate this project to the shared global store."`

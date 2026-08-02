@@ -12,7 +12,7 @@ func TestWithHint_PreservesMessageCodeAndChain(t *testing.T) {
 	t.Parallel()
 
 	cause := fmt.Errorf("%w: no gskill.toml found", errs.ErrInvalidLock)
-	hinted := errs.WithHint(cause, "run 'gskill init' to create one")
+	hinted := errs.WithHint(cause, "run 'gskill add <source>' to install a first skill")
 
 	if hinted.Error() != cause.Error() {
 		t.Errorf("WithHint changed Error(): got %q, want %q", hinted.Error(), cause.Error())
@@ -23,7 +23,7 @@ func TestWithHint_PreservesMessageCodeAndChain(t *testing.T) {
 	if !errors.Is(hinted, errs.ErrInvalidLock) {
 		t.Error("errors.Is lost the sentinel through WithHint")
 	}
-	if got := errs.HintOf(hinted); got != "run 'gskill init' to create one" {
+	if got := errs.HintOf(hinted); got != "run 'gskill add <source>' to install a first skill" {
 		t.Errorf("HintOf = %q, want the attached hint", got)
 	}
 }

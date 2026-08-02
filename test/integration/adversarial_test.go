@@ -75,9 +75,7 @@ func TestAdversarial_CorruptCopyDetectedAndRepaired(t *testing.T) {
 	t.Parallel()
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--agent", "claude", "--copy"); code != 0 {
 		t.Fatalf("add --copy: %s", stderr)
 	}
@@ -107,9 +105,7 @@ func TestAdversarial_ForeignActiveEntryFailsClosed(t *testing.T) {
 	t.Parallel()
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--agent", "claude"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -142,9 +138,7 @@ func TestAdversarial_AgentAddOffline(t *testing.T) {
 	t.Parallel()
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--agent", "claude"); code != 0 {
 		t.Fatalf("add claude: %s", stderr)
 	}

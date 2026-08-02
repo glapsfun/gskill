@@ -129,19 +129,20 @@ func TestAdd_RecordsVersionPin(t *testing.T) {
 	}
 }
 
-func TestInitAddInstall_RoundTripAndIdempotent(t *testing.T) {
+func TestAddInstall_AutoInitRoundTripAndIdempotent(t *testing.T) {
 	t.Parallel()
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0", "v1.2.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init exit %d: %s", code, stderr)
-	}
-
+	// No init step: `add` must auto-initialize the never-initialized project
+	// end-to-end (spec 021 FR-004/SC-004 — there is no public init command).
 	stdout, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0")
 	if code != 0 {
 		t.Fatalf("add exit %d: %s", code, stderr)
+	}
+	if fi, err := os.Stat(filepath.Join(proj, ".gskill")); err != nil || !fi.IsDir() {
+		t.Errorf("add did not auto-initialize .gskill: %v", err)
 	}
 	if !strings.Contains(stdout, "demo") {
 		t.Errorf("add stdout = %q, want skill name", stdout)

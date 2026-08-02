@@ -80,8 +80,8 @@ func newProject(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if _, stderr, code := runGskill(t, root, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
+	if _, err := newApp().Init(context.Background(), root, false); err != nil {
+		t.Fatalf("init: %v", err)
 	}
 	return root
 }

@@ -16,9 +16,6 @@ Flags:
   -C, --dir=STRING        Run as if gskill started in this directory.
 
 CORE
-  init [flags]
-    Initialize local gskill state (.gskill, .agents/skills, gitignore).
-
   add <source> [flags]
     Add and install a new skill (auto-initializes the project if needed).
 
@@ -53,17 +50,11 @@ PROJECT (lockfile · installed state)
     Manage this project's lockfile and installed state.
 
 MORE
-  source <command> [flags]
-    Inspect a skill source (list/inspect/check) without installing.
-
   cache <command> [flags]
     Manage the content cache.
 
   config <command> [flags]
     Inspect layered configuration.
-
-  unlink --agent=STRING <skill> [flags]
-    Detach one agent from a skill (--prune removes it when the last agent goes).
 
   doctor [flags]
     Check the environment and declared requirements.

@@ -149,8 +149,16 @@ func renderFindStyled(hits []app.SearchHit) string {
 	return renderAligned(st, []string{"ID", "SOURCE", "PATH", ""}, rows)
 }
 
-// renderSkillCatalogStyled renders discovered skills (`gskill source list`,
-// `gskill add --list`) for a TTY.
+// pathOrRoot renders an in-repo path, showing "." for the root.
+func pathOrRoot(p string) string {
+	if p == "" {
+		return "."
+	}
+	return p
+}
+
+// renderSkillCatalogStyled renders discovered skills (`gskill add --list`)
+// for a TTY.
 func renderSkillCatalogStyled(skills []discovery.DiscoveredSkill) string {
 	st := tui.DefaultTheme()
 	rows := make([][]string, 0, len(skills))

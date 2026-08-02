@@ -13,9 +13,7 @@ func TestCopyMode_RecordedAndMaterializedAsRealDir(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	// --copy forces the same activation path used by the symlink-unsupported
 	// fallback, which records mode: copy (FR-020).
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--copy"); code != 0 {

@@ -13,9 +13,7 @@ func TestAddSingleSkill_JSONOutput(t *testing.T) {
 
 	src := localTreeSkill(t, "skills/foo", "foo")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	stdout, stderr, code := runGskill(t, proj, "--json", "add", src)
 	if code != 0 {
 		t.Fatalf("add --json exit %d: %s", code, stderr)
@@ -89,9 +87,7 @@ func TestAddSingleSkill_AnywhereRecordsPath(t *testing.T) {
 
 			src := localTreeSkill(t, c.subpath, c.name)
 			proj := newProject(t)
-			if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-				t.Fatalf("init: %s", stderr)
-			}
+			initProject(t, proj)
 
 			_, stderr, code := runGskill(t, proj, "add", src)
 			if code != 0 {
@@ -125,9 +121,7 @@ func TestAddSingleSkill_IgnoredDirsUnaffected(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(decoy, "SKILL.md"), []byte(validSkill("decoy")), 0o600)
 
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	// Exactly one skill is discovered (decoy pruned), so add installs without a selector.
 	if _, stderr, code := runGskill(t, proj, "add", src); code != 0 {
 		t.Fatalf("add exit %d: %s", code, stderr)

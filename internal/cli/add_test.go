@@ -198,7 +198,7 @@ func TestAddRun_NoStdinTTYKeepsDirectPath(t *testing.T) {
 }
 
 // TestAddCmd_FreshDirectoryAutoInitializes (spec 017 FR-001/SC-001): `add`
-// succeeds in a directory that has never run `gskill init` — no .gskill,
+// succeeds in a directory that was never initialized — no .gskill,
 // .agents, or .gitignore exist beforehand — creating all of them as a side
 // effect instead of requiring a separate setup step.
 func TestAddCmd_FreshDirectoryAutoInitializes(t *testing.T) {

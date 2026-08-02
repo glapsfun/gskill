@@ -123,9 +123,7 @@ func TestMultiAgentShare_InstallOnceAddSecondAgent(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 
 	// Scenario 1: install for claude only.
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--agent", "claude"); code != 0 {
@@ -156,9 +154,7 @@ func TestMultiAgentShare_DefaultAgentIsClaude(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := t.TempDir() // no .claude marker, so detection cannot pick an agent
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
@@ -176,9 +172,7 @@ func TestMultiAgentShare_CollisionDifferentSource(t *testing.T) {
 	repoB := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repoA, "--agent", "claude"); code != 0 {
 		t.Fatalf("add A: %s", stderr)
 	}
@@ -195,9 +189,7 @@ func TestMultiAgentShare_ModeFlagsMutuallyExclusive(t *testing.T) {
 
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	_, _, code := runGskill(t, proj, "add", repo, "--copy", "--symlink")
 	if code != 2 {
 		t.Errorf("--copy --symlink exit = %d, want 2", code)
@@ -212,9 +204,7 @@ func TestMultiAgentShare_CopyModeRecorded(t *testing.T) {
 	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
 	proj := newProject(t)
 
-	if _, stderr, code := runGskill(t, proj, "init"); code != 0 {
-		t.Fatalf("init: %s", stderr)
-	}
+	initProject(t, proj)
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude", "--copy"); code != 0 {
 		t.Fatalf("add --copy: %s", stderr)
 	}

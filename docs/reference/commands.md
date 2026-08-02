@@ -129,15 +129,6 @@ Show details for one skill.
 | `name` | yes | Skill name. |
 
 
-## `init`
-
-Initialize local gskill state (.gskill, .agents/skills, gitignore).
-
-| Flag | Type | Description |
-| --- | --- | --- |
-| `--lock` | bool | Also create an empty skills-lock.json. |
-
-
 ## `install`
 
 Install all declared skills (additive, idempotent, auto-initializes the project if needed).
@@ -276,60 +267,6 @@ Search for skills in a source, a GitHub owner, or configured repositories.
 | `--source` | string | Search within one source. |
 
 
-## `source`
-
-Inspect a skill source (list/inspect/check) without installing.
-
-
-## `source check`
-
-Report invalid and duplicate skills in a source.
-
-| Argument | Required | Description |
-| --- | --- | --- |
-| `source` | yes | Skill source: git shorthand, URL, or local path. |
-
-| Flag | Type | Description |
-| --- | --- | --- |
-| `--exclude` | []string | Skip skills whose in-repo path matches this glob (repeatable). |
-| `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
-| `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
-| `--ref` | string | Branch or tag to scan. |
-
-
-## `source inspect`
-
-Show one skill's metadata, path, and diagnostics.
-
-| Argument | Required | Description |
-| --- | --- | --- |
-| `source` | yes | Skill source: git shorthand, URL, or local path. |
-
-| Flag | Type | Description |
-| --- | --- | --- |
-| `--exclude` | []string | Skip skills whose in-repo path matches this glob (repeatable). |
-| `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
-| `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
-| `--ref` | string | Branch or tag to scan. |
-| `--skill` | string | Skill to inspect (name or name@path). |
-
-
-## `source list`
-
-List all skills discovered in a source.
-
-| Argument | Required | Description |
-| --- | --- | --- |
-| `source` | yes | Skill source: git shorthand, URL, or local path. |
-
-| Flag | Type | Description |
-| --- | --- | --- |
-| `--exclude` | []string | Skip skills whose in-repo path matches this glob (repeatable). |
-| `--include` | []string | Only discover skills whose in-repo path matches this glob (repeatable). |
-| `--max-depth` | int | Maximum recursive scan depth (0 = unbounded). |
-| `--ref` | string | Branch or tag to scan. |
-
-
 ## `store`
 
 Manage the global content store.
@@ -399,20 +336,6 @@ Remove an object's GC exemption.
 ## `store verify`
 
 Verify every global store object's integrity.
-
-
-## `unlink`
-
-Detach one agent from a skill (--prune removes it when the last agent goes).
-
-| Argument | Required | Description |
-| --- | --- | --- |
-| `skill` | yes | The installed skill to unlink an agent from. |
-
-| Flag | Type | Description |
-| --- | --- | --- |
-| `--agent` | string | The agent ID to detach. |
-| `--prune` | bool | If this was the last agent, also remove the skill, active entry, and store content. |
 
 
 ## `update`
