@@ -20,12 +20,15 @@ repos:
 
   - repo: local
     hooks:
+      # pre-commit only: verify.sh re-runs fmt/lint/tests at push, so these
+      # would be pure duplication in the pre-push stage.
       - id: gofmt
         name: go format (check)
         entry: scripts/fmt.sh --check
         language: script
         pass_filenames: false
         types: [go]
+        stages: [pre-commit]
 
       - id: golangci-lint
         name: go lint
@@ -33,6 +36,7 @@ repos:
         language: script
         pass_filenames: false
         types: [go]
+        stages: [pre-commit]
 
       - id: gotest-short
         name: go test (short)
@@ -40,6 +44,7 @@ repos:
         language: script
         pass_filenames: false
         types: [go]
+        stages: [pre-commit]
 
       - id: gitleaks
         name: secret scan
