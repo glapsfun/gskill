@@ -855,6 +855,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 	// recorded hash marks managed copy-mode installs as gskill's own; anything
 	// else fails closed until --force approves the overwrite.
 	staged.ireq.PreserveForeign = !req.Force
+	staged.ireq.ReplaceActive = req.Force
 	if prior, ok := lf.Skills[name]; ok {
 		staged.ireq.PriorContentHash = prior.Resolved.ContentHash
 	}

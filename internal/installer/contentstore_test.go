@@ -129,15 +129,22 @@ func TestInstall_StoreHitReusesWithoutFetch(t *testing.T) {
 	if res.SkillFileHash == "" {
 		t.Error("SkillFileHash empty on store reuse")
 	}
-	// The active entry resolves into the store content.
+	// The active entry is a real directory copied from the store content
+	// (spec 022: the repo owns skill content; no links into any store).
 	active := filepath.Join(req.ProjectRoot, ".agents", "skills", "argocd")
-	resolved, err := filepath.EvalSymlinks(active)
+	info, err := os.Lstat(active)
 	if err != nil {
 		t.Fatalf("active entry: %v", err)
 	}
-	wantContent, _ := filepath.EvalSymlinks(f.Path(hash))
-	if resolved != wantContent {
-		t.Errorf("active resolves to %q, want %q", resolved, wantContent)
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("active entry is not a real directory: mode %v", info.Mode())
+	}
+	got, err := integrity.HashDir(active)
+	if err != nil {
+		t.Fatalf("hash active entry: %v", err)
+	}
+	if got.ContentHash != hash {
+		t.Errorf("active content hash = %q, want the stored object's %q", got.ContentHash, hash)
 	}
 }
 

@@ -65,6 +65,9 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 			if reqErr != nil {
 				return reqErr
 			}
+			// Repair's contract is restoring lock-true content, including a
+			// drifted repo-owned active entry (spec 022 §7 repair path).
+			ireq.ReplaceActive = true
 			sctx := stampSkill(ctx, name, k+1, len(names))
 			if _, instErr := a.installerForScope(p, string(ireq.Scope)).Install(sctx, ireq); instErr != nil {
 				return instErr

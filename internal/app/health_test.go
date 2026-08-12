@@ -74,7 +74,7 @@ func TestEvaluateHealth_HealthyChain(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	linkAgent(t, root, "demo")
@@ -105,7 +105,7 @@ func TestEvaluateHealth_MissingTarget(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	// No agent target created.
@@ -129,7 +129,7 @@ func TestEvaluateHealth_BrokenLinkAndCorruptStore(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	linkAgent(t, root, "demo")
@@ -158,7 +158,7 @@ func TestEvaluateHealth_ModeMismatch(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	// Recorded mode is symlink, but place a real directory (a copy) instead.
@@ -183,7 +183,7 @@ func TestEvaluateHealth_LegacyDirectStoreLink(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	// Legacy: agent target points directly into the store, not the active entry.

@@ -311,8 +311,11 @@ func relinkAll(gs *globalstore.Store, root string, skills []LockedSkill, relinka
 		if !relinkable[sk.Name] {
 			continue
 		}
-		if _, err := active.EnsureActive(root, sk.Name, gs.ContentPath(sk.ContentHash),
-			gs.Root(), localStoreDir(root)); err != nil {
+		if _, err := active.EnsureActive(root, sk.Name, gs.ContentPath(sk.ContentHash), active.EnsureOptions{
+			ExpectedHash: sk.ContentHash,
+			Replace:      true,
+			LegacyRoots:  []string{gs.Root(), localStoreDir(root)},
+		}); err != nil {
 			return fmt.Errorf("relink %s: %w", sk.Name, err)
 		}
 		res.Relinked = append(res.Relinked, sk.Name)

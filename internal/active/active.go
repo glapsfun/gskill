@@ -18,23 +18,28 @@ const (
 	skillsDir = "skills"
 )
 
-// Health classifies the state of an active entry relative to its expected store
-// target.
+// Health classifies the state of an active entry in the repo-owned model
+// (spec 022): the entry is a real committed directory, and its identity is
+// its content hash against the lock.
 type Health string
 
 // Active-entry health states.
 const (
-	// HealthOK means the entry is a symlink resolving to the expected store path.
+	// HealthOK means the entry is a real directory whose content hash matches
+	// the expected (lock-recorded) hash.
 	HealthOK Health = "ok"
 	// HealthMissing means no entry exists.
 	HealthMissing Health = "missing"
-	// HealthBroken means the entry is a symlink whose target does not exist.
-	HealthBroken Health = "broken"
-	// HealthForeign means a non-symlink path occupies the entry (not gskill-managed).
+	// HealthDrifted means the entry is a real directory whose content no
+	// longer matches the expected hash (hand-edited committed content).
+	HealthDrifted Health = "drifted"
+	// HealthLegacy means the entry is a symlink into a known legacy store
+	// root (the pre-022 layout); migration converts it on the next mutating
+	// command.
+	HealthLegacy Health = "legacy"
+	// HealthForeign means something gskill does not own occupies the entry:
+	// a symlink resolving elsewhere, or a plain file.
 	HealthForeign Health = "foreign"
-	// HealthWrongStore means the entry is a symlink into the store but at the
-	// wrong content path (e.g. stale after a content update).
-	HealthWrongStore Health = "wrong-store-target"
 )
 
 // Dir returns the active-skills container directory under root.
@@ -52,96 +57,142 @@ func Rel(name string) string {
 	return filepath.Join(rootDir, skillsDir, name)
 }
 
-// EnsureActive makes the active entry for name resolve to storePath, preferring
-// a symlink and falling back to a copy where symlinks are unsupported. It is
-// idempotent (an entry already linking to storePath is left untouched) and
-// re-points a stale gskill-managed symlink (one resolving into storeRoot) after a
-// content update. It NEVER destroys foreign content: a symlink resolving outside
-// storeRoot, or a real directory whose content does not match the store, fails
-// closed and is left intact (FR-029/FR-030).
-func EnsureActive(root, name, storePath string, storeRoots ...string) (string, error) {
+// EnsureOptions parameterizes EnsureActive.
+type EnsureOptions struct {
+	// ExpectedHash is the content hash the entry must match after the call
+	// (the lock's recorded hash for the incoming content). Required.
+	ExpectedHash string
+	// AcceptHashes are additional gskill-owned content hashes (e.g. the
+	// previously locked version): an existing directory matching one of them
+	// is replaced rather than treated as foreign.
+	AcceptHashes []string
+	// Replace allows replacing a real directory that matches neither
+	// ExpectedHash nor AcceptHashes. Reconcile paths (install/sync/repair,
+	// --force) set it; guarded add paths leave it false so drifted or foreign
+	// content fails closed.
+	Replace bool
+	// LegacyRoots are store roots from the pre-022 layout: a symlink entry
+	// resolving under one of them is a stale managed link and is replaced by
+	// the real copy. Symlinks resolving anywhere else are foreign.
+	LegacyRoots []string
+}
+
+// EnsureActive makes .agents/skills/<name> a real directory whose content is
+// copied from src and verified against opts.ExpectedHash (spec 022: the repo
+// owns skill content; the entry is committed, never a link into a store). It
+// is idempotent — an entry already matching ExpectedHash is left untouched —
+// and atomic: the copy is staged as a temporary sibling, verified, then
+// swapped in, so the project never observes a half-written skill. It NEVER
+// destroys content gskill does not own: foreign symlinks and unrecognized
+// directories fail closed and are left intact.
+func EnsureActive(root, name, src string, opts EnsureOptions) (string, error) {
+	if opts.ExpectedHash == "" {
+		return "", fmt.Errorf("ensure active %s: expected content hash is required", name)
+	}
 	dest := Path(root, name)
 	info, err := os.Lstat(dest)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return create(dest, storePath, name)
+			return dest, swapIn(dest, src, opts.ExpectedHash, name)
 		}
 		return "", fmt.Errorf("stat active %s: %w", name, err)
 	}
 
 	if info.Mode()&os.ModeSymlink != 0 {
-		target, rErr := resolveLink(dest)
-		if rErr != nil {
-			return "", rErr
-		}
-		want, aErr := filepath.Abs(storePath)
-		if aErr != nil {
-			return "", fmt.Errorf("resolve store path: %w", aErr)
-		}
-		if filepath.Clean(target) == filepath.Clean(want) {
-			return dest, nil // idempotent
-		}
-		// A symlink into any gskill store root — the current one, or the
-		// legacy/global root a scope transition left behind (spec 015) — is a
-		// stale managed link and re-points; anything else is foreign and
-		// fails closed.
-		for _, storeRoot := range storeRoots {
-			if underRoot(target, storeRoot) {
-				return create(dest, storePath, name)
-			}
-		}
-		return "", foreignErr(name, dest, target)
+		return ensureOverLink(dest, src, name, opts)
 	}
+	if !info.IsDir() {
+		return "", foreignErr(name, dest, "a plain file")
+	}
+	return ensureOverDir(dest, src, name, opts)
+}
 
-	// A real directory: managed copy (or identical content) iff its content
-	// matches the store; otherwise foreign — fail closed.
-	expected, hErr := integrity.HashDir(storePath)
-	if hErr != nil {
-		return "", fmt.Errorf("hash store for %s: %w", name, hErr)
+// ensureOverLink handles a symlink occupant: a link into a legacy store root
+// is a stale managed entry from the pre-022 layout and is replaced with the
+// real copy; anything else is foreign and fails closed.
+func ensureOverLink(dest, src, name string, opts EnsureOptions) (string, error) {
+	target, err := resolveLink(dest)
+	if err != nil {
+		return "", err
 	}
-	ok, _, vErr := integrity.VerifyDir(dest, expected.ContentHash)
-	if vErr != nil {
-		return "", fmt.Errorf("verify active %s: %w", name, vErr)
+	for _, legacyRoot := range opts.LegacyRoots {
+		if underRoot(target, legacyRoot) {
+			return dest, swapIn(dest, src, opts.ExpectedHash, name)
+		}
+	}
+	return "", foreignErr(name, dest, target)
+}
+
+// ensureOverDir handles a real-directory occupant: idempotent when it already
+// matches the expected content; replaced when it matches a previously owned
+// hash (version change) or when the caller reconciles; foreign otherwise.
+func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
+	ok, _, err := integrity.VerifyDir(dest, opts.ExpectedHash)
+	if err != nil {
+		return "", fmt.Errorf("verify active %s: %w", name, err)
 	}
 	if ok {
 		return dest, nil
 	}
-	return "", foreignErr(name, dest, "non-symlink content")
+	for _, h := range opts.AcceptHashes {
+		if h == "" {
+			continue
+		}
+		if owned, _, vErr := integrity.VerifyDir(dest, h); vErr == nil && owned {
+			return dest, swapIn(dest, src, opts.ExpectedHash, name)
+		}
+	}
+	if opts.Replace {
+		return dest, swapIn(dest, src, opts.ExpectedHash, name)
+	}
+	return "", foreignErr(name, dest, "directory content gskill did not install")
 }
 
-// create materializes the active entry as a symlink into storePath, copying
-// where symlinks are unsupported. A symlink switch is atomic (spec 015
-// FR-010): the new link is prepared as a temporary sibling, its target
-// verified, then renamed over the entry — the project never observes a
-// missing or half-updated skill, and a failure leaves the previous entry
-// untouched.
-func create(dest, storePath, name string) (string, error) {
+// swapIn stages a verified copy of src as a temporary sibling of dest, then
+// swaps it in atomically: the previous occupant (link or directory) is moved
+// aside, the staged copy renamed into place, and the old entry removed. On
+// failure the previous occupant is restored.
+func swapIn(dest, src, expectedHash, name string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
-		return "", fmt.Errorf("activate %s: %w", name, err)
+		return fmt.Errorf("activate %s: %w", name, err)
 	}
-	abs, err := filepath.Abs(storePath)
+	stamp := time.Now().UnixNano()
+	tmp := fmt.Sprintf("%s..gskill-switch-%d", dest, stamp)
+	if err := fsutil.CopyDir(src, tmp); err != nil {
+		_ = os.RemoveAll(tmp)
+		return fmt.Errorf("activate %s: %w", name, err)
+	}
+	ok, got, err := integrity.VerifyDir(tmp, expectedHash)
 	if err != nil {
-		return "", fmt.Errorf("resolve store path for %s: %w", name, err)
+		_ = os.RemoveAll(tmp)
+		return fmt.Errorf("activate %s: verify staged copy: %w", name, err)
 	}
-	tmp := fmt.Sprintf("%s..gskill-switch-%d", dest, time.Now().UnixNano())
-	if linkErr := os.Symlink(abs, tmp); linkErr != nil {
-		// Symlinks unsupported on this filesystem: copy fallback keeps the
-		// pre-existing (non-atomic) semantics.
-		if _, err := fsutil.SymlinkOrCopy(storePath, dest); err != nil {
-			return "", fmt.Errorf("activate %s: %w", name, err)
+	if !ok {
+		_ = os.RemoveAll(tmp)
+		return fmt.Errorf("%w: staged content %s for %q does not match expected %s",
+			errs.ErrIntegrity, got, name, expectedHash)
+	}
+
+	old := fmt.Sprintf("%s..gskill-old-%d", dest, stamp)
+	hadOld := false
+	if _, statErr := os.Lstat(dest); statErr == nil {
+		if err := os.Rename(dest, old); err != nil {
+			_ = os.RemoveAll(tmp)
+			return fmt.Errorf("activate %s: move previous entry aside: %w", name, err)
 		}
-		return dest, nil
-	}
-	// Verify the prepared link resolves before it goes live (FR-010).
-	if _, statErr := os.Stat(tmp); statErr != nil {
-		_ = os.Remove(tmp)
-		return "", fmt.Errorf("activate %s: prepared link target unreadable: %w", name, statErr)
+		hadOld = true
 	}
 	if err := os.Rename(tmp, dest); err != nil {
-		_ = os.Remove(tmp)
-		return "", fmt.Errorf("activate %s: %w", name, err)
+		if hadOld {
+			_ = os.Rename(old, dest) // restore the previous occupant
+		}
+		_ = os.RemoveAll(tmp)
+		return fmt.Errorf("activate %s: %w", name, err)
 	}
-	return dest, nil
+	if hadOld {
+		_ = os.RemoveAll(old)
+	}
+	return nil
 }
 
 // foreignErr reports a non-gskill-managed occupant of an active entry.
@@ -165,11 +216,12 @@ func underRoot(path, root string) bool {
 }
 
 // Owned reports whether dest is gskill-managed content: a symlink resolving
-// under any of the given roots, or a real directory whose content hash matches
-// one of acceptHashes (a copy-mode install). A missing dest is not owned. This
-// is the single ownership predicate shared by the installer's overwrite guard
-// and the plan layer's conflict detection, so the two cannot drift (spec 011
-// FR-016).
+// under any of the given roots (the repo's .agents/skills root; agent links
+// resolve there), or a real directory whose content hash matches one of
+// acceptHashes (the active entry itself, or a copy-mode install). A missing
+// dest is not owned. This is the single ownership predicate shared by the
+// installer's overwrite guard and the plan layer's conflict detection, so the
+// two cannot drift (spec 011 FR-016).
 func Owned(dest string, roots []string, acceptHashes ...string) bool {
 	info, err := os.Lstat(dest)
 	if err != nil {
@@ -198,8 +250,10 @@ func Owned(dest string, roots []string, acceptHashes ...string) bool {
 	return false
 }
 
-// HealthOf reports the active entry's state relative to the expected storePath.
-func HealthOf(root, name, storePath string) (Health, error) {
+// HealthOf reports the active entry's state against the expected content
+// hash. legacyRoots name pre-022 store roots so their stale symlinks are
+// classified as HealthLegacy (migratable) rather than HealthForeign.
+func HealthOf(root, name, expectedHash string, legacyRoots ...string) (Health, error) {
 	dest := Path(root, name)
 	info, err := os.Lstat(dest)
 	if err != nil {
@@ -208,33 +262,37 @@ func HealthOf(root, name, storePath string) (Health, error) {
 		}
 		return "", fmt.Errorf("stat active %s: %w", name, err)
 	}
-	if info.Mode()&os.ModeSymlink == 0 {
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := resolveLink(dest)
+		if err != nil {
+			return "", err
+		}
+		for _, legacyRoot := range legacyRoots {
+			if underRoot(target, legacyRoot) {
+				return HealthLegacy, nil
+			}
+		}
 		return HealthForeign, nil
 	}
-	target, err := resolveLink(dest)
+	if !info.IsDir() {
+		return HealthForeign, nil
+	}
+	ok, _, err := integrity.VerifyDir(dest, expectedHash)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("verify active %s: %w", name, err)
 	}
-	if _, err := os.Stat(target); err != nil {
-		if os.IsNotExist(err) {
-			return HealthBroken, nil
-		}
-		return "", fmt.Errorf("stat active target %s: %w", name, err)
-	}
-	want, err := filepath.Abs(storePath)
-	if err != nil {
-		return "", fmt.Errorf("resolve store path: %w", err)
-	}
-	if filepath.Clean(target) != filepath.Clean(want) {
-		return HealthWrongStore, nil
+	if !ok {
+		return HealthDrifted, nil
 	}
 	return HealthOK, nil
 }
 
-// Remove deletes a gskill-managed active entry (a symlink) for name. It is a
-// no-op when the entry is absent, and it never deletes a non-symlink path, so a
-// foreign directory occupying the name is left intact.
-func Remove(root, name string) error {
+// Remove deletes a gskill-managed active entry for name: a symlink (a legacy
+// or stale managed link), or a real directory whose content matches one of
+// acceptHashes (the lock-recorded content). It is a no-op when the entry is
+// absent, and it never deletes content it cannot prove gskill installed — a
+// drifted or foreign directory is left intact.
+func Remove(root, name string, acceptHashes ...string) error {
 	dest := Path(root, name)
 	info, err := os.Lstat(dest)
 	if err != nil {
@@ -243,16 +301,31 @@ func Remove(root, name string) error {
 		}
 		return fmt.Errorf("stat active %s: %w", name, err)
 	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		return nil // foreign: never delete
+	if info.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dest); err != nil {
+			return fmt.Errorf("remove active %s: %w", name, err)
+		}
+		return nil
 	}
-	if err := os.Remove(dest); err != nil {
-		return fmt.Errorf("remove active %s: %w", name, err)
+	if !info.IsDir() {
+		return nil // foreign plain file: never delete
 	}
-	return nil
+	for _, h := range acceptHashes {
+		if h == "" {
+			continue
+		}
+		if ok, _, err := integrity.VerifyDir(dest, h); err == nil && ok {
+			if err := os.RemoveAll(dest); err != nil {
+				return fmt.Errorf("remove active %s: %w", name, err)
+			}
+			return nil
+		}
+	}
+	return nil // unverifiable content: never delete
 }
 
-// List returns the names of gskill-managed active entries (symlinks) under root.
+// List returns the names of active entries (directories and symlinks) under
+// root. Plain files are skipped: they are never gskill-managed.
 func List(root string) ([]string, error) {
 	entries, err := os.ReadDir(Dir(root))
 	if err != nil {
@@ -267,7 +340,7 @@ func List(root string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("stat active entry %s: %w", e.Name(), err)
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			names = append(names, e.Name())
 		}
 	}

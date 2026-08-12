@@ -438,6 +438,7 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 			// documented override (spec 011 FR-016). The previously locked
 			// hash marks copy-mode installs as gskill's own.
 			ir.PreserveForeign = !req.Force
+			ir.ReplaceActive = req.Force
 			if locked, ok := lf.Skills[s.ID]; ok {
 				ir.PriorContentHash = locked.Resolved.ContentHash
 			}
@@ -702,6 +703,12 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 	ireq := a.installRequest(p.root, ref, rev, agents, cmp.Or(in.Scope, req.Scope), modeOr(req.Mode, in.Mode))
 	ireq.Name = name
 	ireq.Offline = req.Offline
+	// The previously locked hash marks the existing repo-owned entry as
+	// gskill's own version, replaceable on update; drifted content still
+	// fails closed (spec 022 FR-008).
+	if old, ok := lf.Skills[name]; ok {
+		ireq.PriorContentHash = old.Resolved.ContentHash
+	}
 	// Honor the declared in-repo path so a multi-skill source resolves to the
 	// declared skill instead of erroring on multiple SKILL.md files.
 	if in.Path != "" {

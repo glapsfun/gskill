@@ -418,18 +418,13 @@ func (a *App) keepExternalActiveContent(p *project, external, refs map[string]bo
 	return nil
 }
 
-// managedRoots returns the absolute roots a gskill-managed target may link into.
+// managedRoots returns the absolute roots a gskill-managed target may link
+// into: the repo's .agents/skills root (spec 022 — agent links are relative
+// links resolving there). Legacy store links are deliberately NOT managed:
+// they fail closed everywhere until migration converts them.
 func (a *App) managedRoots(p *project) []string {
 	activeRoot, _ := filepath.Abs(active.Dir(p.root))
-	// Both store roots are gskill-owned link targets: the resolved scope's
-	// root plus the legacy project-local root, so links created before or
-	// after a store-scope transition are both recognized (spec 015 FR-011).
-	legacyRoot, _ := filepath.Abs(filepath.Join(p.root, stateDirName, "store"))
-	roots := []string{activeRoot, legacyRoot}
-	if resolved, err := filepath.Abs(p.contentRoot()); err == nil && resolved != legacyRoot {
-		roots = append(roots, resolved)
-	}
-	return roots
+	return []string{activeRoot}
 }
 
 // managedBySymlink reports whether path is a symlink that resolves into one of

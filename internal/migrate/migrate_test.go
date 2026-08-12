@@ -134,13 +134,18 @@ func TestRun_MigratesRelinksAndRemovesLocalStore(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, ".gskill", "store")); !os.IsNotExist(err) {
 		t.Error("legacy store still on disk")
 	}
-	target, err := filepath.EvalSymlinks(filepath.Join(root, ".agents", "skills", "skill"))
+	// Repo-owned model (spec 022): relinking materializes the active entry as
+	// a real directory copied from the verified global object.
+	entry := filepath.Join(root, ".agents", "skills", "skill")
+	info, err := os.Lstat(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantContent, _ := filepath.EvalSymlinks(gs.ContentPath(key))
-	if target != wantContent {
-		t.Errorf("active link -> %q, want global %q", target, wantContent)
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		t.Fatalf("active entry after relink is not a real directory: mode %v", info.Mode())
+	}
+	if _, err := os.Stat(filepath.Join(entry, "SKILL.md")); err != nil {
+		t.Errorf("relinked entry has no content: %v", err)
 	}
 }
 

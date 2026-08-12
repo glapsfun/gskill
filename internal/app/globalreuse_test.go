@@ -106,25 +106,28 @@ func TestGlobalReuse_TwoProjectsShareOneObject(t *testing.T) {
 	}
 
 	for _, root := range []string{repo1, repo2} {
-		assertActiveLinksIntoHome(t, root, h, "alpha", "beta")
+		assertActiveRepoOwned(t, root, "alpha", "beta")
 		assertStateRecordsGlobal(t, root, "alpha", "beta")
 		assertLockfileHasNoHomePath(t, root, h)
 	}
 }
 
-// assertActiveLinksIntoHome checks every named skill's active link resolves
-// under the global home.
-func assertActiveLinksIntoHome(t *testing.T, root, h string, names ...string) {
+// assertActiveRepoOwned checks every named skill's active entry is a real
+// directory with content (spec 022: the repo owns skill content; entries are
+// never links into any store).
+func assertActiveRepoOwned(t *testing.T, root string, names ...string) {
 	t.Helper()
-	wantPrefix, _ := filepath.EvalSymlinks(h)
 	for _, name := range names {
-		link := filepath.Join(root, ".agents", "skills", name)
-		resolved, err := filepath.EvalSymlinks(link)
+		entry := filepath.Join(root, ".agents", "skills", name)
+		info, err := os.Lstat(entry)
 		if err != nil {
-			t.Fatalf("%s active link: %v", root, err)
+			t.Fatalf("%s active entry: %v", root, err)
 		}
-		if !strings.HasPrefix(resolved, wantPrefix+string(filepath.Separator)) {
-			t.Errorf("%s/%s resolves to %q, want under global home %q", root, name, resolved, wantPrefix)
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			t.Fatalf("%s/%s is not a real directory: mode %v", root, name, info.Mode())
+		}
+		if _, err := os.Stat(filepath.Join(entry, "SKILL.md")); err != nil {
+			t.Errorf("%s/%s has no content: %v", root, name, err)
 		}
 	}
 }

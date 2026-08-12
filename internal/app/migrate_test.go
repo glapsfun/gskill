@@ -93,7 +93,7 @@ func TestMigrate_RelinksAndRemovesLocalStore(t *testing.T) {
 	if got := listStoreObjects(t, h); len(got) != 2 {
 		t.Errorf("global objects = %v, want 2 migrated", got)
 	}
-	assertActiveLinksIntoHome(t, root, h, "alpha", "beta")
+	assertActiveRepoOwned(t, root, "alpha", "beta")
 	assertStateRecordsGlobal(t, root, "alpha", "beta")
 	assertAgentTargets(t, root, "alpha", "beta")
 

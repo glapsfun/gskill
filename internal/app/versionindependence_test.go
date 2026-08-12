@@ -166,10 +166,14 @@ func TestVersionIndependence_TwoProjectsTwoVersions(t *testing.T) {
 	}
 
 	// (b) Update repo1 to v2: repo2 stays byte-identical, and the old object
-	// is not deleted (FR-010).
+	// is not deleted (FR-010). The lock was rewritten by hand while the
+	// committed content still holds v1, which the repo-owned model treats as
+	// drift (spec 022 FR-008) — Force is the documented repair path.
 	repo2Before := digestTree(t, repo2)
 	writeVersionLock(t, repo1, repo, "v2.0.0", hv2)
-	if _, err := installLock(t, a, repo1, false); err != nil {
+	if _, err := a.InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: repo1, Agents: []string{testAgent}, Force: true,
+	}); err != nil {
 		t.Fatalf("update repo1: %v", err)
 	}
 	if got := digestTree(t, repo2); got != repo2Before {

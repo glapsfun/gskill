@@ -45,8 +45,14 @@ type Request struct {
 	PreserveForeign bool
 	// PriorContentHash is the lockfile-recorded content hash of the previous
 	// install at this skill's destinations, accepted as owned content when
-	// PreserveForeign is set (a copy-mode install is a real directory).
+	// PreserveForeign is set (a copy-mode install is a real directory), and
+	// as the replaceable previous version of the repo-owned active entry.
 	PriorContentHash string
+	// ReplaceActive allows replacing a repo-owned active entry whose content
+	// matches neither the expected nor the prior hash (drifted committed
+	// content). Only explicit force/repair paths set it — plain add, install,
+	// update, and sync fail closed on drift instead (spec 022 FR-008).
+	ReplaceActive bool
 }
 
 // Result is the outcome of a successful install, sufficient to build a lock entry.
@@ -130,7 +136,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), storePath)
+	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), storePath, hashes.ContentHash)
 	if err != nil {
 		return Result{}, err
 	}
@@ -195,7 +201,7 @@ func (i *Installer) installFromStore(ctx context.Context, req Request) (Result, 
 		}
 	}
 
-	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), contentPath)
+	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), contentPath, hash)
 	if err != nil {
 		return Result{}, err
 	}
@@ -399,34 +405,40 @@ func (i *Installer) EnsureCached(ctx context.Context, req Request) error {
 // activateAll materializes the active layer and links/copies it into every
 // target agent dir, returning the representative mode (the first agent's), the
 // project-relative active path, the per-agent target paths, and the per-agent
-// modes. For project scope each agent target derives from the shared active
-// entry (.agents/skills/<name>), which itself links into the store, so a skill
-// shared by N agents exists physically once. For global scope there is no
-// project active layer, so agents derive directly from the store. Modes can
-// differ per agent — a symlink falls back to a copy on a filesystem that rejects
-// it — so each is recorded rather than collapsed to one value.
-func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath string) (Mode, string, map[string]string, map[string]string, error) {
+// modes. For project scope the repo owns the content (spec 022): the active
+// entry .agents/skills/<name> is a real copied directory verified against
+// contentHash, and each agent target is a *relative* symlink into it, so both
+// are committable and survive a clone. For global scope there is no project
+// active layer, so agents derive directly from the store. Modes can differ
+// per agent — a symlink falls back to a copy on a filesystem that rejects it
+// — so each is recorded rather than collapsed to one value.
+func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath, contentHash string) (Mode, string, map[string]string, map[string]string, error) {
 	// linkTarget is what symlinked agents point at; copySource is the real
-	// directory copy-mode agents (and copy fallbacks) read from. Copies always
-	// read the resolved store content, never the active symlink itself.
+	// directory copy-mode agents (and copy fallbacks) read from. For project
+	// scope both are the repo-owned active entry itself.
 	linkTarget := storePath
 	copySource := storePath
 	var activeRel string
 	if req.Scope != ScopeGlobal {
 		// Propagate EnsureActive's error code verbatim so a foreign-occupant
 		// collision fails closed with its own exit code rather than being masked
-		// as a generic partial install.
-		// Both the resolved content root and the legacy project-local store
-		// root are gskill-owned link targets: a stale link into either (e.g.
-		// after the project transitions to the global store) re-points rather
-		// than failing as foreign (spec 015 FR-011).
-		activePath, err := active.EnsureActive(req.ProjectRoot, name, storePath,
-			i.content.Root(), filepath.Join(req.ProjectRoot, ".gskill", "store"))
+		// as a generic partial install. Stale symlinks into a pre-022 store
+		// root (resolved content root or legacy project-local store) are
+		// replaced by the real copy; anything else foreign fails closed.
+		activePath, err := active.EnsureActive(req.ProjectRoot, name, storePath, active.EnsureOptions{
+			ExpectedHash: contentHash,
+			AcceptHashes: []string{req.PriorContentHash, req.ExpectContentHash},
+			Replace:      req.ReplaceActive,
+			LegacyRoots:  []string{i.content.Root(), filepath.Join(req.ProjectRoot, ".gskill", "store")},
+		})
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("ensure active %s: %w", name, err)
 		}
 		linkTarget = activePath
+		copySource = activePath
 		activeRel = i.recordTarget(req, activePath)
+	} else if abs, err := filepath.Abs(linkTarget); err == nil {
+		linkTarget = abs
 	}
 
 	targets := make(map[string]string, len(req.Agents))
@@ -438,7 +450,15 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 		if err := i.guardForeignTarget(req, dest, storePath); err != nil {
 			return "", "", nil, nil, err
 		}
-		usedMode, err := activateAgent(linkTarget, copySource, dest, agentActivation(req.ModePref, ag))
+		// Project-scope agent links store a relative target (spec 022: no
+		// committed artifact may reference a path outside the repo).
+		linkRef := linkTarget
+		if req.Scope != ScopeGlobal {
+			if rel, rErr := filepath.Rel(filepath.Dir(dest), linkTarget); rErr == nil {
+				linkRef = rel
+			}
+		}
+		usedMode, err := activateAgent(linkRef, copySource, dest, agentActivation(req.ModePref, ag))
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
 		}
@@ -466,10 +486,10 @@ func (i *Installer) guardForeignTarget(req Request, dest, storePath string) erro
 	if _, err := os.Lstat(dest); err != nil {
 		return nil //nolint:nilerr // absent destination: nothing to protect, activation proceeds
 	}
-	roots := []string{
-		i.content.Root(), active.Dir(req.ProjectRoot),
-		filepath.Join(req.ProjectRoot, ".gskill", "store"),
-	}
+	// Ownership keys on the repo's .agents/skills root (spec 022); the
+	// content root remains a managed link target only for global-scope
+	// installs, which still link into the store.
+	roots := []string{active.Dir(req.ProjectRoot), i.content.Root()}
 	hashes := []string{req.PriorContentHash, req.ExpectContentHash}
 	if h, err := integrity.HashDir(storePath); err == nil {
 		hashes = append(hashes, h.ContentHash)
@@ -491,8 +511,9 @@ func (i *Installer) targetDir(ag agent.Agent, req Request, name string) string {
 	return filepath.Join(ag.ProjectSkillDir(req.ProjectRoot), name)
 }
 
-// recordTarget returns the path stored in the lockfile: relative to the project
-// root for project scope, absolute for global scope.
+// recordTarget returns the path stored in the lockfile: repo-root-relative
+// with forward slashes for project scope (spec 022 path rule), absolute for
+// global scope.
 func (i *Installer) recordTarget(req Request, dest string) string {
 	if req.Scope == ScopeGlobal {
 		return dest
@@ -501,7 +522,7 @@ func (i *Installer) recordTarget(req Request, dest string) string {
 	if err != nil {
 		return dest
 	}
-	return rel
+	return filepath.ToSlash(rel)
 }
 
 // activation is how an agent target is materialized.
@@ -532,10 +553,11 @@ func agentActivation(modePref string, ag agent.Agent) activation {
 }
 
 // activateAgent places a skill at an agent's dest, reporting the mode used.
-// A symlinked target points at linkTarget (the active entry, or the store for
-// global scope); a copied target reads the resolved store content from
-// copySource, never the active symlink, so copies hold real content rather than
-// a recreated link.
+// A symlinked target stores linkTarget verbatim — the caller passes a
+// relative path for project scope (spec 022: committed links must not embed
+// absolute paths) and an absolute one for global scope. A copied target reads
+// the real content from copySource (the repo-owned active entry for project
+// scope).
 func activateAgent(linkTarget, copySource, dest string, mode activation) (Mode, error) {
 	if mode == activateCopy {
 		if err := clearAndCopy(copySource, dest); err != nil {
@@ -549,11 +571,7 @@ func activateAgent(linkTarget, copySource, dest string, mode activation) (Mode, 
 	if err := os.RemoveAll(dest); err != nil {
 		return "", fmt.Errorf("clear target %s: %w", dest, err)
 	}
-	abs, err := filepath.Abs(linkTarget)
-	if err != nil {
-		return "", fmt.Errorf("resolve link target: %w", err)
-	}
-	linkErr := os.Symlink(abs, dest)
+	linkErr := os.Symlink(linkTarget, dest)
 	if linkErr == nil {
 		return ModeSymlink, nil
 	}

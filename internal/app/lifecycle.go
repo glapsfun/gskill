@@ -343,7 +343,7 @@ func (a *App) removeSkills(p *project, lf *skillslock.State, names []string, out
 				}
 			}
 		}
-		if err := active.Remove(p.root, name); err != nil {
+		if err := active.Remove(p.root, name, locked.Resolved.ContentHash); err != nil {
 			return fmt.Errorf("remove active for %q: %w", name, err)
 		}
 		delete(lf.Skills, name)

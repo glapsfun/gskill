@@ -124,14 +124,47 @@ func TestPlanInstall_ForceOverridesForeignDestination(t *testing.T) {
 	}
 }
 
-func TestPlanInstall_ManagedStoreSymlinkIsNotForeign(t *testing.T) {
+func TestPlanInstall_ManagedActiveSymlinkIsNotForeign(t *testing.T) {
 	t.Parallel()
 
 	src := sourceTree(t, "skills/alpha")
 	root := projectWithAgent(t)
 
-	// Simulate a lost lockfile with gskill's own store symlink still active:
-	// .claude/skills/alpha -> <root>/.gskill/store/<hash>.
+	// Simulate a lost lockfile with gskill's own install still in place: the
+	// active entry holds the identical committed content and the agent link
+	// is relative into it (spec 022 layout).
+	activeDir := filepath.Join(root, ".agents", "skills", "alpha")
+	if err := os.MkdirAll(activeDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: alpha\ndescription: a skill\n---\n# alpha\n"
+	if err := os.WriteFile(filepath.Join(activeDir, "SKILL.md"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkParent := filepath.Join(root, ".claude", "skills")
+	if err := os.MkdirAll(linkParent, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "..", ".agents", "skills", "alpha"),
+		filepath.Join(linkParent, "alpha")); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := planFor(t, onboardApp(), root, src, false, "alpha")
+	if len(plan.Conflicts) != 0 {
+		t.Fatalf("gskill's own active-layer symlink flagged as foreign content: %+v", plan.Conflicts)
+	}
+}
+
+func TestPlanInstall_LegacyStoreSymlinkIsForeign(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+
+	// A pre-022 agent link straight into a store root is legacy content:
+	// it fails closed as a conflict until migration converts it (spec 022 —
+	// ownership keys on the repo's .agents/skills root only).
 	storeDir := filepath.Join(root, ".gskill", "store", "sha256", "ab", "abcdef")
 	if err := os.MkdirAll(storeDir, 0o750); err != nil {
 		t.Fatal(err)
@@ -145,8 +178,8 @@ func TestPlanInstall_ManagedStoreSymlinkIsNotForeign(t *testing.T) {
 	}
 
 	plan := planFor(t, onboardApp(), root, src, false, "alpha")
-	if len(plan.Conflicts) != 0 {
-		t.Fatalf("gskill's own store symlink flagged as foreign content: %+v", plan.Conflicts)
+	if len(plan.Conflicts) == 0 {
+		t.Fatal("legacy store symlink not flagged as a conflict, want fail-closed until migration")
 	}
 }
 

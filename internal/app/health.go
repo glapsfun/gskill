@@ -144,7 +144,7 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, s
 	global := locked.Installation.Scope == string(installer.ScopeGlobal)
 	linkTarget := storePath
 	if !global {
-		state, err := active.HealthOf(p.root, name, storePath)
+		state, err := active.HealthOf(p.root, name, hash, p.contentRoot(), filepath.Join(p.root, stateDirName, "store"))
 		if err != nil {
 			return SkillHealth{}, err
 		}
