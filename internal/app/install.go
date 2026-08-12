@@ -28,8 +28,6 @@ import (
 	"github.com/glapsfun/gskill/internal/source"
 )
 
-const defaultLockTimeout = 30 * time.Second
-
 // InitResult reports what Init created.
 type InitResult struct {
 	LockPath string
@@ -813,7 +811,7 @@ func (a *App) withLock(ctx context.Context, p *project, fn func() error) error {
 	if err := os.MkdirAll(p.locksDir, 0o750); err != nil {
 		return fmt.Errorf("create locks dir: %w", err)
 	}
-	lock, err := fsutil.Acquire(ctx, p.mutateLockPath(), fsutil.LockExclusive, defaultLockTimeout)
+	lock, err := fsutil.Acquire(ctx, p.mutateLockPath(), fsutil.LockExclusive, a.storeLockTimeout())
 	if err != nil {
 		return err
 	}

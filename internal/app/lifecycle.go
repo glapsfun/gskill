@@ -266,7 +266,6 @@ func sortedUnique(names []string) []string {
 // RemoveResult reports a remove run.
 type RemoveResult struct {
 	Removed    []string
-	StoreGCed  int
 	NotPresent []string
 }
 
@@ -297,18 +296,7 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 			return saveErr
 		}
 
-		// GC is strictly the PROJECT-LOCAL store's: removing a skill from one
-		// project must never delete shared global content — global objects are
-		// deletable only through `gskill store gc` (spec 015 FR-009/FR-024).
-		// For scope=global p.store is empty, so this is a no-op by design.
-		gced, gcErr := p.store.GC(referencedHashes(lf))
-		if gcErr != nil {
-			return gcErr
-		}
-		out.StoreGCed = gced
-
-		// Drop the removed skills' machine-local bookkeeping (FR-014) and let
-		// the registry stop marking the removed objects (FR-027).
+		// Drop the removed skills' machine-local bookkeeping (FR-014).
 		a.recordProjectState(ctx, p, lf)
 		return nil
 	})
@@ -350,15 +338,4 @@ func (a *App) removeSkills(p *project, lf *skillslock.State, names []string, out
 		out.Removed = append(out.Removed, name)
 	}
 	return nil
-}
-
-// referencedHashes collects the content hashes still referenced by the lockfile.
-func referencedHashes(lf *skillslock.State) map[string]bool {
-	refs := make(map[string]bool, len(lf.Skills))
-	for _, s := range lf.Skills {
-		if s.Resolved.ContentHash != "" {
-			refs[s.Resolved.ContentHash] = true
-		}
-	}
-	return refs
 }

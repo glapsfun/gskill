@@ -919,7 +919,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 // content-store facts the user needs (spec 015 FR-019, error contract
 // object-not-found-offline): the required object identity that was absent
 // from the resolved store, and the remediation.
-func enrichOfflineMiss(p *project, e skillslock.Entry, req InstallFromLockRequest, err error) error {
+func enrichOfflineMiss(_ *project, e skillslock.Entry, req InstallFromLockRequest, err error) error {
 	if !req.Offline || !errors.Is(err, errs.ErrSourceUnavailable) {
 		return err
 	}
@@ -931,8 +931,8 @@ func enrichOfflineMiss(p *project, e skillslock.Entry, req InstallFromLockReques
 		return err
 	}
 	return errs.WithHint(
-		fmt.Errorf("%w\n  required object: %s (not available in the %s store)",
-			err, hash, p.storeScope),
+		fmt.Errorf("%w\n  required content: %s (no committed copy, and the clone cache cannot serve it offline)",
+			err, hash),
 		"run without --offline to fetch it",
 	)
 }
@@ -1185,10 +1185,10 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	stampResultProvenance(&r, e, req)
 	r.Agents = ids
 	r.Commit = prior.Resolved.Commit
-	// The fast path is a store hit by definition: content came from the
-	// resolved store, nothing was fetched (spec 015 FR-007).
+	// The fast path is a committed-content hit by definition: nothing was
+	// fetched (spec 022 FR-007).
 	r.StoreReuse = installer.StoreReused
-	r.StoreScope = p.storeScope
+	r.StoreScope = installer.ScopeLabelCommitted
 	if len(missing) == 0 {
 		return r, true
 	}

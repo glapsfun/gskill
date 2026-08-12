@@ -5,12 +5,10 @@ import (
 	"path/filepath"
 
 	"github.com/glapsfun/gskill/internal/cache"
-	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
-	"github.com/glapsfun/gskill/internal/store"
 )
 
 // ScanOptions configures a read-only source scan.
@@ -51,13 +49,11 @@ func (a *App) scanSource(ctx context.Context, sourceArg string, opts ScanOptions
 	return ref, res, nil
 }
 
-// scanInstaller builds a read-only installer backed by the global cache/store,
+// scanInstaller builds a read-only installer backed by the home clone cache,
 // used only to materialize sources for discovery (no activation occurs).
 func (a *App) scanInstaller() *installer.Installer {
-	cfgDir, err1 := config.Dir()
-	cacheDir, err2 := config.CacheDir()
-	if err1 != nil || err2 != nil {
-		return installer.New(a.git, cache.New(filepath.Join(stateDirName, "cache")), store.New(filepath.Join(stateDirName, "store"))).WithScanCache(a.scans)
+	if h, err := a.openHome(); err == nil {
+		return installer.New(a.git, cache.New(h.CacheDir())).WithScanCache(a.scans)
 	}
-	return installer.New(a.git, cache.New(cacheDir), store.New(filepath.Join(cfgDir, "store"))).WithScanCache(a.scans)
+	return installer.New(a.git, cache.New(filepath.Join(stateDirName, "cache"))).WithScanCache(a.scans)
 }

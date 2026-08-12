@@ -18,7 +18,6 @@ import (
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
-	"github.com/glapsfun/gskill/internal/store"
 )
 
 // Request is everything needed to install one skill.
@@ -48,6 +47,9 @@ type Request struct {
 	// PreserveForeign is set (a copy-mode install is a real directory), and
 	// as the replaceable previous version of the repo-owned active entry.
 	PriorContentHash string
+	// LegacyStoreRoots are pre-022 store roots (e.g. the old home store):
+	// stale active symlinks into them are replaced by the real copy.
+	LegacyStoreRoots []string
 	// ReplaceActive allows replacing a repo-owned active entry whose content
 	// matches neither the expected nor the prior hash (drifted committed
 	// content). Only explicit force/repair paths set it — plain add, install,
@@ -75,25 +77,30 @@ type Result struct {
 	StoreScope string
 }
 
-// Installer runs the staging-verify-activate transaction over the content
-// store, cache, and git runner.
+// Store-reuse outcomes recorded on Result.StoreReuse: reused means no fetch
+// happened (committed content or a clone-cache hit satisfied the install).
+const (
+	StoreReused     = "reused"
+	StoreDownloaded = "downloaded"
+)
+
+// ScopeLabelCommitted labels installs served by the repo-owned model
+// (spec 022): committed content or the commit-keyed clone cache.
+const ScopeLabelCommitted = "committed"
+
+// Installer runs the verify-activate transaction over the commit-keyed clone
+// cache and git runner (spec 022: the repo owns skill content; there is no
+// content store).
 type Installer struct {
-	git     git.Runner
-	cache   *cache.Cache
-	content ContentStore
-	scans   *ScanCache // nil ⇒ no scan memoization
+	git   git.Runner
+	cache *cache.Cache
+	scans *ScanCache // nil ⇒ no scan memoization
 }
 
-// New builds an Installer over the legacy project-local store. The git runner
+// New builds an Installer over the commit-keyed clone cache. The git runner
 // may be nil for local-only installs.
-func New(g git.Runner, c *cache.Cache, s *store.Store) *Installer {
-	return NewWithStore(g, c, legacyStore{s: s})
-}
-
-// NewWithStore builds an Installer over any ContentStore (spec 015: the
-// user-level global store, or the legacy project store).
-func NewWithStore(g git.Runner, c *cache.Cache, cs ContentStore) *Installer {
-	return &Installer{git: g, cache: c, content: cs}
+func New(g git.Runner, c *cache.Cache) *Installer {
+	return &Installer{git: g, cache: c}
 }
 
 // Install verifies and activates the requested skill (FR-015, FR-018,
@@ -434,7 +441,7 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 			ExpectedHash: contentHash,
 			AcceptHashes: []string{req.PriorContentHash, req.ExpectContentHash},
 			Replace:      req.ReplaceActive,
-			LegacyRoots:  []string{i.content.Root(), filepath.Join(req.ProjectRoot, ".gskill", "store")},
+			LegacyRoots:  append([]string{filepath.Join(req.ProjectRoot, ".gskill", "store")}, req.LegacyStoreRoots...),
 		})
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("ensure active %s: %w", name, err)
@@ -463,7 +470,14 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 				linkRef = rel
 			}
 		}
-		usedMode, err := activateAgent(linkRef, copySource, dest, agentActivation(req.ModePref, ag))
+		act := agentActivation(req.ModePref, ag)
+		if req.Scope == ScopeGlobal {
+			// Agent-global installs are direct copies from the materialized
+			// content (spec 022: no store to link into; cache entries are
+			// evictable and must not be link targets).
+			act = activateCopy
+		}
+		usedMode, err := activateAgent(linkRef, copySource, dest, act)
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
 		}
@@ -491,10 +505,8 @@ func (i *Installer) guardForeignTarget(req Request, dest, storePath string) erro
 	if _, err := os.Lstat(dest); err != nil {
 		return nil //nolint:nilerr // absent destination: nothing to protect, activation proceeds
 	}
-	// Ownership keys on the repo's .agents/skills root (spec 022); the
-	// content root remains a managed link target only for global-scope
-	// installs, which still link into the store.
-	roots := []string{active.Dir(req.ProjectRoot), i.content.Root()}
+	// Ownership keys on the repo's .agents/skills root (spec 022).
+	roots := []string{active.Dir(req.ProjectRoot)}
 	hashes := []string{req.PriorContentHash, req.ExpectContentHash}
 	if h, err := integrity.HashDir(storePath); err == nil {
 		hashes = append(hashes, h.ContentHash)

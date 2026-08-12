@@ -13,7 +13,6 @@ import (
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
-	"github.com/glapsfun/gskill/internal/store"
 )
 
 // localSkill creates a local skill directory and returns it.
@@ -31,7 +30,7 @@ func localSkill(t *testing.T, name string) string {
 func newInstaller(t *testing.T) *installer.Installer {
 	t.Helper()
 	root := t.TempDir()
-	return installer.New(nil, cache.New(filepath.Join(root, "cache")), store.New(filepath.Join(root, "store")))
+	return installer.New(nil, cache.New(filepath.Join(root, "cache")))
 }
 
 func localRequest(t *testing.T, projectRoot, materialDir, name string) installer.Request {

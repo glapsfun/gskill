@@ -13,7 +13,6 @@ import (
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
-	"github.com/glapsfun/gskill/internal/store"
 )
 
 // skillWriterRunner fakes git by writing a SKILL.md into the fetch dest.
@@ -63,7 +62,7 @@ func TestMaterialize_EmitsFetchingThenDone(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	inst := installer.New(skillWriterRunner{}, cache.New(filepath.Join(root, "cache")), store.New(filepath.Join(root, "store")))
+	inst := installer.New(skillWriterRunner{}, cache.New(filepath.Join(root, "cache")))
 
 	var events []progress.Event
 	ctx := recordingSink(&events)
@@ -93,7 +92,7 @@ func TestMaterialize_CacheHitEmitsCached(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	inst := installer.New(skillWriterRunner{}, cache.New(filepath.Join(root, "cache")), store.New(filepath.Join(root, "store")))
+	inst := installer.New(skillWriterRunner{}, cache.New(filepath.Join(root, "cache")))
 
 	if _, err := inst.Discover(context.Background(), gitRequest(t, false)); err != nil {
 		t.Fatalf("warm-up Discover: %v", err)
@@ -118,7 +117,7 @@ func TestMaterialize_OfflineUncachedEmitsNothing(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	inst := installer.New(skillWriterRunner{}, cache.New(filepath.Join(root, "cache")), store.New(filepath.Join(root, "store")))
+	inst := installer.New(skillWriterRunner{}, cache.New(filepath.Join(root, "cache")))
 
 	var events []progress.Event
 	ctx := recordingSink(&events)

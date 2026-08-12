@@ -128,14 +128,9 @@ func (h SkillHealth) IntegrityFault() bool {
 // (the integrity check); otherwise only presence is checked (the cheap path used
 // by reconcile to decide what to skip).
 func (a *App) evaluateHealth(p *project, lf *skillslock.State, verifyHash bool) ([]SkillHealth, error) {
-	storeRoot, err := filepath.Abs(p.contentRoot())
-	if err != nil {
-		return nil, fmt.Errorf("resolve store root: %w", err)
-	}
-
 	out := make([]SkillHealth, 0, len(lf.Skills))
 	for _, name := range sortedKeys(lf.Skills) {
-		h, evalErr := a.evaluateSkill(p, name, lf.Skills[name], storeRoot, verifyHash)
+		h, evalErr := a.evaluateSkill(p, name, lf.Skills[name], verifyHash)
 		if evalErr != nil {
 			return nil, evalErr
 		}
@@ -145,13 +140,11 @@ func (a *App) evaluateHealth(p *project, lf *skillslock.State, verifyHash bool) 
 }
 
 // evaluateSkill computes the health of a single locked skill.
-func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, storeRoot string, verifyHash bool) (SkillHealth, error) {
+func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, verifyHash bool) (SkillHealth, error) {
 	hash := locked.Resolved.ContentHash
-	storePath := p.contentPath(hash)
 	h := SkillHealth{
 		Name:        name,
 		Scope:       locked.Installation.Scope,
-		StorePath:   storePath,
 		ActivePath:  activePathOf(locked, name),
 		StoreHashOK: true,
 		Agents:      make(map[string]TargetState, len(locked.Installation.Agents)),
@@ -165,14 +158,14 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, s
 	h.Hashed = verifyHash
 
 	global := locked.Installation.Scope == string(installer.ScopeGlobal)
-	linkTarget := storePath
+	legacyRoots := p.legacyStoreRoots()
+	linkTarget := active.Path(p.root, name)
 	if !global {
-		state, err := active.HealthOf(p.root, name, hash, p.contentRoot(), filepath.Join(p.root, stateDirName, "store"))
+		state, err := active.HealthOf(p.root, name, hash, legacyRoots...)
 		if err != nil {
 			return SkillHealth{}, err
 		}
 		h.ActiveState = state
-		linkTarget = active.Path(p.root, name)
 	} else {
 		h.ActiveState = active.HealthOK
 	}
@@ -184,7 +177,7 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, s
 			continue
 		}
 		recordedMode := locked.Installation.Modes[id]
-		state, err := agentTargetState(targetDir, linkTarget, storeRoot, recordedMode, verifyHash, hash)
+		state, err := agentTargetState(targetDir, linkTarget, legacyRoots, recordedMode, verifyHash, hash)
 		if err != nil {
 			return SkillHealth{}, err
 		}
@@ -225,7 +218,7 @@ func activePathOf(locked skillslock.Record, name string) string {
 // agentTargetState classifies a single agent target on disk. When verifyHash is
 // set, a copied target's content is hashed against expectedHash so a tampered or
 // truncated copy is reported as corrupt rather than blindly accepted.
-func agentTargetState(targetDir, linkTarget, storeRoot, recordedMode string, verifyHash bool, expectedHash string) (TargetState, error) {
+func agentTargetState(targetDir, linkTarget string, legacyRoots []string, recordedMode string, verifyHash bool, expectedHash string) (TargetState, error) {
 	info, err := os.Lstat(targetDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -264,8 +257,10 @@ func agentTargetState(targetDir, linkTarget, storeRoot, recordedMode string, ver
 	if pathEqual(resolved, linkTarget) {
 		return TargetOKSymlink, nil
 	}
-	if under(resolved, storeRoot) {
-		return TargetLegacyStore, nil // links straight into the store, pre-active-layer
+	for _, legacyRoot := range legacyRoots {
+		if under(resolved, legacyRoot) {
+			return TargetLegacyStore, nil // links straight into a pre-022 store
+		}
 	}
 	return TargetModeMismatch, nil
 }

@@ -176,13 +176,9 @@ func (a *App) reconcileSkill(ctx context.Context, p *project, lf *skillslock.Sta
 // reconcileNeeded reports whether the chain for the desired agents is anything
 // other than fully healthy (cheap, no hashing).
 func (a *App) reconcileNeeded(p *project, name string, locked skillslock.Record, desiredIDs []string) (bool, error) {
-	storeRoot, err := filepath.Abs(p.contentRoot())
-	if err != nil {
-		return true, fmt.Errorf("resolve store root: %w", err)
-	}
 	probe := locked
 	probe.Installation.Agents = desiredIDs
-	h, err := a.evaluateSkill(p, name, probe, storeRoot, false)
+	h, err := a.evaluateSkill(p, name, probe, false)
 	if err != nil {
 		return true, err
 	}
@@ -267,15 +263,6 @@ func (a *App) pruneToDesired(p *project, lf *skillslock.State) ([]string, error)
 		return nil, err
 	}
 
-	refs := referencedHashes(lf)
-	if err := a.keepExternalActiveContent(p, external, refs); err != nil {
-		return nil, err
-	}
-	// Project-local store GC only: pruning never deletes shared global
-	// content (spec 015 FR-009/FR-024); for scope=global p.store is empty.
-	if _, err := p.store.GC(refs); err != nil {
-		return nil, err
-	}
 	return pruned, nil
 }
 
@@ -393,39 +380,6 @@ func sweepActiveOrphans(p *project, lf *skillslock.State, external map[string]bo
 		found = append(found, active.Rel(name))
 	}
 	return found, nil
-}
-
-// keepExternalActiveContent adds to refs the store content still reachable
-// through an external-only entry's active symlink: gskill has no record for
-// such entries, so the link itself is the reference that must survive GC.
-// Refs resolve against the PROJECT-LOCAL store root — the store the callers'
-// p.store.GC sweeps — never contentRoot(): under scope=global with a still-
-// populated legacy store the two diverge, and resolving against the global
-// root would leave every legacy-store link unprotected.
-func (a *App) keepExternalActiveContent(p *project, external, refs map[string]bool) error {
-	if len(external) == 0 {
-		return nil
-	}
-	storeRoot, err := filepath.Abs(p.store.Root())
-	if err != nil {
-		return err
-	}
-	for name := range external {
-		target, err := os.Readlink(active.Path(p.root, name))
-		if err != nil {
-			continue // absent or not a symlink: nothing in the store to protect
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(active.Dir(p.root), target)
-		}
-		rel, err := filepath.Rel(storeRoot, filepath.Clean(target))
-		if err != nil || strings.HasPrefix(rel, "..") {
-			continue
-		}
-		// "sha256/hex" on disk ↔ "sha256:hex" content key.
-		refs[strings.Replace(filepath.ToSlash(rel), "/", ":", 1)] = true
-	}
-	return nil
 }
 
 // managedRoots returns the absolute roots a gskill-managed target may link
