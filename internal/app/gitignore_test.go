@@ -20,7 +20,7 @@ func hasLine(data, pattern string) bool {
 	return false
 }
 
-func TestInit_GitignoresStoreAndActiveLayer(t *testing.T) {
+func TestInit_GitignoresLocalStateOnly(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -34,10 +34,13 @@ func TestInit_GitignoresStoreAndActiveLayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
 	}
-	for _, pattern := range []string{".gskill/", ".agents/"} {
-		if !hasLine(string(data), pattern) {
-			t.Errorf(".gitignore missing %q\n--- content ---\n%s", pattern, data)
-		}
+	if !hasLine(string(data), ".gskill/") {
+		t.Errorf(".gitignore missing %q\n--- content ---\n%s", ".gskill/", data)
+	}
+	// Spec 022: skill content and agent links are committed — .agents/ must
+	// NOT be ignored.
+	if hasLine(string(data), ".agents/") {
+		t.Errorf(".gitignore ignores .agents/ — committed skill content would be uncommittable\n--- content ---\n%s", data)
 	}
 }
 
@@ -66,11 +69,12 @@ func TestInit_GitignoreIdempotent(t *testing.T) {
 	if string(first) != string(second) {
 		t.Errorf("Init not idempotent on .gitignore:\n--- first ---\n%s\n--- second ---\n%s", first, second)
 	}
-	// Exactly one occurrence of each pattern.
-	for _, pattern := range []string{".gskill/", ".agents/"} {
-		if n := strings.Count(string(second), pattern); n != 1 {
-			t.Errorf("pattern %q appears %d times, want 1", pattern, n)
-		}
+	// Exactly one managed pattern occurrence, and no .agents/ line at all.
+	if n := strings.Count(string(second), ".gskill/"); n != 1 {
+		t.Errorf("pattern .gskill/ appears %d times, want 1", n)
+	}
+	if hasLine(string(second), ".agents/") {
+		t.Errorf(".agents/ line present, want absent (spec 022)")
 	}
 }
 
@@ -138,10 +142,11 @@ func TestInit_GitignorePreservesCustomEntriesAndOrder(t *testing.T) {
 			t.Fatalf("line %d = %q, want %q (custom entries must survive untouched and in order)\n--- content ---\n%s", i, safeLine(lines, i), want, data)
 		}
 	}
-	for _, pattern := range []string{".gskill/", ".agents/"} {
-		if !hasLine(string(data), pattern) {
-			t.Errorf(".gitignore missing %q despite .agents/skills being present (substring must not satisfy whole-line match)\n--- content ---\n%s", pattern, data)
-		}
+	if !hasLine(string(data), ".gskill/") {
+		t.Errorf(".gitignore missing %q despite .agents/skills being present (substring must not satisfy whole-line match)\n--- content ---\n%s", ".gskill/", data)
+	}
+	if hasLine(string(data), ".agents/") {
+		t.Errorf(".agents/ was added, want only .gskill/ (spec 022)\n--- content ---\n%s", data)
 	}
 }
 
@@ -186,10 +191,70 @@ func TestInit_GitignoreNoTrailingNewline(t *testing.T) {
 	if !found {
 		t.Errorf("dist/ missing as its own line:\n--- content ---\n%s", data)
 	}
-	for _, pattern := range []string{".gskill/", ".agents/"} {
-		if !hasLine(string(data), pattern) {
-			t.Errorf(".gitignore missing %q\n--- content ---\n%s", pattern, data)
-		}
+	if !hasLine(string(data), ".gskill/") {
+		t.Errorf(".gitignore missing %q\n--- content ---\n%s", ".gskill/", data)
+	}
+}
+
+// TestGitignore_RemovesGskillWrittenAgentsLine (spec 022 FR-010): a
+// gskill-written .agents/ ignore line — recognizable as the exact line
+// immediately following the managed .gskill/ line — is removed on the next
+// mutating command so existing projects become committable.
+func TestGitignore_RemovesGskillWrittenAgentsLine(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	path := filepath.Join(root, ".gitignore")
+	if err := os.WriteFile(path, []byte("node_modules/\n.gskill/\n.agents/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := app.New(app.Options{})
+	if _, err := a.Init(context.Background(), root, false); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	data, err := os.ReadFile(path) //nolint:gosec // test reads a file in its own temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasLine(string(data), ".agents/") {
+		t.Errorf("gskill-written .agents/ line not removed\n--- content ---\n%s", data)
+	}
+	if !hasLine(string(data), ".gskill/") {
+		t.Errorf(".gskill/ line lost\n--- content ---\n%s", data)
+	}
+	if !hasLine(string(data), "node_modules/") {
+		t.Errorf("user line lost\n--- content ---\n%s", data)
+	}
+}
+
+// TestGitignore_KeepsUserAuthoredAgentsLine (spec 022 FR-010): a .agents/
+// line NOT part of the gskill-written pair is user-authored and is never
+// touched.
+func TestGitignore_KeepsUserAuthoredAgentsLine(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	path := filepath.Join(root, ".gitignore")
+	if err := os.WriteFile(path, []byte("node_modules/\n.agents/\ndist/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := app.New(app.Options{})
+	if _, err := a.Init(context.Background(), root, false); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	data, err := os.ReadFile(path) //nolint:gosec // test reads a file in its own temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasLine(string(data), ".agents/") {
+		t.Errorf("user-authored .agents/ line was removed\n--- content ---\n%s", data)
+	}
+	if !hasLine(string(data), ".gskill/") {
+		t.Errorf(".gskill/ not appended\n--- content ---\n%s", data)
 	}
 }
 

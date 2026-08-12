@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,10 @@ const (
 	TargetModeMismatch TargetState = "mode-mismatch" // recorded mode differs from on disk
 	TargetLegacyStore  TargetState = "legacy-store"  // symlink directly into the store (pre-active-layer)
 	TargetCorrupt      TargetState = "corrupt"       // a copy whose content no longer matches the lock
+	// TargetSymlinklessCheckout is the core.symlinks=false artifact: a plain
+	// file holding the committed link's text (spec 022 FR-016). Detected and
+	// reported only — never repaired; symlinks are a platform requirement.
+	TargetSymlinklessCheckout TargetState = "symlinkless-checkout"
 )
 
 // SkillHealth is the evaluated three-hop state for one locked skill.
@@ -40,6 +45,7 @@ type SkillHealth struct {
 	ActivePath   string // project-relative active entry
 	Agents       map[string]TargetState
 	Modes        map[string]string
+	Targets      map[string]string // agentID -> recorded target path (repo-relative)
 }
 
 // Healthy reports whether every rung of the chain is in a good state. When the
@@ -74,11 +80,39 @@ func (h SkillHealth) Faults() []string {
 		out = append(out, fmt.Sprintf("%s: active entry %s", h.Name, h.ActiveState))
 	}
 	for _, id := range sortedKeys(h.Agents) {
-		if st := h.Agents[id]; st != TargetOKSymlink && st != TargetOKCopy {
-			out = append(out, fmt.Sprintf("%s:%s %s", id, h.Name, st))
+		st := h.Agents[id]
+		if st == TargetOKSymlink || st == TargetOKCopy {
+			continue
 		}
+		if st == TargetSymlinklessCheckout {
+			out = append(out, symlinklessCheckoutMsg(cmp.Or(h.Targets[id], h.Name)))
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s:%s %s", id, h.Name, st))
 	}
 	return out
+}
+
+// symlinklessCheckoutMsg is the single error line check/doctor emit for a
+// degraded checkout — wording frozen by spec 022 (contracts/cli-surface.md).
+func symlinklessCheckoutMsg(relPath string) string {
+	return fmt.Sprintf("agent link %s is a plain file, not a symlink (checkout made without symlink support, e.g. core.symlinks=false); re-clone on a symlink-capable filesystem — gskill does not repair degraded checkouts", relPath)
+}
+
+// isSymlinklessArtifact reports whether path is a regular file holding link
+// text into the active layer — what a core.symlinks=false checkout leaves in
+// place of a committed agent link.
+func isSymlinklessArtifact(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+		return false
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // recorded agent-target path, size-capped above
+	if err != nil {
+		return false
+	}
+	target := strings.TrimSpace(string(data))
+	return !strings.Contains(target, "\n") && strings.Contains(filepath.ToSlash(target), ".agents/skills/")
 }
 
 // IntegrityFault reports whether any fault is a content-integrity failure — a
@@ -129,6 +163,7 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, s
 		StoreHashOK: true,
 		Agents:      make(map[string]TargetState, len(locked.Installation.Agents)),
 		Modes:       locked.Installation.Modes,
+		Targets:     locked.Installation.Targets,
 	}
 
 	h.StorePresent = p.contentHas(hash)
@@ -212,6 +247,14 @@ func agentTargetState(targetDir, linkTarget, storeRoot, recordedMode string, ver
 	}
 
 	if info.Mode()&os.ModeSymlink == 0 {
+		if info.Mode().IsRegular() {
+			// A plain file where a link should be: the core.symlinks=false
+			// artifact (detected, never repaired) — or foreign content.
+			if isSymlinklessArtifact(targetDir) {
+				return TargetSymlinklessCheckout, nil
+			}
+			return TargetForeign, nil
+		}
 		// A real directory: a copy (or a foreign dir).
 		return copyTargetState(targetDir, recordedMode, verifyHash, expectedHash)
 	}

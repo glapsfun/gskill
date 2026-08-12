@@ -64,7 +64,23 @@ func (a *App) Doctor(ctx context.Context, root string) (DoctorReport, error) {
 	for _, name := range sortedKeys(lf.Skills) {
 		checkRequirements(name, lf.Skills[name].Requires, lf, &report)
 	}
+	reportSymlinklessCheckout(root, lf, &report)
 	return report, nil
+}
+
+// reportSymlinklessCheckout warns, per affected agent link, when a checkout
+// was made without symlink support (spec 022 FR-016: detected and reported
+// with the frozen wording, never repaired).
+func reportSymlinklessCheckout(root string, lf *skillslock.State, report *DoctorReport) {
+	for _, name := range sortedKeys(lf.Skills) {
+		targets := lf.Skills[name].Installation.Targets
+		for _, id := range sortedKeys(targets) {
+			rel := targets[id]
+			if isSymlinklessArtifact(resolveTarget(root, rel)) {
+				report.Warnings = append(report.Warnings, symlinklessCheckoutMsg(rel))
+			}
+		}
+	}
 }
 
 // auditGlobalHome appends warnings for unsafe home permissions, quarantined

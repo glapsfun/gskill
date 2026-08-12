@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,6 +77,36 @@ func TestRepoOwned_AddCreatesRealDirAndRelativeLink(t *testing.T) {
 	}
 }
 
+// TestRepoOwned_AddLeavesSkillCommittable (spec 022 FR-010, US1): after a
+// fresh `add` in a git project, the skill copy and agent link show up in
+// `git status` as addable, while the local state dir stays ignored.
+func TestRepoOwned_AddLeavesSkillCommittable(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	gitRun(t, proj, "init", "--quiet", "-b", "main")
+
+	if _, stderr, code := runGskill(t, proj, "add", repo); code != 0 {
+		t.Fatalf("add exit %d: %s", code, stderr)
+	}
+
+	out, err := exec.CommandContext(t.Context(), "git", "-C", proj, "status", "--porcelain", "-uall").Output() //nolint:gosec // test-controlled path
+	if err != nil {
+		t.Fatalf("git status: %v", err)
+	}
+	status := string(out)
+	if !strings.Contains(status, ".agents/skills/demo") {
+		t.Errorf("skill copy not addable in git status:\n%s", status)
+	}
+	if !strings.Contains(status, ".claude/") {
+		t.Errorf("agent link not addable in git status:\n%s", status)
+	}
+	if strings.Contains(status, ".gskill/") {
+		t.Errorf(".gskill/ local state is not ignored:\n%s", status)
+	}
+}
+
 // TestRepoOwned_LegacyStoreLinkReplacedByRealDir asserts that a stale managed
 // symlink (the old model's absolute link into a store root) is replaced by a
 // real directory on the next install, not preserved as a link.
@@ -114,6 +145,52 @@ func TestRepoOwned_LegacyStoreLinkReplacedByRealDir(t *testing.T) {
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
 		t.Fatal("active entry is still a symlink after reinstall, want a real directory")
+	}
+}
+
+// TestRepoOwned_SymlinklessCheckoutDetected (spec 022 FR-016, frozen wording
+// in contracts/cli-surface.md): a checkout made without symlink support
+// leaves a plain file holding the link text at the agent path — check and
+// doctor report exactly that, and never repair it.
+func TestRepoOwned_SymlinklessCheckoutDetected(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	if _, stderr, code := runGskill(t, proj, "add", repo); code != 0 {
+		t.Fatalf("add exit %d: %s", code, stderr)
+	}
+
+	// Simulate the core.symlinks=false artifact: the agent link becomes a
+	// plain file containing the link text.
+	linkPath := filepath.Join(proj, ".claude", "skills", "demo")
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("readlink: %v", err)
+	}
+	if err := os.Remove(linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(linkPath, []byte(target+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, _ := runGskill(t, proj, "check")
+	if !strings.Contains(stderr, "plain file, not a symlink") || !strings.Contains(stderr, "core.symlinks=false") {
+		t.Errorf("check did not emit the frozen symlink-less error, stderr:\n%s", stderr)
+	}
+	if _, _, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 7 {
+		t.Errorf("check --fail-on-drift exit = %d, want 7", code)
+	}
+
+	_, stderr, _ = runGskill(t, proj, "doctor")
+	if !strings.Contains(stderr, "plain file, not a symlink") {
+		t.Errorf("doctor did not report the degraded checkout, stderr:\n%s", stderr)
+	}
+
+	// Never silently repaired: the artifact is still the plain file.
+	if fi, err := os.Lstat(linkPath); err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("degraded artifact was modified (err=%v)", err)
 	}
 }
 

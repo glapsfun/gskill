@@ -76,10 +76,12 @@ func assertLocalProjectStateCreated(t *testing.T, dir string) {
 	if err != nil {
 		t.Fatalf(".gitignore was not created: %v", err)
 	}
-	for _, pattern := range []string{".gskill/", ".agents/"} {
-		if !strings.Contains(string(gitignore), pattern) {
-			t.Errorf(".gitignore missing %q:\n%s", pattern, gitignore)
-		}
+	if !strings.Contains(string(gitignore), ".gskill/") {
+		t.Errorf(".gitignore missing %q:\n%s", ".gskill/", gitignore)
+	}
+	// Spec 022: skill content is committed — .agents/ must NOT be ignored.
+	if strings.Contains(string(gitignore), ".agents/") {
+		t.Errorf(".gitignore must not ignore .agents/:\n%s", gitignore)
 	}
 }
 

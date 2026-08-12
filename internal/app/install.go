@@ -1070,11 +1070,11 @@ func saveLock(path string, lf *skillslock.State) error {
 	return skillslock.Save(path, l)
 }
 
-// gskillIgnorePatterns are the gskill-managed, reproducible artifacts kept out
-// of version control: the content store/cache/locks (.gskill/) and the active
-// skill layer (.agents/). The committed manifest + lockfile regenerate both via
-// `gskill sync` (FR-007, clarification: gitignore both, regen on sync).
-var gskillIgnorePatterns = []string{".gskill/", ".agents/"}
+// gskillIgnorePatterns are the gskill-managed, machine-local artifacts kept
+// out of version control: only the local state dir (.gskill/). Skill content
+// (.agents/) and agent links are committed — clone equals working skills
+// (spec 022 FR-010, reversing spec 017 for content).
+var gskillIgnorePatterns = []string{".gskill/"}
 
 // ensureGitignore appends any missing gskill ignore hints, returning whether it
 // changed the file.
@@ -1110,7 +1110,7 @@ func ensureGitignore(root string) (bool, error) {
 		return false, fmt.Errorf("open .gitignore: %w", err)
 	}
 
-	changed := false
+	content, changed := removeManagedAgentsLine(content)
 	for _, pattern := range gskillIgnorePatterns {
 		if lineContains(content, pattern) {
 			continue
@@ -1128,6 +1128,21 @@ func ensureGitignore(root string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// removeManagedAgentsLine drops the gskill-written ".agents/" ignore line —
+// recognizable exactly as the line immediately following the managed
+// ".gskill/" line, the pair earlier gskill versions appended together (spec
+// 017) — so existing projects become committable (spec 022 FR-010). A
+// ".agents/" line anywhere else is user-authored and is never touched.
+func removeManagedAgentsLine(content string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == ".agents/" && strings.TrimSpace(lines[i-1]) == ".gskill/" {
+			return strings.Join(append(lines[:i], lines[i+1:]...), "\n"), true
+		}
+	}
+	return content, false
 }
 
 // lineContains reports whether content has pattern as a whole trimmed line, so

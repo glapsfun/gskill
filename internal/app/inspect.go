@@ -83,6 +83,9 @@ type SkillCheck struct {
 type CheckReport struct {
 	Skills   []SkillCheck
 	HasDrift bool
+	// Problems are human-readable fault lines for drifted skills (including
+	// the spec 022 symlink-less-checkout error), rendered as diagnostics.
+	Problems []string
 }
 
 // Check produces a drift report over the three-hop chain (store → active →
@@ -110,6 +113,7 @@ func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckRepo
 		report.Skills = append(report.Skills, SkillCheck{Name: name, Status: string(status)})
 		if status != integrity.DriftInstalled {
 			report.HasDrift = true
+			report.Problems = append(report.Problems, health[name].Faults()...)
 		}
 		integrityFault = integrityFault || health[name].IntegrityFault()
 	}
