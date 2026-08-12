@@ -5,7 +5,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
@@ -26,18 +28,30 @@ type prefetchJob struct {
 // (offline) or must not (dry-run) touch the network, or there is nothing to
 // warm. names is the run's already-sorted entry list (installAllLockEntries
 // computed it); reusing it avoids a second clone-and-sort of the lock.
-func (a *App) maybePrefetch(ctx context.Context, p *project, lf *skillslock.State, l *skillslock.Lock, req InstallFromLockRequest, names []string) {
+func (a *App) maybePrefetch(ctx context.Context, p *project, lf *skillslock.State, l *skillslock.Lock, req InstallFromLockRequest, names []string) map[string]bool {
 	if req.DryRun || req.Offline {
-		return
+		return nil
 	}
 	jobs := a.planPrefetch(p, lf, l, req, names)
 	if len(jobs) == 0 {
 		// Nothing to warm (fully up to date, or every remaining entry is
 		// foreign under --frozen-lockfile): no phase, no phantom UI line.
-		return
+		return nil
+	}
+	// Record every skill that needs the network BEFORE warming the cache (not
+	// just the deduped fetch jobs — skills sharing a commit share one fetch):
+	// after the prefetch their install observes a cache hit, but the run as a
+	// whole downloaded them (truthful StoreReuse reporting).
+	fetched := make(map[string]bool, len(names))
+	for _, name := range names {
+		e, ok := l.Entry(name)
+		if ok && (!req.Frozen || e.Ext != nil) && a.entryNeedsNetwork(p, lf, name, e, req) {
+			fetched[name] = true
+		}
 	}
 	emitRunPhase(req.Progress, InstallPhasePrefetching, len(names))
 	a.runPrefetch(ctx, p, lf, req.Root, jobs)
+	return fetched
 }
 
 // planPrefetch selects the distinct units the run will need, deduplicated
@@ -164,7 +178,12 @@ func (a *App) entryNeedsNetwork(p *project, lf *skillslock.State, name string, e
 		// pipeline in this case too (lockinstall.go's up-to-date fast path).
 		return true
 	}
-	return !p.contentHas(prior.Resolved.ContentHash)
+	// Committed content matching the lock is the restore (spec 022 FR-007),
+	// and a warm clone cache satisfies a missing copy without the network.
+	if ok, _, err := integrity.VerifyDir(active.Path(p.root, name), prior.Resolved.ContentHash); err == nil && ok {
+		return false
+	}
+	return prior.Resolved.Commit == "" || p.cache == nil || !p.cache.Has(prior.Resolved.Commit)
 }
 
 // entrySourceRef returns the source URL and requested ref an entry resolves

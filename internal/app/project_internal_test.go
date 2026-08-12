@@ -173,7 +173,7 @@ func TestSaveLockFreshProject(t *testing.T) {
 	if e.Source != "acme/skills" || e.SourceType != "github" || e.SkillPath != "skills/fresh/SKILL.md" {
 		t.Errorf("core fields = %+v", e)
 	}
-	if e.Ext == nil || e.Ext.StoreHash != "sha256:aaaa" {
+	if e.Ext == nil || e.Ext.ContentHash != "sha256:aaaa" {
 		t.Errorf("Ext = %+v", e.Ext)
 	}
 }

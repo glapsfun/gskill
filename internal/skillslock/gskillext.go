@@ -6,17 +6,24 @@ package skillslock
 // excluded from reproducible determinism, mirroring the legacy Provenance
 // carve-out.
 type Ext struct {
-	SourceURL     string   `json:"sourceUrl,omitempty"`
-	Ref           string   `json:"ref,omitempty"`
-	Commit        string   `json:"commit,omitempty"`
-	Version       string   `json:"version,omitempty"`
-	Agents        []string `json:"agents,omitempty"`
-	InstallMode   string   `json:"installMode,omitempty"`
-	Scope         string   `json:"scope,omitempty"`
-	StoreHash     string   `json:"storeHash,omitempty"`
-	SkillFileHash string   `json:"skillFileHash,omitempty"`
-	InstalledAt   string   `json:"installedAt,omitempty"`
-	UpdatedAt     string   `json:"updatedAt,omitempty"`
+	SourceURL   string   `json:"sourceUrl,omitempty"`
+	Ref         string   `json:"ref,omitempty"`
+	Commit      string   `json:"commit,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	Agents      []string `json:"agents,omitempty"`
+	InstallMode string   `json:"installMode,omitempty"`
+	// ContentHash is the canonical full-content hash of the committed skill
+	// copy (spec 022): it covers symlinks that the shared core computedHash
+	// (npx-compat) skips, so restores verify against it.
+	ContentHash string `json:"contentHash,omitempty"`
+	// Scope and StoreHash are the pre-022 store-location fields: read for
+	// migration, never written — entries drop them on their first rewrite
+	// (spec 022 data-model §3).
+	Scope         string `json:"scope,omitempty"`
+	StoreHash     string `json:"storeHash,omitempty"`
+	SkillFileHash string `json:"skillFileHash,omitempty"`
+	InstalledAt   string `json:"installedAt,omitempty"`
+	UpdatedAt     string `json:"updatedAt,omitempty"`
 	// State nests the residual machine state existing commands still consume;
 	// see ExtState (bridge.go).
 	State *ExtState `json:"state,omitempty"`

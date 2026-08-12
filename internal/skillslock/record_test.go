@@ -20,7 +20,9 @@ func fullRecord() Record {
 		Metadata: Metadata{Name: "x", Description: "d", Version: "1.2.0", License: "MIT"},
 		Requires: Requires{Skills: []string{"y"}, Commands: []string{"git"}},
 		Installation: Installation{
-			Scope: "project", Mode: "symlink", Agents: []string{"claude", "codex"},
+			// Scope is a pre-022 concept: never written, so it does not
+			// round-trip through the shared entry.
+			Mode: "symlink", Agents: []string{"claude", "codex"},
 			ActivePath: ".agents/skills/x",
 			Targets:    map[string]string{"claude": ".claude/skills/x"},
 			Modes:      map[string]string{"claude": "symlink"},

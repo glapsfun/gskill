@@ -1,6 +1,7 @@
 package skillslock
 
 import (
+	"cmp"
 	"path"
 	"strings"
 
@@ -75,8 +76,7 @@ func FromRecord(ls Record) Entry {
 		Version:       ls.Resolved.Version,
 		Agents:        ls.Installation.Agents,
 		InstallMode:   ls.Installation.Mode,
-		Scope:         ls.Installation.Scope,
-		StoreHash:     ls.Resolved.ContentHash,
+		ContentHash:   ls.Resolved.ContentHash,
 		SkillFileHash: ls.Resolved.SkillFileHash,
 		InstalledAt:   ls.Provenance.FetchedAt,
 		UpdatedAt:     ls.Provenance.UpdatedAt,
@@ -177,7 +177,7 @@ func ToRecord(name string, e Entry) Record {
 			Branch:        st.Branch,
 			Commit:        ext.Commit,
 			TreeHash:      st.TreeHash,
-			ContentHash:   ext.StoreHash,
+			ContentHash:   cmp.Or(ext.ContentHash, ext.StoreHash),
 			SkillFileHash: ext.SkillFileHash,
 			MutableRef:    st.MutableRef,
 			LocalPathHash: st.LocalPathHash,

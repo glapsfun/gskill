@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/skillslock"
@@ -122,7 +123,7 @@ func TestEvaluateHealth_MissingTarget(t *testing.T) {
 	}
 }
 
-func TestEvaluateHealth_BrokenLinkAndCorruptStore(t *testing.T) {
+func TestEvaluateHealth_DriftedCommittedContent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	p := openProject(root)
@@ -134,8 +135,9 @@ func TestEvaluateHealth_BrokenLinkAndCorruptStore(t *testing.T) {
 	}
 	linkAgent(t, root, "demo")
 
-	// Corrupt the store content so its hash no longer matches the lock.
-	if err := os.WriteFile(filepath.Join(storePath, "SKILL.md"), []byte("# tampered\n"), 0o600); err != nil {
+	// Hand-edit the committed content so it no longer matches the lock
+	// (spec 022 FR-008: drift, reported never repaired).
+	if err := os.WriteFile(filepath.Join(active.Path(root, "demo"), "SKILL.md"), []byte("# tampered\n"), 0o600); err != nil {
 		t.Fatalf("tamper: %v", err)
 	}
 
@@ -143,11 +145,15 @@ func TestEvaluateHealth_BrokenLinkAndCorruptStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluateHealth: %v", err)
 	}
-	if got[0].StoreHashOK {
-		t.Error("expected store hash mismatch")
+	if got[0].ActiveState != active.HealthDrifted {
+		t.Errorf("active state = %q, want drifted", got[0].ActiveState)
 	}
-	if !got[0].IntegrityFault() {
-		t.Error("expected an integrity fault")
+	if got[0].Healthy() {
+		t.Error("expected unhealthy on drifted committed content")
+	}
+	faults := got[0].Faults()
+	if len(faults) == 0 || !strings.Contains(faults[0], "no longer matches skills-lock.json") {
+		t.Errorf("faults = %v, want the drift wording", faults)
 	}
 }
 

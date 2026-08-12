@@ -51,11 +51,16 @@ type ObjectOrigin struct {
 	Commit     string
 }
 
-// Store-reuse outcomes recorded on Result.StoreReuse.
+// Store-reuse outcomes recorded on Result.StoreReuse: reused means no fetch
+// happened (committed content or a clone-cache hit satisfied the install).
 const (
 	StoreReused     = "reused"
 	StoreDownloaded = "downloaded"
 )
+
+// ScopeLabelCommitted labels installs served by the repo-owned model
+// (spec 022): committed content or the commit-keyed clone cache.
+const ScopeLabelCommitted = "committed"
 
 // legacyStore adapts the project-local store.Store to ContentStore with the
 // pre-existing semantics: Put re-hashes the stored copy and fails closed on a

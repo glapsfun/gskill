@@ -125,7 +125,10 @@ func ensureOverLink(dest, src, name string, opts EnsureOptions) (string, error) 
 
 // ensureOverDir handles a real-directory occupant: idempotent when it already
 // matches the expected content; replaced when it matches a previously owned
-// hash (version change) or when the caller reconciles; foreign otherwise.
+// hash (version change) or when the caller reconciles. A mismatch on a skill
+// gskill previously installed (accept hashes were provided) is drift — the
+// spec 022 FR-008 error with its repair hint; with no prior ownership claim
+// the occupant is foreign.
 func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
 	ok, _, err := integrity.VerifyDir(dest, opts.ExpectedHash)
 	if err != nil {
@@ -134,16 +137,24 @@ func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
 	if ok {
 		return dest, nil
 	}
+	hadPrior := false
 	for _, h := range opts.AcceptHashes {
 		if h == "" {
 			continue
 		}
+		hadPrior = true
 		if owned, _, vErr := integrity.VerifyDir(dest, h); vErr == nil && owned {
 			return dest, swapIn(dest, src, opts.ExpectedHash, name)
 		}
 	}
 	if opts.Replace {
 		return dest, swapIn(dest, src, opts.ExpectedHash, name)
+	}
+	if hadPrior {
+		return "", errs.WithHint(
+			fmt.Errorf("%w: committed content for skill %q at %s no longer matches skills-lock.json",
+				errs.ErrInvalidLock, name, Rel(name)),
+			"run 'gskill repair' (or 'gskill install --force') to restore lock-true content, or re-add the skill to adopt the edited content as a new version")
 	}
 	return "", foreignErr(name, dest, "directory content gskill did not install")
 }

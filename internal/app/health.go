@@ -48,15 +48,9 @@ type SkillHealth struct {
 	Targets      map[string]string // agentID -> recorded target path (repo-relative)
 }
 
-// Healthy reports whether every rung of the chain is in a good state. When the
-// store was hash-verified, a content mismatch is unhealthy (fail closed).
+// Healthy reports whether every rung of the chain is in a good state (spec
+// 022: committed content → agent links; there is no store rung).
 func (h SkillHealth) Healthy() bool {
-	if !h.StorePresent {
-		return false
-	}
-	if h.Hashed && !h.StoreHashOK {
-		return false
-	}
 	if h.Scope != string(installer.ScopeGlobal) && h.ActiveState != active.HealthOK {
 		return false
 	}
@@ -71,13 +65,12 @@ func (h SkillHealth) Healthy() bool {
 // Faults returns human-readable descriptions of every non-OK rung.
 func (h SkillHealth) Faults() []string {
 	var out []string
-	if !h.StorePresent {
-		out = append(out, fmt.Sprintf("%s: store content %s missing", h.Name, h.StorePath))
-	} else if h.Hashed && !h.StoreHashOK {
-		out = append(out, h.Name+": store content hash mismatch")
-	}
 	if h.Scope != string(installer.ScopeGlobal) && h.ActiveState != active.HealthOK {
-		out = append(out, fmt.Sprintf("%s: active entry %s", h.Name, h.ActiveState))
+		if h.ActiveState == active.HealthDrifted {
+			out = append(out, fmt.Sprintf("%s: committed content at %s no longer matches skills-lock.json (drifted)", h.Name, h.ActivePath))
+		} else {
+			out = append(out, fmt.Sprintf("%s: active entry %s", h.Name, h.ActiveState))
+		}
 	}
 	for _, id := range sortedKeys(h.Agents) {
 		st := h.Agents[id]
@@ -166,15 +159,10 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, s
 		Targets:     locked.Installation.Targets,
 	}
 
-	h.StorePresent = p.contentHas(hash)
-	if h.StorePresent && verifyHash {
-		hashes, err := integrity.HashDir(storePath)
-		if err != nil {
-			return SkillHealth{}, fmt.Errorf("hash store %s: %w", name, err)
-		}
-		h.Hashed = true
-		h.StoreHashOK = hashes.ContentHash == hash
-	}
+	// Spec 022: there is no store rung — the committed repo copy is the
+	// content, evaluated below as the active entry's health.
+	h.StorePresent = true
+	h.Hashed = verifyHash
 
 	global := locked.Installation.Scope == string(installer.ScopeGlobal)
 	linkTarget := storePath

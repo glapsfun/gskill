@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
-	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/git"
@@ -190,6 +190,16 @@ func (a *App) finishLockRun(ctx context.Context, p *project, lf *skillslock.Stat
 		a.recordProjectState(ctx, p, lf)
 	}
 	return nil
+}
+
+// truthfulReuse corrects the per-skill reuse label: a skill the prefetch
+// fetched moments ago observes a cache hit at install time, but the run as a
+// whole downloaded it.
+func truthfulReuse(reuse string, prefetched bool) string {
+	if prefetched && reuse == installer.StoreReused {
+		return installer.StoreDownloaded
+	}
+	return reuse
 }
 
 // entryAgents returns an entry's declared gskill agents (nil for raw entries).
@@ -507,7 +517,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 	var interrupted bool
 	var firstErr error
 	names := sortedLockNames(l)
-	a.maybePrefetch(ctx, p, lf, l, req, names)
+	prefetched := a.maybePrefetch(ctx, p, lf, l, req, names)
 	for k, name := range names {
 		e, _ := l.Entry(name)
 		// Cancellation is guaranteed between skills (contract guarantee 4):
@@ -520,6 +530,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 			continue
 		}
 		r := a.runOneLockEntry(ctx, p, lf, name, e, req, k+1, len(names))
+		r.StoreReuse = truthfulReuse(r.StoreReuse, prefetched[name])
 		res.Skills = append(res.Skills, r)
 		switch {
 		case r.Err != nil:
@@ -1159,10 +1170,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		// output; that would silently stop catching that drift.
 		return LockSkillResult{}, false
 	}
-	if !p.contentHas(prior.Resolved.ContentHash) {
-		return LockSkillResult{}, false
-	}
-	if !a.storedContentUpToDate(p, prior.Resolved.ContentHash, e.ComputedHash) {
+	if !committedContentUpToDate(p, name, prior.Resolved.ContentHash, e.ComputedHash) {
 		return LockSkillResult{}, false
 	}
 
@@ -1203,24 +1211,21 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	return r, true
 }
 
-// storedContentUpToDate establishes that the stored object still backs the
-// lock entry. The recorded hash must match the actual stored content —
+// committedContentUpToDate establishes that the committed repo copy still
+// backs the lock entry (spec 022 FR-007): its full content hash must match
+// the resolved contentHash AND its compat hash the entry's computedHash —
 // comparing the entry against itself would let an edited or corrupted
 // computedHash pass as "up to date" (it must fail closed, or be accepted via
-// --force, on the full path). CompatHash skips symlinks by design, so it
-// alone cannot notice one added into (or retargeted inside) a shared object:
-// for the global store the store's own verification also runs (depth per
-// store.verify_on_use), so a tampered object never satisfies the fast path
-// (FR-020) — it falls through to the full path, which fails closed or
-// quarantines.
-func (a *App) storedContentUpToDate(p *project, contentHash, computedHash string) bool {
-	if compat, err := integrity.CompatHash(p.contentPath(contentHash)); err != nil || compat != computedHash {
+// --force, on the full path). The full content hash covers symlinks that
+// CompatHash skips by design, so a tampered committed copy never satisfies
+// the fast path — it falls through to the full path, which fails closed.
+func committedContentUpToDate(p *project, name, contentHash, computedHash string) bool {
+	dest := active.Path(p.root, name)
+	if ok, _, err := integrity.VerifyDir(dest, contentHash); err != nil || !ok {
 		return false
 	}
-	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
-		if err := newGlobalContentStore(p.global, a.cfg).Verify(contentHash); err != nil {
-			return false
-		}
+	if compat, err := integrity.CompatHash(dest); err != nil || compat != computedHash {
+		return false
 	}
 	return true
 }

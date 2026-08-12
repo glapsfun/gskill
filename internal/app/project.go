@@ -194,14 +194,6 @@ func (p *project) contentRoot() string {
 	return p.store.Root()
 }
 
-// contentHas reports whether the project's resolved content store holds hash.
-func (p *project) contentHas(hash string) bool {
-	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
-		return p.global.Has(hash)
-	}
-	return p.store.Has(hash)
-}
-
 // contentPath returns the resolved content directory for hash in the
 // project's content store.
 func (p *project) contentPath(hash string) string {
@@ -245,22 +237,17 @@ func (a *App) recordProjectState(ctx context.Context, p *project, lf *skillslock
 }
 
 // writeProjectState derives the project's machine-local state.json from the
-// lock records after a successful run: which store object each skill
-// activates, the gskill-owned active and agent targets, and the resolved
-// materialization modes (FR-014). The file is bookkeeping for repair and
-// removal only — reproduction never needs it (FR-015).
+// lock records after a successful run: the gskill-created agent targets and
+// their per-machine materialization modes (spec 022 data-model §4). The file
+// is bookkeeping for repair and removal only — reproduction never needs it
+// (FR-015); content identity lives in the committed lockfile.
 func writeProjectState(p *project, lf *skillslock.State) error {
 	st, err := projstate.LoadOrInit(p.root)
 	if err != nil {
 		return err
 	}
 	for name, rec := range lf.Skills {
-		sk := projstate.SkillState{
-			StoreHash:    rec.Resolved.ContentHash,
-			StoreScope:   p.storeScope,
-			ActiveTarget: rec.Installation.ActivePath,
-			ActiveMode:   rec.Installation.Mode,
-		}
+		var sk projstate.SkillState
 		if len(rec.Installation.Targets) > 0 {
 			sk.Agents = make(map[string]projstate.AgentState, len(rec.Installation.Targets))
 			for id, target := range rec.Installation.Targets {
