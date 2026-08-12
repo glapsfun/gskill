@@ -188,9 +188,27 @@ func TestRepoOwned_SymlinklessCheckoutDetected(t *testing.T) {
 		t.Errorf("doctor did not report the degraded checkout, stderr:\n%s", stderr)
 	}
 
-	// Never silently repaired: the artifact is still the plain file.
-	if fi, err := os.Lstat(linkPath); err != nil || !fi.Mode().IsRegular() {
-		t.Errorf("degraded artifact was modified (err=%v)", err)
+	// Never silently repaired: the artifact is still the plain file — and
+	// sync refuses to reconcile it, reporting the same frozen error
+	// (spec 022, epic T04: error, not silent repair).
+	requirePlainFile(t, linkPath, "after check/doctor")
+	_, stderr, code := runGskill(t, proj, "sync")
+	if code == 0 {
+		t.Error("sync on a symlink-less checkout succeeded, want fail-closed")
+	}
+	if !strings.Contains(stderr, "plain file, not a symlink") {
+		t.Errorf("sync did not emit the frozen symlink-less error, stderr:\n%s", stderr)
+	}
+	requirePlainFile(t, linkPath, "after sync")
+}
+
+// requirePlainFile fails unless path is still a regular file (the degraded
+// checkout artifact must never be repaired or removed).
+func requirePlainFile(t *testing.T, path, when string) {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("degraded artifact modified %s (err=%v)", when, err)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 )
@@ -153,6 +154,15 @@ func (a *App) reconcileSkill(ctx context.Context, p *project, lf *skillslock.Sta
 	}
 	if !needed {
 		return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash}, lockChanged, nil
+	}
+	// A symlink-less checkout is detected and reported, never silently
+	// repaired (spec 022 FR-016): recreating real symlinks behind the user's
+	// core.symlinks=false checkout would fight git on every status.
+	for _, id := range desiredIDs {
+		rel := locked.Installation.Targets[id]
+		if rel != "" && isSymlinklessArtifact(resolveTarget(p.root, rel)) {
+			return SyncChange{}, false, fmt.Errorf("%w: %s", errs.ErrInvalidLock, symlinklessCheckoutMsg(rel))
+		}
 	}
 	result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req, false)
 	if rErr != nil {
