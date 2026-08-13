@@ -1,6 +1,6 @@
 # Configuration reference
 
-GSKILL resolves settings from layered sources. Manage them with [`gskill config`](../how-to/configure-gskill.md).
+GSKILL resolves settings from layered sources. Inspect them with [`gskill config`](../how-to/configure-gskill.md).
 
 ## Precedence
 
@@ -18,7 +18,7 @@ A value set at a higher layer overrides the same value from any lower layer.
 | --- | --- | --- |
 | Flags | Pass on the command line | `gskill add ./skill --copy` |
 | Environment | `GSKILL_*` variables | `GSKILL_OFFLINE=1 gskill install --frozen-lockfile` |
-| Config file | `gskill config set <key> <value>` | `gskill config set defaults.install_mode copy` |
+| Config file | Edit `config.toml` (find it with `gskill config path`) | `[defaults]` `install_mode = "copy"` |
 | Defaults | Built in | `install_mode` defaults to `symlink` |
 
 Run `gskill config path` to find the active config file, and `gskill config list` to print the
@@ -32,12 +32,19 @@ These mirror the manifest `[defaults]` block and the global flags:
 | --- | --- | --- |
 | `defaults.agents` | list of agent IDs | Target agents when an `add` specifies none. |
 | `defaults.install_mode` | `symlink` \| `copy` \| `auto` | Default install mode. |
-| `defaults.scope` | `project` \| `global` | Default install scope. |
+| `store.lock_timeout` | duration | Bounds the project mutate-lock wait (name kept for config compatibility). |
 | offline | bool (flag `--offline` / `GSKILL_OFFLINE`) | Operate without network. |
-| cache | bool (flag `--no-cache` / `GSKILL_NO_CACHE`) | Bypass the content cache. |
+| cache | bool (flag `--no-cache` / `GSKILL_NO_CACHE`) | Bypass the clone cache. |
 
-For the complete flag list, see the [command reference](commands.md). For where files live across
-operating systems, see [the store and the cache](../explanation/store-and-cache.md).
+## Removed keys
+
+The pre-022 global-store keys — `store.scope`, `store.verify_on_use`, `store.gc_grace_period`,
+`projects.registry`, `privacy.project_registry` (and their env forms `GSKILL_STORE_SCOPE`,
+`GSKILL_STORE_VERIFY`, `GSKILL_PROJECT_REGISTRY`) — no longer exist. If present in a config file
+they are **ignored, never an error**.
+
+For the complete flag list, see the [command reference](commands.md). For where files live on your
+machine, see [the clone cache](../explanation/store-and-cache.md).
 
 ## See also
 

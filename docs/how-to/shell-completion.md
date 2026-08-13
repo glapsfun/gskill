@@ -43,8 +43,7 @@ gskill completion zsh > "${fpath[1]}/_gskill"
 gskill completion fish > ~/.config/fish/completions/gskill.fish
 ```
 
-Open a new shell afterwards. On Windows, use your shell's completion mechanism (e.g. Git Bash for the
-bash script).
+Open a new shell afterwards.
 
 ## Expected result
 

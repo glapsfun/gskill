@@ -2,8 +2,10 @@
 
 **GSKILL** is a reproducible package manager for agentic AI skills. It installs, versions, locks,
 verifies, and restores `SKILL.md` instruction bundles across AI coding agents, developer machines, and
-CI. Commit `skills-lock.json` — the single file that records both intent and resolved reality — and
-reproduce a byte-identical skill environment anywhere with `gskill install --frozen-lockfile`.
+CI. Skill content is committed in the repository, so a fresh `git clone` yields working skills with
+zero gskill commands; commit `skills-lock.json` — the single file that records both intent and
+resolved reality — and prove or restore a byte-identical skill environment anywhere with
+`gskill install --frozen-lockfile`.
 
 This documentation follows the [Diátaxis](https://diataxis.fr/) framework — four kinds of docs, each
 with one job.
@@ -33,7 +35,6 @@ Problem-oriented recipes — one per feature. See the [full index](how-to/index.
 - [Verify integrity](how-to/verify-integrity.md)
 - [Gate CI on drift](how-to/gate-ci-on-drift.md)
 - [Reuse skills across projects](how-to/reuse-skills-across-projects.md)
-- [Migrate to the global store](how-to/migrate-to-global-store.md)
 - [Script GSKILL with `--json`](how-to/script-with-json.md)
 
 ## Reference
@@ -53,9 +54,9 @@ Understanding-oriented discussion.
 
 - [The reproducibility model](explanation/reproducibility-model.md)
 - [Integrity and trust](explanation/integrity-and-trust.md)
-- [The global store](explanation/global-store.md)
+- [Repo-owned storage](explanation/repo-owned-storage.md)
 - [Project state vs global state](explanation/project-and-global-state.md)
-- [The store and the cache](explanation/store-and-cache.md)
+- [The clone cache](explanation/store-and-cache.md)
 - [Multi-agent installs](explanation/multi-agent-installs.md)
 
 ---

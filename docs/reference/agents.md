@@ -26,9 +26,11 @@ installs.
 
 ## Scope
 
-- **Project** (default): skills install under the project's agent directories (paths above).
-- **Global** (`--global`): skills install into your user-global location for that agent. Global paths
-  follow platform conventions (XDG on Linux, the platform equivalents on macOS and Windows).
+- **Project** (default): the content is committed at `.agents/skills/<name>/` and each agent's
+  project path above is a committed relative symlink into it.
+- **Global** (`--global`): skills install as verified copies into your user-global location for that
+  agent, outside the repo-owned model. Global paths follow platform conventions (XDG on Linux, the
+  platform equivalents on macOS).
 
 ## See also
 
