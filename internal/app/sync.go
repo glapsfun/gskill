@@ -83,6 +83,9 @@ func (a *App) reconcile(ctx context.Context, p *project, req SyncRequest) (SyncR
 	if err != nil {
 		return SyncResult{}, err
 	}
+	if err := a.autoMigrate(ctx, p, lf, migrateRunOptions{}); err != nil {
+		return SyncResult{}, err
+	}
 
 	out, lockChanged, err := a.reconcileSkills(ctx, p, lf, req)
 	if err != nil {
@@ -209,6 +212,7 @@ func (a *App) frozenRequest(p *project, name string, locked skillslock.Record, r
 		Home:              home,
 		Offline:           req.Offline,
 		ExpectContentHash: locked.Resolved.ContentHash,
+		LegacyStoreRoots:  p.legacyStoreRoots(),
 	}, nil
 }
 

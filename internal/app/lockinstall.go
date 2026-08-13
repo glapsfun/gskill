@@ -509,7 +509,7 @@ func emitRunPhase(emit func(InstallProgressEvent), p InstallPhase, total int) {
 // mixed results return ErrPartialInstall, total failure returns the first
 // cause, and successes are persisted either way.
 func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslock.Lock, req InstallFromLockRequest, res *InstallFromLockResult) (*skillslock.State, error) {
-	lf, err := loadOrNewLock(p.lockPath)
+	lf, err := a.loadLockMigrated(ctx, p, migrateRunOptions{frozen: req.Frozen, dryRun: req.DryRun})
 	if err != nil {
 		return nil, err
 	}

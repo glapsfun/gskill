@@ -95,6 +95,11 @@ func (a *App) runUpdate(ctx context.Context, p *project, req UpdateRequest, out 
 	if err != nil {
 		return err
 	}
+	if !req.DryRun {
+		if mErr := a.autoMigrate(ctx, p, lf, migrateRunOptions{}); mErr != nil {
+			return mErr
+		}
+	}
 	names, err := updateNames(lf, req.Names)
 	if err != nil {
 		return err
@@ -280,10 +285,17 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 		return RemoveResult{}, errNoLock()
 	}
 	var out RemoveResult
+	skip := make(map[string]bool, len(names))
+	for _, name := range names {
+		skip[name] = true
+	}
 	err = a.withLock(ctx, p, func() error {
 		lf, lockErr := loadOrNewLock(p.lockPath)
 		if lockErr != nil {
 			return lockErr
+		}
+		if mErr := a.autoMigrate(ctx, p, lf, migrateRunOptions{skip: skip}); mErr != nil {
+			return mErr
 		}
 		if rmErr := a.removeSkills(p, lf, names, &out); rmErr != nil {
 			return rmErr

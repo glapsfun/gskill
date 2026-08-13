@@ -397,7 +397,7 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 	res := AddResult{Warnings: append([]string(nil), warnings...)}
 	reqIDs := agentIDs(ireq.Agents)
 	err := a.withLock(ctx, p, func() error {
-		lf, lockErr := loadOrNewLock(p.lockPath)
+		lf, lockErr := a.loadLockMigrated(ctx, p, migrateRunOptions{})
 		if lockErr != nil {
 			return lockErr
 		}
@@ -792,15 +792,20 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 // installRequest assembles an installer.Request with shared defaults.
 func (a *App) installRequest(root string, ref source.Ref, rev resolver.Revision, agents []agent.Agent, scope, mode string) installer.Request {
 	home, _ := os.UserHomeDir()
+	legacyRoots := []string{filepath.Join(root, stateDirName, "store")}
+	if h, err := a.openHome(); err == nil {
+		legacyRoots = append(legacyRoots, filepath.Join(h.Root(), "store"))
+	}
 	return installer.Request{
-		Ref:         ref,
-		Revision:    rev,
-		Path:        ref.Path,
-		Agents:      agents,
-		Scope:       scopeOr(scope),
-		ModePref:    modeOr(mode, ""),
-		ProjectRoot: root,
-		Home:        home,
+		Ref:              ref,
+		Revision:         rev,
+		Path:             ref.Path,
+		Agents:           agents,
+		Scope:            scopeOr(scope),
+		ModePref:         modeOr(mode, ""),
+		ProjectRoot:      root,
+		Home:             home,
+		LegacyStoreRoots: legacyRoots,
 	}
 }
 
