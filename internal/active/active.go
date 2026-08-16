@@ -16,6 +16,12 @@ import (
 const (
 	rootDir   = ".agents"
 	skillsDir = "skills"
+	// tmpMarker/oldMarker prefix the transient siblings swapIn creates next to
+	// an active entry. They are never skill names: List filters them so a
+	// crash-orphaned staging directory is not mistaken for an installed skill
+	// (and pruned/reported as one).
+	tmpMarker = "..gskill-switch-"
+	oldMarker = "..gskill-old-"
 )
 
 // Health classifies the state of an active entry in the repo-owned model
@@ -168,7 +174,7 @@ func swapIn(dest, src, expectedHash, name string) error {
 		return fmt.Errorf("activate %s: %w", name, err)
 	}
 	stamp := time.Now().UnixNano()
-	tmp := fmt.Sprintf("%s..gskill-switch-%d", dest, stamp)
+	tmp := fmt.Sprintf("%s%s%d", dest, tmpMarker, stamp)
 	if err := fsutil.CopyDir(src, tmp); err != nil {
 		_ = os.RemoveAll(tmp)
 		return fmt.Errorf("activate %s: %w", name, err)
@@ -184,7 +190,7 @@ func swapIn(dest, src, expectedHash, name string) error {
 			errs.ErrIntegrity, got, name, expectedHash)
 	}
 
-	old := fmt.Sprintf("%s..gskill-old-%d", dest, stamp)
+	old := fmt.Sprintf("%s%s%d", dest, oldMarker, stamp)
 	hadOld := false
 	if _, statErr := os.Lstat(dest); statErr == nil {
 		if err := os.Rename(dest, old); err != nil {
@@ -347,6 +353,9 @@ func List(root string) ([]string, error) {
 	}
 	var names []string
 	for _, e := range entries {
+		if strings.Contains(e.Name(), tmpMarker) || strings.Contains(e.Name(), oldMarker) {
+			continue // transient swap sibling, not a skill
+		}
 		info, err := e.Info()
 		if err != nil {
 			return nil, fmt.Errorf("stat active entry %s: %w", e.Name(), err)

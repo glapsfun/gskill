@@ -38,6 +38,12 @@ func (c syncCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 		out.Info("pruned: %s", p)
 	}
 	for _, o := range res.Orphans {
+		if c.Prune {
+			// Survived a prune: gskill could not prove it installed this
+			// content, so it is reported rather than deleted.
+			out.Warn("orphan left in place (not gskill-managed content): %s", o)
+			continue
+		}
 		out.Warn("orphan (run with --prune to remove): %s", o)
 	}
 

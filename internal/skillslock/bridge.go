@@ -69,7 +69,14 @@ func FromRecord(ls Record) Entry {
 		ref = ls.Resolved.Branch
 	}
 
+	// Only a user-global placement is persisted: see Ext.Scope. A "project"
+	// scope is the pre-022 store-location marker and is deliberately dropped.
+	scope := ""
+	if ls.Installation.Scope == ScopeGlobal {
+		scope = ScopeGlobal
+	}
 	ext := &Ext{
+		Scope:         scope,
 		SourceURL:     ls.Source.URL,
 		Ref:           ref,
 		Commit:        ls.Resolved.Commit,

@@ -153,7 +153,10 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, v
 	}
 
 	// Spec 022: there is no store rung — the committed repo copy is the
-	// content, evaluated below as the active entry's health.
+	// content, evaluated below as the active entry's health. Drifted
+	// committed content is reported as drift (exit 7 under --fail-on-drift);
+	// `gskill verify` is the fail-closed hash check (exit 6), so StoreHashOK
+	// stays true here by design.
 	h.StorePresent = true
 	h.Hashed = verifyHash
 

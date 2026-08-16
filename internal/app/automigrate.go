@@ -23,6 +23,10 @@ type migrateRunOptions struct {
 	skip map[string]bool
 	// dryRun runs write nothing at all — migration included.
 	dryRun bool
+	// offline forbids network fetches during migration, exactly as it does
+	// for the command that triggered it: a legacy project must not silently
+	// reach the network under --offline.
+	offline bool
 }
 
 // loadLockMigrated loads the lock and runs the auto-migration prelude —
@@ -58,7 +62,7 @@ func (a *App) autoMigrate(ctx context.Context, p *project, lf *skillslock.State,
 		if !a.isLegacySkill(p, name, locked) {
 			continue
 		}
-		if err := a.migrateSkill(ctx, p, lf, name, locked, opts.frozen); err != nil {
+		if err := a.migrateSkill(ctx, p, lf, name, locked, opts); err != nil {
 			return fmt.Errorf("migrate skill %q to repo-owned storage: %w", name, err)
 		}
 		migrated = append(migrated, name)
@@ -106,18 +110,19 @@ func (a *App) isLegacySkill(p *project, name string, locked skillslock.Record) b
 // old store object when one exists (offline-capable), then reconcile from the
 // lock — a committed hit relinks agents with no fetch; otherwise the clone
 // cache or the network materializes the recorded commit.
-func (a *App) migrateSkill(ctx context.Context, p *project, lf *skillslock.State, name string, locked skillslock.Record, frozen bool) error {
+func (a *App) migrateSkill(ctx context.Context, p *project, lf *skillslock.State, name string, locked skillslock.Record, opts migrateRunOptions) error {
 	a.seedFromLegacyStore(p, name, locked.Resolved.ContentHash)
 
 	agents, err := a.agentsByID(locked.Installation.Agents)
 	if err != nil {
 		return err
 	}
-	result, err := a.reconcileFromLock(ctx, p, name, locked, agents, SyncRequest{Root: p.root}, false)
+	result, err := a.reconcileFromLock(ctx, p, name, locked, agents,
+		SyncRequest{Root: p.root, Offline: opts.offline}, false)
 	if err != nil {
 		return err
 	}
-	if frozen {
+	if opts.frozen {
 		return nil
 	}
 	locked.Installation.Scope = "" // the retired store-scope field dies on rewrite

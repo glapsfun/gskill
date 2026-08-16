@@ -83,7 +83,7 @@ func (a *App) reconcile(ctx context.Context, p *project, req SyncRequest) (SyncR
 	if err != nil {
 		return SyncResult{}, err
 	}
-	if err := a.autoMigrate(ctx, p, lf, migrateRunOptions{}); err != nil {
+	if err := a.autoMigrate(ctx, p, lf, migrateRunOptions{offline: req.Offline}); err != nil {
 		return SyncResult{}, err
 	}
 
@@ -98,6 +98,14 @@ func (a *App) reconcile(ctx context.Context, p *project, req SyncRequest) (SyncR
 			return SyncResult{}, pErr
 		}
 		out.Pruned = pruned
+		// Whatever prune could not prove gskill's own is still on disk, so it
+		// is still an orphan: report it rather than letting it vanish from
+		// the output while it accumulates in the repo.
+		remaining, oErr := a.findOrphans(p, lf)
+		if oErr != nil {
+			return SyncResult{}, oErr
+		}
+		out.Orphans = remaining
 	} else {
 		orphans, oErr := a.findOrphans(p, lf)
 		if oErr != nil {
@@ -379,6 +387,14 @@ func sweepActiveOrphans(p *project, lf *skillslock.State, external map[string]bo
 		if remove {
 			if rmErr := active.Remove(p.root, name); rmErr != nil {
 				return nil, rmErr
+			}
+			// active.Remove refuses to delete content it cannot prove gskill
+			// installed, and an orphan has no lock entry left to prove it
+			// with — so a committed directory survives. Reporting it as
+			// pruned would be a lie; leave it for the orphan list instead
+			// (reconcile re-runs findOrphans after a prune).
+			if _, statErr := os.Lstat(active.Path(p.root, name)); statErr == nil {
+				continue
 			}
 		}
 		found = append(found, active.Rel(name))

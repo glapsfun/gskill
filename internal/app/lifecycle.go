@@ -96,7 +96,7 @@ func (a *App) runUpdate(ctx context.Context, p *project, req UpdateRequest, out 
 		return err
 	}
 	if !req.DryRun {
-		if mErr := a.autoMigrate(ctx, p, lf, migrateRunOptions{}); mErr != nil {
+		if mErr := a.autoMigrate(ctx, p, lf, migrateRunOptions{offline: req.Offline}); mErr != nil {
 			return mErr
 		}
 	}
