@@ -281,3 +281,39 @@ func TestGitignore_CoversProjectState(t *testing.T) {
 		t.Fatalf("state.json not written: %v", err)
 	}
 }
+
+// TestSync_UnignoresAgentsLayerOnInitializedProject (spec 022 FR-010) is the
+// case Init cannot reach: an ALREADY-initialized project (its .gskill/ exists,
+// so install's auto-init short-circuits and Init never runs again) still
+// carries the gskill-written ".agents/" ignore line from the pre-022 layout.
+// Unless a mutating command drops it, the migrated, committed skill content
+// stays invisible to git and a fresh clone comes up empty.
+func TestSync_UnignoresAgentsLayerOnInitializedProject(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	a := app.New(app.Options{GskillHome: t.TempDir()})
+	if _, err := a.Init(context.Background(), root, true); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	// Re-plant the pre-022 pair an older gskill wrote.
+	path := filepath.Join(root, ".gitignore")
+	if err := os.WriteFile(path, []byte("node_modules/\n.gskill/\n.agents/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.Sync(context.Background(), app.SyncRequest{Root: root}); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	data, err := os.ReadFile(path) //nolint:gosec // test reads a file in its own temp dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasLine(string(data), ".agents/") {
+		t.Errorf("gskill-written .agents/ line survived a mutating command\n--- content ---\n%s", data)
+	}
+	if !hasLine(string(data), ".gskill/") || !hasLine(string(data), "node_modules/") {
+		t.Errorf("unrelated lines lost\n--- content ---\n%s", data)
+	}
+}

@@ -482,8 +482,13 @@ func storeReuseLine(skills []app.LockSkillResult) string {
 		return ""
 	}
 	label := "store"
-	if scope == "global" {
+	switch scope {
+	case "global":
 		label = "global store"
+	case installer.ScopeLabelCommitted:
+		// Spec 022 retired the content store: what reuse means now is
+		// committed repo content or the shared clone cache.
+		label = "content"
 	}
 	switch {
 	case downloaded == 0:

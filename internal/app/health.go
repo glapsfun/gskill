@@ -35,17 +35,13 @@ const (
 
 // SkillHealth is the evaluated three-hop state for one locked skill.
 type SkillHealth struct {
-	Name         string
-	Scope        string
-	StorePresent bool
-	Hashed       bool // whether store/copy content was hash-verified this evaluation
-	StoreHashOK  bool // only meaningful when Hashed
-	StorePath    string
-	ActiveState  active.Health
-	ActivePath   string // project-relative active entry
-	Agents       map[string]TargetState
-	Modes        map[string]string
-	Targets      map[string]string // agentID -> recorded target path (repo-relative)
+	Name        string
+	Scope       string
+	ActiveState active.Health
+	ActivePath  string // project-relative active entry
+	Agents      map[string]TargetState
+	Modes       map[string]string
+	Targets     map[string]string // agentID -> recorded target path (repo-relative)
 }
 
 // Healthy reports whether every rung of the chain is in a good state (spec
@@ -109,12 +105,10 @@ func isSymlinklessArtifact(path string) bool {
 }
 
 // IntegrityFault reports whether any fault is a content-integrity failure — a
-// hash-verified store mismatch or a corrupt copy target — which maps to a
-// fail-closed exit code.
+// corrupt copy target — which maps to a fail-closed exit code. Drifted
+// committed content is deliberately NOT one: spec 022 reports it as drift
+// (exit 7); `gskill verify` is the fail-closed hash check (exit 6).
 func (h SkillHealth) IntegrityFault() bool {
-	if h.Hashed && h.StorePresent && !h.StoreHashOK {
-		return true
-	}
 	for _, st := range h.Agents {
 		if st == TargetCorrupt {
 			return true
@@ -142,23 +136,16 @@ func (a *App) evaluateHealth(p *project, lf *skillslock.State, verifyHash bool) 
 // evaluateSkill computes the health of a single locked skill.
 func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, verifyHash bool) (SkillHealth, error) {
 	hash := locked.Resolved.ContentHash
-	h := SkillHealth{
-		Name:        name,
-		Scope:       locked.Installation.Scope,
-		ActivePath:  activePathOf(locked, name),
-		StoreHashOK: true,
-		Agents:      make(map[string]TargetState, len(locked.Installation.Agents)),
-		Modes:       locked.Installation.Modes,
-		Targets:     locked.Installation.Targets,
-	}
-
 	// Spec 022: there is no store rung — the committed repo copy is the
-	// content, evaluated below as the active entry's health. Drifted
-	// committed content is reported as drift (exit 7 under --fail-on-drift);
-	// `gskill verify` is the fail-closed hash check (exit 6), so StoreHashOK
-	// stays true here by design.
-	h.StorePresent = true
-	h.Hashed = verifyHash
+	// content, evaluated below as the active entry's health.
+	h := SkillHealth{
+		Name:       name,
+		Scope:      locked.Installation.Scope,
+		ActivePath: activePathOf(locked, name),
+		Agents:     make(map[string]TargetState, len(locked.Installation.Agents)),
+		Modes:      locked.Installation.Modes,
+		Targets:    locked.Installation.Targets,
+	}
 
 	global := locked.Installation.Scope == string(installer.ScopeGlobal)
 	legacyRoots := p.legacyStoreRoots()

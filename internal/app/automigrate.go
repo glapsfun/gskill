@@ -53,6 +53,15 @@ func (a *App) loadLockMigrated(ctx context.Context, p *project, opts migrateRunO
 // skill: a hash-valid old store object (offline), the commit-keyed clone
 // cache, then a network fetch by the recorded source and commit.
 func (a *App) autoMigrate(ctx context.Context, p *project, lf *skillslock.State, opts migrateRunOptions) error {
+	// Un-ignore the committed layer first: pre-022 gskill wrote a ".agents/"
+	// ignore line, and Init (the only other caller of the gitignore fix-up)
+	// never runs for an already-initialized project — leaving it in place
+	// would keep the migrated content out of version control (FR-010). Pure
+	// bookkeeping: a failure warns rather than failing the command.
+	if _, err := unignoreAgentsLayer(p.root); err != nil {
+		a.log.Warn("un-ignore .agents/ in .gitignore", "error", err)
+	}
+
 	var migrated []string
 	for _, name := range sortedKeys(lf.Skills) {
 		if opts.skip[name] {

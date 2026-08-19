@@ -1133,6 +1133,31 @@ func ensureGitignore(root string) (bool, error) {
 	return true, nil
 }
 
+// unignoreAgentsLayer drops the gskill-written ".agents/" ignore line from an
+// already-initialized project (spec 022 FR-010). ensureGitignore only runs via
+// Init, which every existing project skips (its .gskill/ already exists), so
+// without this the migrated, committed skill content would stay ignored and a
+// fresh clone would come up empty. A missing .gitignore has nothing to fix.
+func unignoreAgentsLayer(root string) (bool, error) {
+	path := filepath.Join(root, ".gitignore")
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, nil //nolint:nilerr // no .gitignore: nothing is ignored
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // project-root .gitignore
+	if err != nil {
+		return false, fmt.Errorf("read .gitignore: %w", err)
+	}
+	content, changed := removeManagedAgentsLine(string(data))
+	if !changed {
+		return false, nil
+	}
+	if err := fsutil.WriteFileAtomic(path, []byte(content), info.Mode().Perm()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // removeManagedAgentsLine drops the gskill-written ".agents/" ignore line —
 // recognizable exactly as the line immediately following the managed
 // ".gskill/" line, the pair earlier gskill versions appended together (spec

@@ -136,7 +136,10 @@ func ensureOverLink(dest, src, name string, opts EnsureOptions) (string, error) 
 // spec 022 FR-008 error with its repair hint; with no prior ownership claim
 // the occupant is foreign.
 func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
-	ok, _, err := integrity.VerifyDir(dest, opts.ExpectedHash)
+	// One hash of dest answers every question below: VerifyDir hands back the
+	// actual content hash, so the accept-hash comparison is a string compare
+	// rather than another full recursive walk per candidate.
+	ok, actual, err := integrity.VerifyDir(dest, opts.ExpectedHash)
 	if err != nil {
 		return "", fmt.Errorf("verify active %s: %w", name, err)
 	}
@@ -149,7 +152,7 @@ func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
 			continue
 		}
 		hadPrior = true
-		if owned, _, vErr := integrity.VerifyDir(dest, h); vErr == nil && owned {
+		if h == actual {
 			return dest, swapIn(dest, src, opts.ExpectedHash, name)
 		}
 	}
@@ -256,11 +259,26 @@ func Owned(dest string, roots []string, acceptHashes ...string) bool {
 		}
 		return false
 	}
+	// Hash dest at most once: VerifyDir returns the actual hash, so every
+	// further candidate is a string compare instead of another full walk
+	// (the installer's overwrite guard passes up to three hashes per target).
+	actual := ""
 	for _, h := range acceptHashes {
 		if h == "" {
 			continue
 		}
-		if ok, _, err := integrity.VerifyDir(dest, h); err == nil && ok {
+		if actual == "" {
+			ok, got, err := integrity.VerifyDir(dest, h)
+			if err != nil {
+				return false
+			}
+			if ok {
+				return true
+			}
+			actual = got
+			continue
+		}
+		if h == actual {
 			return true
 		}
 	}
@@ -327,18 +345,35 @@ func Remove(root, name string, acceptHashes ...string) error {
 	if !info.IsDir() {
 		return nil // foreign plain file: never delete
 	}
-	for _, h := range acceptHashes {
-		if h == "" {
+	if !anyHash(acceptHashes) {
+		return nil // no ownership claim to check against: never delete
+	}
+	// dest is a real directory here (symlinks and plain files returned
+	// above), so one hash serves every accept-hash comparison.
+	h, err := integrity.HashDir(dest)
+	if err != nil {
+		return nil //nolint:nilerr // unverifiable content: never delete
+	}
+	for _, want := range acceptHashes {
+		if want == "" || want != h.ContentHash {
 			continue
 		}
-		if ok, _, err := integrity.VerifyDir(dest, h); err == nil && ok {
-			if err := os.RemoveAll(dest); err != nil {
-				return fmt.Errorf("remove active %s: %w", name, err)
-			}
-			return nil
+		if err := os.RemoveAll(dest); err != nil {
+			return fmt.Errorf("remove active %s: %w", name, err)
 		}
+		return nil
 	}
 	return nil // unverifiable content: never delete
+}
+
+// anyHash reports whether hashes holds at least one non-empty entry.
+func anyHash(hashes []string) bool {
+	for _, h := range hashes {
+		if h != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // List returns the names of active entries (directories and symlinks) under

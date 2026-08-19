@@ -856,7 +856,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 
 	staged, err := a.stageAndVerifyLockEntry(ctx, p, lf, name, e, req, em)
 	if err != nil {
-		return fail(enrichOfflineMiss(p, e, req, err))
+		return fail(enrichOfflineMiss(e, req, err))
 	}
 
 	if req.DryRun {
@@ -921,7 +921,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 // content-store facts the user needs (spec 015 FR-019, error contract
 // object-not-found-offline): the required object identity that was absent
 // from the resolved store, and the remediation.
-func enrichOfflineMiss(_ *project, e skillslock.Entry, req InstallFromLockRequest, err error) error {
+func enrichOfflineMiss(e skillslock.Entry, req InstallFromLockRequest, err error) error {
 	if !req.Offline || !errors.Is(err, errs.ErrSourceUnavailable) {
 		return err
 	}
@@ -1172,7 +1172,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		// output; that would silently stop catching that drift.
 		return LockSkillResult{}, false
 	}
-	if !committedContentUpToDate(p, name, prior.Resolved.ContentHash, e.ComputedHash) {
+	if !committedContentUpToDate(p, name, prior, e.ComputedHash) {
 		return LockSkillResult{}, false
 	}
 
@@ -1221,15 +1221,34 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 // --force, on the full path). The full content hash covers symlinks that
 // CompatHash skips by design, so a tampered committed copy never satisfies
 // the fast path — it falls through to the full path, which fails closed.
-func committedContentUpToDate(p *project, name, contentHash, computedHash string) bool {
-	dest := active.Path(p.root, name)
-	if ok, _, err := integrity.VerifyDir(dest, contentHash); err != nil || !ok {
+func committedContentUpToDate(p *project, name string, prior skillslock.Record, computedHash string) bool {
+	dest := installedContentPath(p, name, prior)
+	if dest == "" {
+		return false
+	}
+	if ok, _, err := integrity.VerifyDir(dest, prior.Resolved.ContentHash); err != nil || !ok {
 		return false
 	}
 	if compat, err := integrity.CompatHash(dest); err != nil || compat != computedHash {
 		return false
 	}
 	return true
+}
+
+// installedContentPath returns the directory holding this entry's installed
+// content: the repo-owned active entry for project scope, or — for a
+// user-global install, which has no active entry at all — the first recorded
+// agent target, which under spec 022 is a real copy of the same content.
+// Without the global carve-out the fast path could never fire for a
+// `--global` skill, so every install would re-run the full fetch pipeline.
+func installedContentPath(p *project, name string, prior skillslock.Record) string {
+	if prior.Installation.Scope != string(installer.ScopeGlobal) {
+		return active.Path(p.root, name)
+	}
+	for _, id := range sortedKeys(prior.Installation.Targets) {
+		return resolveTarget(p.root, prior.Installation.Targets[id])
+	}
+	return ""
 }
 
 // resolveLockEntry pins an entry to a revision: a previously recorded gskill
