@@ -23,8 +23,8 @@ gskill project sync --prune      # also remove gskill-managed installs not in th
 > you want disk to be an exact mirror of the lock.
 
 `--prune` only removes **gskill-managed** installs: entries in an agent's skill directory that are
-symlinks into the gskill store. Skills you installed by hand, or that another tool placed in the same
-shared directory (e.g. `.claude/skills/`), are left untouched. Copy-mode installs carry no such
+symlinks into `.agents/skills/`. Skills you installed by hand, or that another tool placed in the
+same shared directory (e.g. `.claude/skills/`), are left untouched. Copy-mode installs carry no such
 marker — remove those explicitly with `gskill remove <name>`.
 
 ## Repair broken installs
@@ -33,8 +33,16 @@ marker — remove those explicitly with `gskill remove <name>`.
 gskill project repair
 ```
 
-**Expected:** GSKILL re-materialises broken or modified installs from the store/cache and cleans up
-leftover staging, **without** changing the lockfile.
+**Expected:** GSKILL re-materialises broken or missing installs — from the committed content, the
+clone cache, or (cold cache) a single fetch from the recorded source — and cleans up leftover
+staging, **without** changing the lockfile.
+
+## Hand-edited content
+
+If committed skill content was edited by hand, plain `sync` (like `add` and `install`) fails with
+"committed content for skill X ... no longer matches skills-lock.json" and the hint to run
+`gskill repair` (or `gskill install --force`) to restore lock-true content, or re-add the skill to
+adopt the edits. Drift is never auto-repaired.
 
 ## Expected result
 

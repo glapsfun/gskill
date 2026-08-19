@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/fsutil"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
@@ -51,9 +50,9 @@ func (a *App) Doctor(ctx context.Context, root string) (DoctorReport, error) {
 		report.DetectedAgents = append(report.DetectedAgents, ag.ID())
 	}
 
-	if hasPopulatedProjectStore(root) && a.cfg.StoreScope != config.StoreScopeProject {
+	if hasPopulatedProjectStore(root) {
 		report.Warnings = append(report.Warnings,
-			"this project uses the legacy project-local store; run 'gskill migrate global-store' to share content across projects")
+			"this project has a legacy .gskill/store; the next mutating command migrates the project to repo-owned storage (the old store is left untouched)")
 	}
 	a.auditGlobalHome(&report)
 
@@ -64,7 +63,23 @@ func (a *App) Doctor(ctx context.Context, root string) (DoctorReport, error) {
 	for _, name := range sortedKeys(lf.Skills) {
 		checkRequirements(name, lf.Skills[name].Requires, lf, &report)
 	}
+	reportSymlinklessCheckout(root, lf, &report)
 	return report, nil
+}
+
+// reportSymlinklessCheckout warns, per affected agent link, when a checkout
+// was made without symlink support (spec 022 FR-016: detected and reported
+// with the frozen wording, never repaired).
+func reportSymlinklessCheckout(root string, lf *skillslock.State, report *DoctorReport) {
+	for _, name := range sortedKeys(lf.Skills) {
+		targets := lf.Skills[name].Installation.Targets
+		for _, id := range sortedKeys(targets) {
+			rel := targets[id]
+			if isSymlinklessArtifact(resolveTarget(root, rel)) {
+				report.Warnings = append(report.Warnings, symlinklessCheckoutMsg(rel))
+			}
+		}
+	}
 }
 
 // auditGlobalHome appends warnings for unsafe home permissions, quarantined
@@ -76,17 +91,12 @@ func (a *App) auditGlobalHome(report *DoctorReport) {
 	}
 	if findings, err := h.CheckPerms(); err == nil {
 		for _, f := range findings {
-			report.Warnings = append(report.Warnings, "global store: "+f.String())
+			report.Warnings = append(report.Warnings, "gskill home: "+f.String())
 		}
-	}
-	if entries, err := os.ReadDir(h.QuarantineDir()); err == nil && len(entries) > 0 {
-		report.Warnings = append(report.Warnings, fmt.Sprintf(
-			"global store holds %d quarantined corrupted objects; inspect %s and run 'gskill store verify'",
-			len(entries), h.QuarantineDir()))
 	}
 	if stale, err := fsutil.ListStaleDirs(h.TmpDir(), time.Hour); err == nil && len(stale) > 0 {
 		report.Warnings = append(report.Warnings, fmt.Sprintf(
-			"%d abandoned staging directories under %s; 'gskill store gc --apply' cleans them",
+			"%d abandoned staging directories under %s; safe to delete by hand",
 			len(stale), h.TmpDir()))
 	}
 }

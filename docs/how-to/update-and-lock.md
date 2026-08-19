@@ -79,12 +79,14 @@ gskill --json update --list            # machine-readable report on stdout
 gskill --offline update --list --all   # classify pins/locals without the network
 ```
 
-`--dry-run` never touches the lockfile, the store, or agent directories — in
+`--dry-run` never touches the lockfile, the committed content, or agent directories — in
 a terminal it still opens the selector and simulates the confirmed choice.
 
 ## Expected result
 
-- `gskill update` may change resolved versions; `gskill install` never does.
+- `gskill update` may change resolved versions; `gskill install` never does. An update re-resolves,
+  fetches the newer commit into the clone cache, and replaces the committed copy at
+  `.agents/skills/<name>/` — the agent links stay valid. Commit the changed content with the lock.
 - Updates rewrite only the resolved state in `skills-lock.json`; the requested
   version intent (e.g. `^1.2.0`) is preserved. Review the diff before
   committing — it should match your intent.

@@ -50,22 +50,24 @@ func TestAdversarial_MaliciousLockPathNotDeleted(t *testing.T) {
 	}
 }
 
-// TestAdversarial_CorruptStoreFailsCheckClosed covers review F3/F4: a tampered
-// store makes `check` fail closed with exit 6, not just `verify`.
-func TestAdversarial_CorruptStoreFailsCheckClosed(t *testing.T) {
+// TestAdversarial_TamperedCommittedContentFailsClosed (spec 022 FR-008):
+// hand-edited committed skill content is drift — `check --fail-on-drift`
+// reports it (exit 7) and `verify` fails closed on the hash mismatch (exit 6).
+func TestAdversarial_TamperedCommittedContentFailsClosed(t *testing.T) {
 	t.Parallel()
 	proj, _ := addShared(t)
 
-	storePath, err := filepath.EvalSymlinks(filepath.Join(proj, ".agents", "skills", "demo"))
-	if err != nil {
-		t.Fatalf("eval store: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(storePath, "SKILL.md"), []byte("# tampered\n"), 0o600); err != nil {
+	// The active entry is the committed content itself (a real directory).
+	entry := filepath.Join(proj, ".agents", "skills", "demo")
+	if err := os.WriteFile(filepath.Join(entry, "SKILL.md"), []byte("# tampered\n"), 0o600); err != nil {
 		t.Fatalf("tamper: %v", err)
 	}
 
-	if _, _, code := runGskill(t, proj, "check"); code != 6 {
-		t.Errorf("check on corrupt store exit = %d, want 6 (fail closed)", code)
+	if _, _, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 7 {
+		t.Errorf("check --fail-on-drift on tampered committed content exit = %d, want 7", code)
+	}
+	if _, _, code := runGskill(t, proj, "verify"); code != 6 {
+		t.Errorf("verify on tampered committed content exit = %d, want 6 (fail closed)", code)
 	}
 }
 
@@ -110,9 +112,10 @@ func TestAdversarial_ForeignActiveEntryFailsClosed(t *testing.T) {
 		t.Fatalf("add: %s", stderr)
 	}
 
-	// Replace the managed active entry with a foreign directory.
+	// Replace the managed active entry (a real directory, spec 022) with a
+	// foreign directory.
 	activeEntry := filepath.Join(proj, ".agents", "skills", "demo")
-	if err := os.Remove(activeEntry); err != nil {
+	if err := os.RemoveAll(activeEntry); err != nil {
 		t.Fatalf("rm active: %v", err)
 	}
 	if err := os.MkdirAll(activeEntry, 0o750); err != nil {

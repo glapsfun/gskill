@@ -13,6 +13,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 )
@@ -82,6 +83,9 @@ func (a *App) reconcile(ctx context.Context, p *project, req SyncRequest) (SyncR
 	if err != nil {
 		return SyncResult{}, err
 	}
+	if err := a.autoMigrate(ctx, p, lf, migrateRunOptions{offline: req.Offline}); err != nil {
+		return SyncResult{}, err
+	}
 
 	out, lockChanged, err := a.reconcileSkills(ctx, p, lf, req)
 	if err != nil {
@@ -94,6 +98,14 @@ func (a *App) reconcile(ctx context.Context, p *project, req SyncRequest) (SyncR
 			return SyncResult{}, pErr
 		}
 		out.Pruned = pruned
+		// Whatever prune could not prove gskill's own is still on disk, so it
+		// is still an orphan: report it rather than letting it vanish from
+		// the output while it accumulates in the repo.
+		remaining, oErr := a.findOrphans(p, lf)
+		if oErr != nil {
+			return SyncResult{}, oErr
+		}
+		out.Orphans = remaining
 	} else {
 		orphans, oErr := a.findOrphans(p, lf)
 		if oErr != nil {
@@ -154,6 +166,15 @@ func (a *App) reconcileSkill(ctx context.Context, p *project, lf *skillslock.Sta
 	if !needed {
 		return SyncChange{Name: name, ContentHash: locked.Resolved.ContentHash}, lockChanged, nil
 	}
+	// A symlink-less checkout is detected and reported, never silently
+	// repaired (spec 022 FR-016): recreating real symlinks behind the user's
+	// core.symlinks=false checkout would fight git on every status.
+	for _, id := range desiredIDs {
+		rel := locked.Installation.Targets[id]
+		if rel != "" && isSymlinklessArtifact(resolveTarget(p.root, rel)) {
+			return SyncChange{}, false, fmt.Errorf("%w: %s", errs.ErrInvalidLock, symlinklessCheckoutMsg(rel))
+		}
+	}
 	result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req, false)
 	if rErr != nil {
 		return SyncChange{}, false, rErr
@@ -166,13 +187,9 @@ func (a *App) reconcileSkill(ctx context.Context, p *project, lf *skillslock.Sta
 // reconcileNeeded reports whether the chain for the desired agents is anything
 // other than fully healthy (cheap, no hashing).
 func (a *App) reconcileNeeded(p *project, name string, locked skillslock.Record, desiredIDs []string) (bool, error) {
-	storeRoot, err := filepath.Abs(p.contentRoot())
-	if err != nil {
-		return true, fmt.Errorf("resolve store root: %w", err)
-	}
 	probe := locked
 	probe.Installation.Agents = desiredIDs
-	h, err := a.evaluateSkill(p, name, probe, storeRoot, false)
+	h, err := a.evaluateSkill(p, name, probe, false)
 	if err != nil {
 		return true, err
 	}
@@ -203,6 +220,7 @@ func (a *App) frozenRequest(p *project, name string, locked skillslock.Record, r
 		Home:              home,
 		Offline:           req.Offline,
 		ExpectContentHash: locked.Resolved.ContentHash,
+		LegacyStoreRoots:  p.legacyStoreRoots(),
 	}, nil
 }
 
@@ -257,15 +275,6 @@ func (a *App) pruneToDesired(p *project, lf *skillslock.State) ([]string, error)
 		return nil, err
 	}
 
-	refs := referencedHashes(lf)
-	if err := a.keepExternalActiveContent(p, external, refs); err != nil {
-		return nil, err
-	}
-	// Project-local store GC only: pruning never deletes shared global
-	// content (spec 015 FR-009/FR-024); for scope=global p.store is empty.
-	if _, err := p.store.GC(refs); err != nil {
-		return nil, err
-	}
 	return pruned, nil
 }
 
@@ -379,57 +388,27 @@ func sweepActiveOrphans(p *project, lf *skillslock.State, external map[string]bo
 			if rmErr := active.Remove(p.root, name); rmErr != nil {
 				return nil, rmErr
 			}
+			// active.Remove refuses to delete content it cannot prove gskill
+			// installed, and an orphan has no lock entry left to prove it
+			// with — so a committed directory survives. Reporting it as
+			// pruned would be a lie; leave it for the orphan list instead
+			// (reconcile re-runs findOrphans after a prune).
+			if _, statErr := os.Lstat(active.Path(p.root, name)); statErr == nil {
+				continue
+			}
 		}
 		found = append(found, active.Rel(name))
 	}
 	return found, nil
 }
 
-// keepExternalActiveContent adds to refs the store content still reachable
-// through an external-only entry's active symlink: gskill has no record for
-// such entries, so the link itself is the reference that must survive GC.
-// Refs resolve against the PROJECT-LOCAL store root — the store the callers'
-// p.store.GC sweeps — never contentRoot(): under scope=global with a still-
-// populated legacy store the two diverge, and resolving against the global
-// root would leave every legacy-store link unprotected.
-func (a *App) keepExternalActiveContent(p *project, external, refs map[string]bool) error {
-	if len(external) == 0 {
-		return nil
-	}
-	storeRoot, err := filepath.Abs(p.store.Root())
-	if err != nil {
-		return err
-	}
-	for name := range external {
-		target, err := os.Readlink(active.Path(p.root, name))
-		if err != nil {
-			continue // absent or not a symlink: nothing in the store to protect
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(active.Dir(p.root), target)
-		}
-		rel, err := filepath.Rel(storeRoot, filepath.Clean(target))
-		if err != nil || strings.HasPrefix(rel, "..") {
-			continue
-		}
-		// "sha256/hex" on disk ↔ "sha256:hex" content key.
-		refs[strings.Replace(filepath.ToSlash(rel), "/", ":", 1)] = true
-	}
-	return nil
-}
-
-// managedRoots returns the absolute roots a gskill-managed target may link into.
+// managedRoots returns the absolute roots a gskill-managed target may link
+// into: the repo's .agents/skills root (spec 022 — agent links are relative
+// links resolving there). Legacy store links are deliberately NOT managed:
+// they fail closed everywhere until migration converts them.
 func (a *App) managedRoots(p *project) []string {
 	activeRoot, _ := filepath.Abs(active.Dir(p.root))
-	// Both store roots are gskill-owned link targets: the resolved scope's
-	// root plus the legacy project-local root, so links created before or
-	// after a store-scope transition are both recognized (spec 015 FR-011).
-	legacyRoot, _ := filepath.Abs(filepath.Join(p.root, stateDirName, "store"))
-	roots := []string{activeRoot, legacyRoot}
-	if resolved, err := filepath.Abs(p.contentRoot()); err == nil && resolved != legacyRoot {
-		roots = append(roots, resolved)
-	}
-	return roots
+	return []string{activeRoot}
 }
 
 // managedBySymlink reports whether path is a symlink that resolves into one of

@@ -13,7 +13,6 @@ import (
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
-	"github.com/glapsfun/gskill/internal/store"
 )
 
 // localSkill creates a local skill directory and returns it.
@@ -31,7 +30,7 @@ func localSkill(t *testing.T, name string) string {
 func newInstaller(t *testing.T) *installer.Installer {
 	t.Helper()
 	root := t.TempDir()
-	return installer.New(nil, cache.New(filepath.Join(root, "cache")), store.New(filepath.Join(root, "store")))
+	return installer.New(nil, cache.New(filepath.Join(root, "cache")))
 }
 
 func localRequest(t *testing.T, projectRoot, materialDir, name string) installer.Request {
@@ -76,9 +75,9 @@ func TestInstall_StagesAndActivates(t *testing.T) {
 		t.Errorf("target = %q, want .claude/skills/demo", got)
 	}
 
-	// Three-hop chain: the active entry exists and links into the store, and the
-	// agent target is a symlink into the active entry (not directly into store).
-	if got := res.ActivePath; got != filepath.Join(".agents", "skills", "demo") {
+	// Repo-owned chain (spec 022): the active entry is a real committed
+	// directory, and the agent target is a *relative* symlink into it.
+	if got := res.ActivePath; got != ".agents/skills/demo" {
 		t.Errorf("active path = %q, want .agents/skills/demo", got)
 	}
 	activeDir := filepath.Join(projectRoot, ".agents", "skills", "demo")
@@ -86,10 +85,8 @@ func TestInstall_StagesAndActivates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lstat active entry: %v", err)
 	}
-	if activeInfo.Mode()&os.ModeSymlink == 0 {
-		t.Error("active entry is not a symlink into the store")
-	} else if tgt, _ := os.Readlink(activeDir); !strings.Contains(tgt, string(filepath.Separator)+"store"+string(filepath.Separator)) {
-		t.Errorf("active entry links to %q, want a store path", tgt)
+	if activeInfo.Mode()&os.ModeSymlink != 0 || !activeInfo.IsDir() {
+		t.Errorf("active entry is not a real directory: mode %v", activeInfo.Mode())
 	}
 
 	agentTarget := filepath.Join(projectRoot, ".claude", "skills", "demo")

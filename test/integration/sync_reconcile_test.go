@@ -38,7 +38,7 @@ func TestSyncReconcile_LockDrivenRestore(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
 		t.Fatalf("sync: %s", stderr)
 	}
-	requireCounts(t, proj, 1, 1)
+	requireCounts(t, proj, 1)
 	requireResolvesActive(t, proj, ".claude", "demo")
 	requireResolvesActive(t, proj, ".codex", "demo")
 	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
@@ -93,7 +93,7 @@ func TestSyncReconcile_AddAgentOnlyMissingTarget(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--skill", "demo", "--agent", "codex"); code != 0 {
 		t.Fatalf("agent add: %s", stderr)
 	}
-	requireCounts(t, proj, 1, 1) // no duplicate store/active
+	requireCounts(t, proj, 1) // no duplicate store/active
 	requireResolvesActive(t, proj, ".codex", "demo")
 	if after := dirMTime(t, claudeTarget); after != claudeBefore {
 		t.Errorf("existing claude target was rewritten when only codex was added")

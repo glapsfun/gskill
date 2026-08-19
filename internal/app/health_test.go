@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/skillslock"
@@ -14,7 +15,7 @@ import (
 
 // seedStore imports real content into p's store and returns the content hash and
 // stored path, so hash verification passes until the content is tampered with.
-func seedStore(t *testing.T, p *project) (string, string) {
+func seedStore(t *testing.T, _ *project) (string, string) {
 	t.Helper()
 	content := filepath.Join(t.TempDir(), "content")
 	if err := os.MkdirAll(content, 0o750); err != nil {
@@ -27,11 +28,7 @@ func seedStore(t *testing.T, p *project) (string, string) {
 	if err != nil {
 		t.Fatalf("hash content: %v", err)
 	}
-	storePath, err := p.store.Put(hashes.ContentHash, content)
-	if err != nil {
-		t.Fatalf("store put: %v", err)
-	}
-	return hashes.ContentHash, storePath
+	return hashes.ContentHash, content
 }
 
 // lockWith builds a single-skill lockfile for the demo skill targeting claude.
@@ -74,7 +71,7 @@ func TestEvaluateHealth_HealthyChain(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	linkAgent(t, root, "demo")
@@ -105,7 +102,7 @@ func TestEvaluateHealth_MissingTarget(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	// No agent target created.
@@ -122,20 +119,21 @@ func TestEvaluateHealth_MissingTarget(t *testing.T) {
 	}
 }
 
-func TestEvaluateHealth_BrokenLinkAndCorruptStore(t *testing.T) {
+func TestEvaluateHealth_DriftedCommittedContent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	p := openProject(root)
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	linkAgent(t, root, "demo")
 
-	// Corrupt the store content so its hash no longer matches the lock.
-	if err := os.WriteFile(filepath.Join(storePath, "SKILL.md"), []byte("# tampered\n"), 0o600); err != nil {
+	// Hand-edit the committed content so it no longer matches the lock
+	// (spec 022 FR-008: drift, reported never repaired).
+	if err := os.WriteFile(filepath.Join(active.Path(root, "demo"), "SKILL.md"), []byte("# tampered\n"), 0o600); err != nil {
 		t.Fatalf("tamper: %v", err)
 	}
 
@@ -143,11 +141,15 @@ func TestEvaluateHealth_BrokenLinkAndCorruptStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluateHealth: %v", err)
 	}
-	if got[0].StoreHashOK {
-		t.Error("expected store hash mismatch")
+	if got[0].ActiveState != active.HealthDrifted {
+		t.Errorf("active state = %q, want drifted", got[0].ActiveState)
 	}
-	if !got[0].IntegrityFault() {
-		t.Error("expected an integrity fault")
+	if got[0].Healthy() {
+		t.Error("expected unhealthy on drifted committed content")
+	}
+	faults := got[0].Faults()
+	if len(faults) == 0 || !strings.Contains(faults[0], "no longer matches skills-lock.json") {
+		t.Errorf("faults = %v, want the drift wording", faults)
 	}
 }
 
@@ -158,7 +160,7 @@ func TestEvaluateHealth_ModeMismatch(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	// Recorded mode is symlink, but place a real directory (a copy) instead.
@@ -182,16 +184,21 @@ func TestEvaluateHealth_LegacyDirectStoreLink(t *testing.T) {
 	p := openProject(root)
 	a := newHealthApp()
 
-	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	hash, content := seedStore(t, p)
+	if _, err := active.EnsureActive(root, "demo", content, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
-	// Legacy: agent target points directly into the store, not the active entry.
+	// Legacy: agent target points directly into a pre-022 store root, not the
+	// active entry.
+	legacyObj := filepath.Join(root, ".gskill", "store", "sha256", "x", "content")
+	if err := os.MkdirAll(legacyObj, 0o750); err != nil {
+		t.Fatal(err)
+	}
 	dest := filepath.Join(root, ".claude", "skills", "demo")
 	if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	abs, _ := filepath.Abs(storePath)
+	abs, _ := filepath.Abs(legacyObj)
 	if err := os.Symlink(abs, dest); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}

@@ -6,7 +6,9 @@ package app
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"os"
 
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
@@ -31,6 +33,7 @@ type App struct {
 	git        git.Runner
 	repos      RepoLister
 	gskillHome string
+	notice     io.Writer // one-line user notices (auto-migration); default os.Stderr
 	// scans memoizes repo scans per immutable commit across the per-call
 	// installer instances (spec: Layer C).
 	scans *installer.ScanCache
@@ -46,6 +49,9 @@ type Options struct {
 	// GskillHome overrides the resolved gskill home directory (default:
 	// GSKILL_HOME env, else ~/.gskill). Tests use it for isolated stores.
 	GskillHome string
+	// Notice receives one-line user notices (the auto-migration summary,
+	// spec 022 FR-013). Defaults to os.Stderr.
+	Notice io.Writer
 }
 
 // New builds an App from opts, filling in defaults for any nil dependency.
@@ -77,9 +83,14 @@ func New(opts Options) *App {
 	if repos == nil {
 		repos = registry.New()
 	}
+	notice := opts.Notice
+	if notice == nil {
+		notice = os.Stderr
+	}
 	return &App{
 		cfg: cfg, log: logger, agents: agents, git: gitRunner, repos: repos,
 		gskillHome: opts.GskillHome,
+		notice:     notice,
 		scans:      installer.NewScanCache(),
 	}
 }

@@ -27,12 +27,15 @@ gskill add github.com/<org>/<repo>/<skill> --commit <sha>
 
 ## Expected result
 
-- GSKILL resolves the source, fetches it, installs the skill, and records both intent (the `gskill` block)
+- GSKILL resolves the source, fetches it once into the clone cache, writes the skill into
+  `.agents/skills/<name>/` with a relative agent link, and records both intent (the `gskill` block)
   and resolved reality (`skills-lock.json`) — including the exact commit and content hash.
 - A mutable reference (like a branch) is resolved to an immutable commit in the lock and flagged as
   mutable.
 - `gskill add` exits `0`. Adding a skill whose key already exists errors and points you to `update` or
   `--force`.
+- `git status` now lists `.agents/skills/<name>/` and the agent link (e.g. `.claude/skills/<name>`)
+  as addable alongside `skills-lock.json` — **commit them**; the content belongs in the repository.
 
 ## See also
 

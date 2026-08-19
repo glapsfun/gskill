@@ -50,7 +50,7 @@ func TestAddCreatesLockOnly(t *testing.T) {
 	if got := e.Ext.Agents; !reflect.DeepEqual(got, []string{"claude", "codex"}) {
 		t.Fatalf("agents not persisted: %v", got)
 	}
-	if e.ComputedHash == "" || e.Ext.StoreHash == "" {
+	if e.ComputedHash == "" || e.Ext.ContentHash == "" {
 		t.Fatal("integrity fields missing")
 	}
 }

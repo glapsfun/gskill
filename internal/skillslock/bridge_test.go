@@ -43,7 +43,8 @@ func fullLegacy() skillslock.Record {
 			MCP:         []string{"vercel-mcp"},
 		},
 		Installation: skillslock.Installation{
-			Scope:      "project",
+			// Scope is a pre-022 concept: never written, so it does not
+			// round-trip; new-model records leave it empty.
 			Mode:       "symlink",
 			Agents:     []string{"claude", "codex"},
 			ActivePath: ".agents/skills/deploy-to-vercel",
@@ -94,8 +95,9 @@ func assertExt(t *testing.T, e skillslock.Entry) {
 		{"Version", e.Ext.Version, "1.2.0"},
 		{"Agents", strings.Join(e.Ext.Agents, ","), "claude,codex"},
 		{"InstallMode", e.Ext.InstallMode, "symlink"},
-		{"Scope", e.Ext.Scope, "project"},
-		{"StoreHash", e.Ext.StoreHash, "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+		{"Scope (never written, spec 022)", e.Ext.Scope, ""},
+		{"StoreHash (never written, spec 022)", e.Ext.StoreHash, ""},
+		{"ContentHash", e.Ext.ContentHash, "sha256:1111111111111111111111111111111111111111111111111111111111111111"},
 		{"SkillFileHash", e.Ext.SkillFileHash, "sha256:2222222222222222222222222222222222222222222222222222222222222222"},
 		{"InstalledAt", e.Ext.InstalledAt, "2026-07-10T12:00:00Z"},
 		{"UpdatedAt", e.Ext.UpdatedAt, "2026-07-10T12:30:00Z"},

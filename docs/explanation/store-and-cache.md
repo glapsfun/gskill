@@ -1,48 +1,36 @@
-# The store and the cache
+# The clone cache
 
-GSKILL keeps two content-addressed areas under the hood: the **store** (installed content) and the
-**cache** (fetched material). Understanding the difference explains how offline restores, symlink
-installs, and `gskill cache` work.
+GSKILL keeps one machine-level cache under the hood: commit-keyed git clones of the sources your
+skills come from. Understanding it explains how offline restores, fast re-installs, and
+`gskill cache` work. (Installed content itself lives **in the repository** — see
+[repo-owned storage](repo-owned-storage.md).)
 
-## The store: installed content
+## What the cache holds
 
-The store holds the actual skill content that installs point at, addressed by content hash. When you
-install with the default `--symlink` mode, an agent's `skills/<name>` entry links into the store rather
-than holding its own copy. This means:
-
-- Restores are fast and disk-efficient — shared content is stored once.
-- Verification still catches tampering, because edits made through a symlink land in the store content
-  that the lockfile's checksum covers.
-
-When a skill is removed and nothing else references its content, that content is garbage-collected from
-the store (see [Remove a skill](../how-to/remove-and-gc.md)).
-
-## The cache: fetched material
-
-The cache holds the raw material GSKILL fetched from a source (e.g. a Git repository), addressed by
-content hash. It is what makes **offline restores** possible: if the cache is warm, GSKILL can restore
-from the lock without any network. Manage it with [`gskill cache`](../how-to/manage-the-cache.md):
-`stats`, `list`, `path`, and `clean`.
+The cache stores the raw material GSKILL fetched from a source (e.g. a Git repository), one entry
+per resolved commit at `cache/<40-hex-commit>/`. It is what makes **offline restores** possible: if
+the cache is warm, GSKILL can restore from the lock without any network. Manage it with
+[`gskill cache`](../how-to/manage-the-cache.md): `stats`, `list`, `path`, and `clean`.
 
 - `--offline` tells GSKILL to use only the cache and never reach the network.
 - `--no-cache` does the opposite: bypass the cache.
 
-## Where they live (cross-platform)
+## A pure performance cache
 
-Both areas live under the project's `.gskill/` state directory for project-scoped work, or in your
-user-level locations for global installs. Paths follow platform conventions:
+Nothing in the repository ever references the cache: reproduction comes from `skills-lock.json`
+plus the committed content. Deleting the cache breaks nothing — the next install that needs missing
+material simply re-fetches it. The cache is shared by every project on the machine, so a skill
+fetched for one project restores instantly in another.
 
-| OS | User-level location |
-| --- | --- |
-| Linux | XDG base directories (e.g. `$XDG_CACHE_HOME`, `$XDG_CONFIG_HOME`) |
-| macOS | The platform equivalents under your home directory |
-| Windows | `%LOCALAPPDATA%` / `%APPDATA%` |
+## Where it lives
 
-A `GSKILL_`-prefixed environment can override locations. Use `gskill cache path` to print the exact
-directory on your machine.
+The cache lives under `$HOME/.gskill` (relocatable only via the `GSKILL_HOME` environment
+variable), alongside the only other things kept there: `locks/`, `tmp/`, and `config.toml`.
+GSKILL supports macOS and Linux. Use `gskill cache path` to print the exact directory on your
+machine.
 
 ## See also
 
+- [Repo-owned storage](repo-owned-storage.md)
 - [Work offline](../how-to/work-offline.md)
-- [Copy vs symlink](../how-to/copy-vs-symlink.md)
 - [Manage the cache](../how-to/manage-the-cache.md)

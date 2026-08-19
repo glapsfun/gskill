@@ -14,7 +14,7 @@ import (
 func TestConcurrency_SameObjectTwoProjects(t *testing.T) {
 	t.Parallel()
 
-	h, a := globalHome(t)
+	_, a := globalHome(t)
 	repo, ha, hb := lockRepo(t)
 	roots := []string{t.TempDir(), t.TempDir()}
 	for _, root := range roots {
@@ -37,12 +37,9 @@ func TestConcurrency_SameObjectTwoProjects(t *testing.T) {
 			t.Errorf("concurrent install %d: %v", i, err)
 		}
 	}
-	objects := listStoreObjects(t, h)
-	if len(objects) != 2 {
-		t.Errorf("store objects = %v, want exactly 2 (one per skill, no duplicates)", objects)
-	}
 	for _, root := range roots {
 		assertAgentTargets(t, root, "alpha", "beta")
+		assertActiveRepoOwned(t, root, "alpha", "beta")
 	}
 }
 

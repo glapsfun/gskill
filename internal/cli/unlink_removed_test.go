@@ -9,7 +9,7 @@ import (
 // command (spec 021 FR-001/FR-002/FR-007): every spelling must fail as an
 // unknown command with the standard usage diagnostic and exit code 2, while
 // the supported replacements — exact-set `install --agent` and `remove` —
-// and the distinct `store status` subcommand keep working.
+// and other surviving commands keep working.
 func TestUnlinkCommandRemoved(t *testing.T) {
 	t.Parallel()
 
@@ -38,7 +38,7 @@ func TestUnlinkCommandRemoved(t *testing.T) {
 	if _, stderr, code := runCLI(t, nil, "remove", "--help"); code != 0 {
 		t.Errorf("gskill remove --help: exit code = %d, want 0 (stderr: %q)", code, stderr)
 	}
-	if _, stderr, code := runCLI(t, nil, "store", "status", "--help"); code != 0 {
-		t.Errorf("gskill store status --help: exit code = %d, want 0 (stderr: %q)", code, stderr)
+	if _, stderr, code := runCLI(t, nil, "doctor", "--help"); code != 0 {
+		t.Errorf("gskill doctor --help: exit code = %d, want 0 (stderr: %q)", code, stderr)
 	}
 }

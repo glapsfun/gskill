@@ -21,7 +21,6 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
-	"github.com/glapsfun/gskill/internal/store"
 	"github.com/glapsfun/gskill/internal/testutil"
 )
 
@@ -423,16 +422,16 @@ func TestExecutePlan_ChecksumMismatchFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed Add: %v", err)
 	}
-	hash := seedRes.Installed[0].ContentHash
+	_ = seedRes
 
-	// Tamper the victim project's store entry for that hash, so stage-and-verify
-	// re-hashes different content than the key promises.
+	// Occupy the victim project's active entry with foreign content, so
+	// activation must fail closed instead of overwriting it (spec 022).
 	root := projectWithAgent(t)
-	storeEntry := store.New(filepath.Join(root, ".gskill", "store")).Path(hash)
-	if err := os.MkdirAll(storeEntry, 0o750); err != nil {
+	foreign := filepath.Join(root, ".agents", "skills", "alpha")
+	if err := os.MkdirAll(foreign, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(storeEntry, "SKILL.md"), []byte("---\nname: alpha\ndescription: tampered\n---\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(foreign, "SKILL.md"), []byte("---\nname: alpha\ndescription: tampered\n---\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -446,10 +445,10 @@ func TestExecutePlan_ChecksumMismatchFailsClosed(t *testing.T) {
 	}
 	_, err = a.ExecutePlan(ctx, plan, nil)
 	if err == nil {
-		t.Fatal("ExecutePlan succeeded with a tampered store entry")
+		t.Fatal("ExecutePlan succeeded over a foreign active entry")
 	}
-	if !errors.Is(err, errs.ErrIntegrity) {
-		t.Errorf("err = %v, want errs.ErrIntegrity", err)
+	if !errors.Is(err, errs.ErrInvalidLock) {
+		t.Errorf("err = %v, want errs.ErrInvalidLock (fail closed on foreign content)", err)
 	}
 	assertNoPartialInstall(t, root, "alpha")
 }

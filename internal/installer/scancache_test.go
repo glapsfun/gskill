@@ -11,7 +11,6 @@ import (
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
-	"github.com/glapsfun/gskill/internal/store"
 )
 
 const scanCommit = "1111111111111111111111111111111111111111"
@@ -30,7 +29,7 @@ func cachedInstaller(t *testing.T, sc *installer.ScanCache) (*installer.Installe
 	if _, err := c.Put(scanCommit, material); err != nil {
 		t.Fatal(err)
 	}
-	inst := installer.New(nil, c, store.New(filepath.Join(t.TempDir(), "store")))
+	inst := installer.New(nil, c)
 	if sc != nil {
 		inst = inst.WithScanCache(sc)
 	}
@@ -106,7 +105,7 @@ func TestDiscoverAll_ScanCacheIsSharedAcrossInstallers(t *testing.T) {
 	}
 	addSkillToCachedTree(t, c)
 
-	inst2 := installer.New(nil, c, store.New(filepath.Join(t.TempDir(), "store"))).WithScanCache(sc)
+	inst2 := installer.New(nil, c).WithScanCache(sc)
 	got, err := inst2.DiscoverAll(ctx, req, discovery.Options{})
 	if err != nil {
 		t.Fatalf("second installer, same cache: %v", err)
