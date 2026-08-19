@@ -1,7 +1,7 @@
 # Copy vs symlink
 
-Choose how installed skill content lands in an agent's directory: a **symlink** into GSKILL's
-content-addressed store (the default), or a real **copy**.
+Choose how installed skill content lands in an agent's directory: a **relative symlink** into the
+committed `.agents/skills/<name>/` directory (the default), or a real **copy**.
 
 ## Before you start
 
@@ -10,7 +10,7 @@ content-addressed store (the default), or a real **copy**.
 ## Steps
 
 ```bash
-gskill add ./skill --symlink     # link into the store (default)
+gskill add ./skill --symlink     # relative link into .agents/skills/<name> (default)
 gskill add ./skill --copy        # write a real copy into the agent dir
 ```
 
@@ -18,17 +18,22 @@ gskill add ./skill --copy        # write a real copy into the agent dir
 
 | Mode | Use when |
 | --- | --- |
-| `--symlink` (default) | You want minimal disk use and instant restores; the agent and filesystem support symlinks. |
-| `--copy` | The agent or filesystem doesn't handle symlinks well (some Windows setups), or you need a standalone copy. |
+| `--symlink` (default) | You want one committed copy shared by every agent; the links are relative, so they survive `git clone` on any symlink-capable filesystem. |
+| `--copy` | An agent or tool doesn't handle symlinks well, or you need a standalone copy per agent directory. |
 
 ## Expected result
 
-- With `--symlink`, the agent's `skills/<name>` entry points into the store; verification still detects
-  tampering because writes go through to the store content.
+- With `--symlink`, the agent's `skills/<name>` entry is a committed relative symlink (e.g.
+  `../../.agents/skills/<name>`) into the committed content; verification still detects tampering
+  because writes go through to the content the lockfile's checksum covers.
 - With `--copy`, a full copy is written into the agent directory.
 - Either way, `skills-lock.json` records the install mode so restores are reproducible.
 
+> GSKILL requires working symlinks (macOS and Linux; Windows is unsupported). A checkout made with
+> `core.symlinks=false` leaves plain files where agent links should be — `gskill check` and
+> `gskill doctor` report it; re-clone on a symlink-capable filesystem.
+
 ## See also
 
-- [The store and the cache](../explanation/store-and-cache.md)
+- [Repo-owned storage](../explanation/repo-owned-storage.md)
 - [Supported agents](../reference/agents.md)

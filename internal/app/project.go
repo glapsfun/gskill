@@ -10,14 +10,11 @@ import (
 	"time"
 
 	"github.com/glapsfun/gskill/internal/cache"
-	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/errs"
-	"github.com/glapsfun/gskill/internal/globalstore"
 	"github.com/glapsfun/gskill/internal/home"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/projstate"
 	"github.com/glapsfun/gskill/internal/skillslock"
-	"github.com/glapsfun/gskill/internal/store"
 )
 
 // Project directory names. The canonical committed lockfile is
@@ -33,60 +30,51 @@ func errNoLock() error {
 	)
 }
 
-// project bundles the resolved paths and content stores for one project root.
+// project bundles the resolved paths for one project root (spec 022): the
+// repo owns skill content; the home contributes only the commit-keyed clone
+// cache and the locks directory.
 type project struct {
 	root     string
 	lockPath string
-	store    *store.Store
-	cache    *cache.Cache
-	locksDir string
-
-	// storeScope is the resolved physical content-store scope for this
-	// project: config.StoreScopeGlobal or config.StoreScopeProject (FR-039).
-	// Distinct from the installer's agent-target scope.
-	storeScope string
-	// global is the user-level content store; set when storeScope is global.
-	global *globalstore.Store
+	cache    *cache.Cache // home commit-keyed clone cache
+	locksDir string       // home locks dir
+	homeRoot string       // gskill home root (legacy-store detection only)
 }
 
-// openProject resolves the project layout under root with the legacy
-// project-local store (scope=project). Behavior is unchanged for existing
-// callers; global-scope wiring happens in openProjectScoped.
+// openProject resolves the project's repo-level paths only — enough for
+// read-only lock access. Mutating flows need openProjectScoped (home-backed
+// cache and locks).
 func openProject(root string) *project {
-	stateDir := filepath.Join(root, stateDirName)
 	return &project{
-		root:       root,
-		lockPath:   filepath.Join(root, skillslock.FileName),
-		store:      store.New(filepath.Join(stateDir, "store")),
-		cache:      cache.New(filepath.Join(stateDir, "cache")),
-		locksDir:   filepath.Join(stateDir, "locks"),
-		storeScope: config.StoreScopeProject,
+		root:     root,
+		lockPath: filepath.Join(root, skillslock.FileName),
 	}
 }
 
-// openProjectScoped resolves the project layout under root, selecting the
-// physical content store per the configured store scope (FR-039). Global
-// scope wires the user-level store, cache, and locks under the gskill home;
-// project scope preserves the legacy layout byte-for-byte.
+// openProjectScoped resolves the project layout under root: repo-level paths
+// plus the home-backed clone cache and locks (spec 022 — exactly one storage
+// concept, the repo's .agents/skills; the home is a cache).
 func (a *App) openProjectScoped(root string) (*project, error) {
-	scope := resolveStoreScope(a.cfg.StoreScope, root)
-	p := openProject(root)
-	if scope != config.StoreScopeGlobal {
-		return p, nil
-	}
-
 	h, err := a.openHome()
 	if err != nil {
 		return nil, fmt.Errorf("open gskill home: %w", err)
 	}
-	gs := globalstore.New(h)
-	gs.SetLocker(globalstore.NewLocker(h, a.storeLockTimeout(), os.Stderr))
-
-	p.storeScope = config.StoreScopeGlobal
-	p.global = gs
+	p := openProject(root)
 	p.cache = cache.New(h.CacheDir())
 	p.locksDir = h.LocksDir()
+	p.homeRoot = h.Root()
 	return p, nil
+}
+
+// legacyStoreRoots names the pre-022 store locations whose stale symlinks are
+// still recognized (classified legacy, converted by migration): the old home
+// store and the old project-local store.
+func (p *project) legacyStoreRoots() []string {
+	roots := []string{filepath.Join(p.root, stateDirName, "store")}
+	if p.homeRoot != "" {
+		roots = append(roots, filepath.Join(p.homeRoot, "store"))
+	}
+	return roots
 }
 
 // storeLockTimeout returns the configured lock-acquisition timeout, clamping
@@ -113,19 +101,13 @@ func (a *App) openHome() (*home.Home, error) {
 	return home.Open()
 }
 
-// resolveStoreScope applies the transition-period defaults (research R9):
-// an explicit scope wins; otherwise a project with a populated legacy
-// .gskill/store keeps project scope until migrated, and everything else uses
-// the global store.
-func resolveStoreScope(configured, root string) string {
-	switch configured {
-	case config.StoreScopeGlobal, config.StoreScopeProject:
-		return configured
+// CacheDir returns the home commit-keyed clone-cache directory.
+func (a *App) CacheDir() (string, error) {
+	h, err := a.openHome()
+	if err != nil {
+		return "", err
 	}
-	if hasPopulatedProjectStore(root) {
-		return config.StoreScopeProject
-	}
-	return config.StoreScopeGlobal
+	return h.CacheDir(), nil
 }
 
 // hasPopulatedProjectStore reports whether the legacy project-local store
@@ -148,24 +130,17 @@ func hasPopulatedProjectStore(root string) bool {
 	return false
 }
 
-// installerFor builds an installer wired to this project's resolved content
-// store: the user-level global store for scope=global, else the legacy
-// project-local store (spec 015 FR-006, FR-039).
+// installerFor builds an installer over the project's home clone cache
+// (spec 022: content activates from committed copies or the cache; there is
+// no content store).
 func (a *App) installerFor(p *project) *installer.Installer {
-	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
-		return installer.NewWithStore(a.git, p.cache, newGlobalContentStore(p.global, a.cfg)).WithScanCache(a.scans)
-	}
-	return installer.New(a.git, p.cache, p.store).WithScanCache(a.scans)
+	return installer.New(a.git, p.cache).WithScanCache(a.scans)
 }
 
-// mutateLockPath returns the project's exclusive mutate-lock file. Project
-// scope keeps the legacy in-repo lock; global scope derives a per-project
-// name inside the shared home locks dir (project-<id>.lock, spec 015
-// FR-030) — a fixed name there would serialize every project on the machine.
+// mutateLockPath returns the project's exclusive mutate-lock file: a
+// per-project name inside the shared home locks dir (project-<id>.lock) — a
+// fixed name there would serialize every project on the machine.
 func (p *project) mutateLockPath() string {
-	if p.storeScope != config.StoreScopeGlobal {
-		return filepath.Join(p.locksDir, "mutate.lock")
-	}
 	sum := sha256.Sum256([]byte(canonicalRoot(p.root)))
 	return filepath.Join(p.locksDir, "project-"+hex.EncodeToString(sum[:8])+".lock")
 }
@@ -185,46 +160,11 @@ func canonicalRoot(root string) string {
 	return abs
 }
 
-// contentRoot returns the resolved content-store root for health and
-// ownership checks.
-func (p *project) contentRoot() string {
-	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
-		return p.global.Root()
-	}
-	return p.store.Root()
-}
-
-// contentHas reports whether the project's resolved content store holds hash.
-func (p *project) contentHas(hash string) bool {
-	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
-		return p.global.Has(hash)
-	}
-	return p.store.Has(hash)
-}
-
-// contentPath returns the resolved content directory for hash in the
-// project's content store.
-func (p *project) contentPath(hash string) string {
-	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
-		return p.global.ContentPath(hash)
-	}
-	return p.store.Path(hash)
-}
-
-// installerForScope builds an installer using the global store/cache for global
-// scope, or the project's for project scope (FR-028).
-func (a *App) installerForScope(p *project, scope string) *installer.Installer {
-	if scope != string(installer.ScopeGlobal) {
-		return a.installerFor(p)
-	}
-	cfgDir, err1 := config.Dir()
-	cacheDir, err2 := config.CacheDir()
-	if err1 != nil || err2 != nil {
-		return a.installerFor(p)
-	}
-	return installer.New(a.git,
-		cache.New(cacheDir),
-		store.New(filepath.Join(cfgDir, "store"))).WithScanCache(a.scans)
+// installerForScope builds the installer for any agent-target scope: both
+// project and agent-global installs are served by the home clone cache
+// (spec 022 — global installs are direct copies from materialization).
+func (a *App) installerForScope(p *project, _ string) *installer.Installer {
+	return a.installerFor(p)
 }
 
 // fileExists reports whether path exists.
@@ -233,34 +173,26 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// recordProjectState persists the machine-local state and refreshes the
-// advisory registry after a successful lock mutation (FR-014/FR-027). Pure
-// bookkeeping: failures warn, never fail the run. Every path that mutates
-// the lock must end here, or store GC's marking goes stale.
-func (a *App) recordProjectState(ctx context.Context, p *project, lf *skillslock.State) {
+// recordProjectState persists the machine-local state after a successful
+// lock mutation. Pure bookkeeping: failures warn, never fail the run.
+func (a *App) recordProjectState(_ context.Context, p *project, lf *skillslock.State) {
 	if err := writeProjectState(p, lf); err != nil {
 		a.log.Warn("write project state", "error", err)
 	}
-	a.registerProject(ctx, p, lf)
 }
 
 // writeProjectState derives the project's machine-local state.json from the
-// lock records after a successful run: which store object each skill
-// activates, the gskill-owned active and agent targets, and the resolved
-// materialization modes (FR-014). The file is bookkeeping for repair and
-// removal only — reproduction never needs it (FR-015).
+// lock records after a successful run: the gskill-created agent targets and
+// their per-machine materialization modes (spec 022 data-model §4). The file
+// is bookkeeping for repair and removal only — reproduction never needs it
+// (FR-015); content identity lives in the committed lockfile.
 func writeProjectState(p *project, lf *skillslock.State) error {
 	st, err := projstate.LoadOrInit(p.root)
 	if err != nil {
 		return err
 	}
 	for name, rec := range lf.Skills {
-		sk := projstate.SkillState{
-			StoreHash:    rec.Resolved.ContentHash,
-			StoreScope:   p.storeScope,
-			ActiveTarget: rec.Installation.ActivePath,
-			ActiveMode:   rec.Installation.Mode,
-		}
+		var sk projstate.SkillState
 		if len(rec.Installation.Targets) > 0 {
 			sk.Agents = make(map[string]projstate.AgentState, len(rec.Installation.Targets))
 			for id, target := range rec.Installation.Targets {

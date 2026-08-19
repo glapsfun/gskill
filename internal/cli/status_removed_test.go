@@ -8,7 +8,7 @@ import (
 // TestStatusCommandRemoved locks the removal of the top-level `status` alias
 // (spec 020 FR-002/FR-003): `gskill status` must fail as an unknown command
 // with the standard usage diagnostic and exit code 2, in every spelling,
-// while `list` — its former canonical form — and the distinct `store status`
+// while `list` — its former canonical form — and other surviving commands
 // subcommand (FR-004) keep working.
 func TestStatusCommandRemoved(t *testing.T) {
 	t.Parallel()
@@ -33,7 +33,7 @@ func TestStatusCommandRemoved(t *testing.T) {
 	if _, stderr, code := runCLI(t, nil, "list", "--help"); code != 0 {
 		t.Errorf("gskill list --help: exit code = %d, want 0 (stderr: %q)", code, stderr)
 	}
-	if _, stderr, code := runCLI(t, nil, "store", "status", "--help"); code != 0 {
-		t.Errorf("gskill store status --help: exit code = %d, want 0 (stderr: %q)", code, stderr)
+	if _, stderr, code := runCLI(t, nil, "doctor", "--help"); code != 0 {
+		t.Errorf("gskill doctor --help: exit code = %d, want 0 (stderr: %q)", code, stderr)
 	}
 }

@@ -79,7 +79,7 @@ func (a *App) checkSafeTargetRemoval(p *project, scope, agentID, name, recorded,
 	info, statErr := os.Lstat(target)
 	switch {
 	case statErr == nil && info.Mode()&os.ModeSymlink == 0:
-		roots := []string{p.store.Root(), active.Dir(p.root)}
+		roots := []string{active.Dir(p.root)}
 		if !active.Owned(target, roots, contentHash) {
 			return "", false, errs.WithHint(
 				fmt.Errorf("%w: %s target for skill %q is not gskill-managed content (modified since install)",

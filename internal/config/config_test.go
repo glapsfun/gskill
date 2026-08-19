@@ -203,26 +203,13 @@ func TestLoad_StoreDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.StoreScope != "" {
-		t.Errorf("StoreScope = %q, want empty (auto)", cfg.StoreScope)
-	}
-	if !cfg.StoreVerifyOnUse {
-		t.Error("StoreVerifyOnUse = false, want default true")
-	}
-	if cfg.StoreGCGracePeriod != 30*24*time.Hour {
-		t.Errorf("StoreGCGracePeriod = %v, want 30d", cfg.StoreGCGracePeriod)
-	}
 	if cfg.StoreLockTimeout != 60*time.Second {
 		t.Errorf("StoreLockTimeout = %v, want 60s", cfg.StoreLockTimeout)
 	}
-	if !cfg.ProjectsRegistry {
-		t.Error("ProjectsRegistry = false, want default true")
-	}
-	if cfg.PrivacyProjectRegistry != "full" {
-		t.Errorf("PrivacyProjectRegistry = %q, want %q", cfg.PrivacyProjectRegistry, "full")
-	}
 }
 
+// TestLoad_StoreFromFile: a config file carrying retired pre-022 keys still
+// loads — dead keys are ignored, live keys apply (spec 022 FR-011).
 func TestLoad_StoreFromFile(t *testing.T) {
 	t.Parallel()
 
@@ -242,28 +229,15 @@ project_registry = "minimal"
 `)
 	cfg, err := config.Load(config.Sources{UserFile: path, Environ: []string{}})
 	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.StoreScope != "project" {
-		t.Errorf("StoreScope = %q, want %q", cfg.StoreScope, "project")
-	}
-	if cfg.StoreVerifyOnUse {
-		t.Error("StoreVerifyOnUse = true, want false from file")
-	}
-	if cfg.StoreGCGracePeriod != 45*24*time.Hour {
-		t.Errorf("StoreGCGracePeriod = %v, want 45d", cfg.StoreGCGracePeriod)
+		t.Fatalf("Load with retired keys: %v (dead keys must never fail)", err)
 	}
 	if cfg.StoreLockTimeout != 90*time.Second {
 		t.Errorf("StoreLockTimeout = %v, want 90s", cfg.StoreLockTimeout)
 	}
-	if cfg.ProjectsRegistry {
-		t.Error("ProjectsRegistry = true, want false from file")
-	}
-	if cfg.PrivacyProjectRegistry != "minimal" {
-		t.Errorf("PrivacyProjectRegistry = %q, want %q", cfg.PrivacyProjectRegistry, "minimal")
-	}
 }
 
+// TestLoad_StoreFromEnv (spec 022 FR-011): retired pre-022 env knobs are
+// ignored, never an error for existing setups.
 func TestLoad_StoreFromEnv(t *testing.T) {
 	t.Parallel()
 
@@ -275,45 +249,39 @@ func TestLoad_StoreFromEnv(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("Load with retired env keys: %v (must be ignored)", err)
 	}
-	if cfg.StoreScope != "global" {
-		t.Errorf("StoreScope = %q, want %q from env", cfg.StoreScope, "global")
-	}
-	if cfg.StoreVerifyOnUse {
-		t.Error("StoreVerifyOnUse = true, want false from GSKILL_STORE_VERIFY")
-	}
-	if cfg.ProjectsRegistry {
-		t.Error("ProjectsRegistry = true, want false from GSKILL_PROJECT_REGISTRY")
-	}
+	_ = cfg
 }
 
 func TestLoad_InvalidStoreScopeRejected(t *testing.T) {
 	t.Parallel()
 
-	_, err := config.Load(config.Sources{Environ: []string{"GSKILL_STORE_SCOPE=everywhere"}})
-	if err == nil {
-		t.Fatal("Load with invalid store scope should fail")
+	// Retired knob (spec 022): any value is ignored, never validated.
+	if _, err := config.Load(config.Sources{Environ: []string{"GSKILL_STORE_SCOPE=everywhere"}}); err != nil {
+		t.Fatalf("Load with retired store-scope key: %v (must be ignored)", err)
 	}
 }
 
 func TestLoad_InvalidGracePeriodRejected(t *testing.T) {
 	t.Parallel()
 
+	// Retired knob (spec 022): the key is no longer parsed, so any value loads.
 	dir := t.TempDir()
 	path := writeTOML(t, dir, "config.toml", "[store]\ngc_grace_period = \"soon\"\n")
-	if _, err := config.Load(config.Sources{UserFile: path, Environ: []string{}}); err == nil {
-		t.Fatal("Load with invalid grace period should fail")
+	if _, err := config.Load(config.Sources{UserFile: path, Environ: []string{}}); err != nil {
+		t.Fatalf("Load with retired grace-period key: %v (must be ignored)", err)
 	}
 }
 
 func TestLoad_InvalidPrivacyModeRejected(t *testing.T) {
 	t.Parallel()
 
+	// Retired knob (spec 022): any value is ignored, never validated.
 	dir := t.TempDir()
 	path := writeTOML(t, dir, "config.toml", "[privacy]\nproject_registry = \"secret\"\n")
-	if _, err := config.Load(config.Sources{UserFile: path, Environ: []string{}}); err == nil {
-		t.Fatal("Load with invalid privacy mode should fail")
+	if _, err := config.Load(config.Sources{UserFile: path, Environ: []string{}}); err != nil {
+		t.Fatalf("Load with retired privacy key: %v (must be ignored)", err)
 	}
 }
 

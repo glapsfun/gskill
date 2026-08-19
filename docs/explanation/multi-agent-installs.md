@@ -24,16 +24,17 @@ rather than guessing.
 
 ## Project vs global scope
 
-- **Project scope** (default) keeps skills with the project, under each agent's project directory. This
-  is what you commit and reproduce per repository.
-- **Global scope** (`--global`) installs into your user-global location for each agent, shared across
-  projects. Global paths follow platform conventions.
+- **Project scope** (default) keeps skills with the project: content committed at
+  `.agents/skills/<name>/`, agent directories linking into it. This is what you commit and
+  reproduce per repository.
+- **Agent-global installs** (`--global`) write verified copies into each agent's own user-global
+  location, shared across projects. They sit outside the repo-owned model, backed by the same
+  clone cache.
 
-Scope is recorded in the lockfile alongside the agents and install mode, so intent and reality stay
-aligned.
+The lockfile records the agents and install mode, so intent and reality stay aligned.
 
 ## See also
 
 - [Target specific agents](../how-to/target-specific-agents.md)
 - [Supported agents](../reference/agents.md)
-- [The store and the cache](store-and-cache.md)
+- [Repo-owned storage](repo-owned-storage.md)

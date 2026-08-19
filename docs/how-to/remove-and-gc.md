@@ -1,7 +1,7 @@
 # Remove a skill and reclaim space
 
-Uninstall a skill from your agents, drop it from the lockfile, and garbage-collect its
-content from the store.
+Uninstall a skill from your agents, drop it from the lockfile, and delete its committed content
+from the repository.
 
 ## Before you start
 
@@ -29,10 +29,14 @@ or CI job that forgot to opt in.
 
 ## Expected result
 
-- The skill is uninstalled from every agent directory it was in.
+- The skill's agent links are removed from every agent directory it was in.
+- Its committed copy at `.agents/skills/<name>/` is deleted.
 - Its entry is removed from `skills-lock.json`.
-- Store content no longer referenced by any skill is garbage-collected to reclaim space.
-- `gskill remove` exits `0`.
+- `gskill remove` exits `0`. Commit the deletions to share them.
+
+> There is no store garbage collection — content lives in the repository, so removing it *is*
+> reclaiming the space. The clone cache in your home directory is untouched; clear it separately
+> with [`gskill cache clean`](manage-the-cache.md) if you want the disk back there too.
 
 ## See also
 

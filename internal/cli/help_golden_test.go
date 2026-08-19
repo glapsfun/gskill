@@ -40,23 +40,6 @@ var helpPages = []struct {
 	{"cache-list", []string{"cache", "list"}},
 	{"cache-clean", []string{"cache", "clean"}},
 
-	{"migrate", []string{"migrate"}},
-	{"migrate-global-store", []string{"migrate", "global-store"}},
-	{"store", []string{"store"}},
-	{"store-status", []string{"store", "status"}},
-	{"store-list", []string{"store", "list"}},
-	{"store-inspect", []string{"store", "inspect"}},
-	{"store-verify", []string{"store", "verify"}},
-	{"store-repair", []string{"store", "repair"}},
-	{"store-gc", []string{"store", "gc"}},
-	{"store-pin", []string{"store", "pin"}},
-	{"store-unpin", []string{"store", "unpin"}},
-	{"store-pins", []string{"store", "pins"}},
-	{"projects", []string{"projects"}},
-	{"projects-list", []string{"projects", "list"}},
-	{"projects-inspect", []string{"projects", "inspect"}},
-	{"projects-prune", []string{"projects", "prune"}},
-	{"projects-refresh", []string{"projects", "refresh"}},
 	{"config-path", []string{"config", "path"}},
 	{"config-list", []string{"config", "list"}},
 	{"config-get", []string{"config", "get"}},
@@ -66,14 +49,14 @@ var helpPages = []struct {
 	{"version", []string{"version"}},
 }
 
-// visibleTopLevel is the canonical 19-entry command surface (spec 010 FR-001
-// + spec 011 onboard + spec 015 store/migrate/projects, minus the commands
-// retired by spec 021).
+// visibleTopLevel is the canonical 16-entry command surface (spec 010 FR-001
+// + spec 011 onboard, minus the commands retired by spec 021 and the
+// store/migrate/projects trees retired by spec 022).
 var visibleTopLevel = []string{
 	"add", "onboard", "install", "update", "remove",
 	"list", "info", "search", "outdated",
 	"project",
-	"cache", "config", "doctor", "store", "migrate", "projects",
+	"cache", "config", "doctor",
 	"dashboard", "completion", "version",
 }
 

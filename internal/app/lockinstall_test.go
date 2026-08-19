@@ -169,8 +169,8 @@ func assertLockEnriched(t *testing.T, root string, wantHashes map[string]string)
 		if len(e.Ext.Agents) != 1 || e.Ext.Agents[0] != testAgent {
 			t.Errorf("%s Ext.Agents = %v", name, e.Ext.Agents)
 		}
-		if e.Ext.StoreHash == "" {
-			t.Errorf("%s Ext.StoreHash empty", name)
+		if e.Ext.ContentHash == "" {
+			t.Errorf("%s Ext.ContentHash empty", name)
 		}
 	}
 	raw, _ := os.ReadFile(filepath.Join(root, skillslock.FileName)) //nolint:gosec // test-controlled temp path
@@ -936,14 +936,12 @@ func TestInstallFromLock_ExplicitEmptyAgentsRemovesEverythingButRetainsRecord(t 
 			t.Errorf("%s agents = %v, want []", name, e.Ext.Agents)
 		}
 		assertNoAgentTargets(t, root, name, "."+testAgent, ".codex", ".cursor")
-	}
-	// Canonical content is retained in whichever store served the project:
-	// the legacy project-local store, or the global store (spec 015 — a
-	// narrow-to-zero never deletes shared global content, FR-009/FR-024).
-	storeEntries, _ := os.ReadDir(filepath.Join(root, ".gskill", "store"))
-	globalEntries, _ := os.ReadDir(filepath.Join(os.Getenv("GSKILL_HOME"), "store", "sha256"))
-	if len(storeEntries) == 0 && len(globalEntries) == 0 {
-		t.Error("store appears empty after narrowing to zero agents — canonical content should be retained")
+		// Canonical content is retained: the committed repo copy stays in
+		// place (spec 022 — a narrow-to-zero detaches agents, never deletes
+		// content).
+		if _, err := os.Stat(filepath.Join(root, ".agents", "skills", name, "SKILL.md")); err != nil {
+			t.Errorf("%s committed content missing after narrowing to zero agents: %v", name, err)
+		}
 	}
 }
 

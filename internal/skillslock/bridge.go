@@ -1,6 +1,7 @@
 package skillslock
 
 import (
+	"cmp"
 	"path"
 	"strings"
 
@@ -68,15 +69,21 @@ func FromRecord(ls Record) Entry {
 		ref = ls.Resolved.Branch
 	}
 
+	// Only a user-global placement is persisted: see Ext.Scope. A "project"
+	// scope is the pre-022 store-location marker and is deliberately dropped.
+	scope := ""
+	if ls.Installation.Scope == ScopeGlobal {
+		scope = ScopeGlobal
+	}
 	ext := &Ext{
+		Scope:         scope,
 		SourceURL:     ls.Source.URL,
 		Ref:           ref,
 		Commit:        ls.Resolved.Commit,
 		Version:       ls.Resolved.Version,
 		Agents:        ls.Installation.Agents,
 		InstallMode:   ls.Installation.Mode,
-		Scope:         ls.Installation.Scope,
-		StoreHash:     ls.Resolved.ContentHash,
+		ContentHash:   ls.Resolved.ContentHash,
 		SkillFileHash: ls.Resolved.SkillFileHash,
 		InstalledAt:   ls.Provenance.FetchedAt,
 		UpdatedAt:     ls.Provenance.UpdatedAt,
@@ -177,7 +184,7 @@ func ToRecord(name string, e Entry) Record {
 			Branch:        st.Branch,
 			Commit:        ext.Commit,
 			TreeHash:      st.TreeHash,
-			ContentHash:   ext.StoreHash,
+			ContentHash:   cmp.Or(ext.ContentHash, ext.StoreHash),
 			SkillFileHash: ext.SkillFileHash,
 			MutableRef:    st.MutableRef,
 			LocalPathHash: st.LocalPathHash,

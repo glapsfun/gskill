@@ -474,4 +474,20 @@ func TestUpdate_AdvancesLockWithinConstraint(t *testing.T) {
 	if !strings.Contains(lock, `"version": "1.1.0"`) {
 		t.Errorf("lock did not advance to 1.1.0:\n%s", lock)
 	}
+
+	// Repo-owned model (spec 022 US3): the committed copy was replaced with
+	// the new version and the relative agent link stayed valid throughout.
+	active := readFile(t, filepath.Join(proj, ".agents", "skills", "demo", "SKILL.md"))
+	if !strings.Contains(string(active), "demo v1.1") {
+		t.Errorf("committed copy not replaced by the update:\n%s", active)
+	}
+	linkPath := filepath.Join(proj, ".claude", "skills", "demo")
+	target, err := os.Readlink(linkPath)
+	if err != nil || !strings.HasPrefix(target, "../") {
+		t.Errorf("agent link target = %q (err %v), want relative link into .agents/skills", target, err)
+	}
+	through := readFile(t, filepath.Join(linkPath, "SKILL.md"))
+	if !strings.Contains(string(through), "demo v1.1") {
+		t.Errorf("agent path does not resolve to updated content:\n%s", through)
+	}
 }

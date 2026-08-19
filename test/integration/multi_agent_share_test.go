@@ -7,52 +7,6 @@ import (
 	"testing"
 )
 
-// countStoreEntries returns the number of content-addressed store entries
-// serving proj: the legacy project-local store plus the test's private
-// global store (spec 015 — content lives globally for new projects).
-func countStoreEntries(t *testing.T, proj string) int {
-	t.Helper()
-	n := countStoreDir(t, filepath.Join(proj, ".gskill", "store"))
-	if home, ok := testHomeOf(t); ok {
-		n += countStoreDir(t, filepath.Join(home, "store"))
-	}
-	return n
-}
-
-// testHomeOf reports the calling test's private gskill home, if an App was
-// created.
-func testHomeOf(t *testing.T) (string, bool) {
-	t.Helper()
-	if _, ok := testApps.Load(t.Name()); !ok {
-		return "", false
-	}
-	return newApp(t).GskillHome(), true
-}
-
-// countStoreDir counts <base>/<algo>/<hash> entries.
-func countStoreDir(t *testing.T, base string) int {
-	t.Helper()
-	algos, err := os.ReadDir(base)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0
-		}
-		t.Fatalf("read store: %v", err)
-	}
-	n := 0
-	for _, algo := range algos {
-		if !algo.IsDir() {
-			continue
-		}
-		hashes, err := os.ReadDir(filepath.Join(base, algo.Name()))
-		if err != nil {
-			t.Fatalf("read store algo: %v", err)
-		}
-		n += len(hashes)
-	}
-	return n
-}
-
 // countActiveEntries returns the number of entries under .agents/skills.
 func countActiveEntries(t *testing.T, proj string) int {
 	t.Helper()
@@ -87,13 +41,12 @@ func requireResolvesActive(t *testing.T, proj, marker, name string) {
 	}
 }
 
-// requireCounts fails unless the project has exactly the given store and active
+// requireCounts fails unless the project has exactly the given number of active
 // entry counts.
-func requireCounts(t *testing.T, proj string, store, active int) {
+// entries — the repo-owned copy exists physically once no matter how many
+// agents share it (spec 022).
+func requireCounts(t *testing.T, proj string, active int) {
 	t.Helper()
-	if n := countStoreEntries(t, proj); n != store {
-		t.Errorf("store entries = %d, want %d", n, store)
-	}
 	if n := countActiveEntries(t, proj); n != active {
 		t.Errorf("active entries = %d, want %d", n, active)
 	}
@@ -129,7 +82,7 @@ func TestMultiAgentShare_InstallOnceAddSecondAgent(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--agent", "claude"); code != 0 {
 		t.Fatalf("add claude: %s", stderr)
 	}
-	requireCounts(t, proj, 1, 1)
+	requireCounts(t, proj, 1)
 	requireResolvesActive(t, proj, ".claude", "demo")
 	if lock := string(readFile(t, filepath.Join(proj, "skills-lock.json"))); !strings.Contains(lock, ".agents/skills/demo") {
 		t.Errorf("lockfile missing active_path:\n%s", lock)
@@ -140,7 +93,7 @@ func TestMultiAgentShare_InstallOnceAddSecondAgent(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--agent", "codex"); code != 0 {
 		t.Fatalf("add codex: %s", stderr)
 	}
-	requireCounts(t, proj, 1, 1) // no duplicate download or active dir
+	requireCounts(t, proj, 1) // no duplicate download or active dir
 	requireResolvesActive(t, proj, ".codex", "demo")
 	requireResolvesActive(t, proj, ".claude", "demo") // undisturbed
 	requireManifestAgents(t, proj, "claude", "codex")

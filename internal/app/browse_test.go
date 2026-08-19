@@ -20,7 +20,7 @@ func TestList_HealthyChain_PopulatesActiveAndAgentHealth(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	linkAgent(t, root, "demo")
@@ -94,7 +94,7 @@ func TestList_MissingAgentTarget_SurfacesUnhealthyEntry(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	// No agent target created — the claude target is missing.
@@ -131,7 +131,7 @@ func TestList_AgentHealthOrderMatchesAgentsOrder(t *testing.T) {
 	a := newHealthApp()
 
 	hash, storePath := seedStore(t, p)
-	if _, err := active.EnsureActive(root, "demo", storePath, p.store.Root()); err != nil {
+	if _, err := active.EnsureActive(root, "demo", storePath, active.EnsureOptions{ExpectedHash: hash}); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
 	linkAgentAt(t, root, "demo", "codex")

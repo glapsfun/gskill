@@ -22,7 +22,8 @@ gskill project verify --json     # machine-readable result for scripts/CI
 
 - If everything matches, `gskill project verify` exits `0`.
 - If any installed file differs from its recorded checksum, verify **fails closed** and exits **`6`**
-  (integrity failure) with a diagnostic naming the affected skill.
+  (integrity failure) with a diagnostic naming the affected skill. Restore lock-true content with
+  `gskill repair` (or `gskill install --force`) — drift is never auto-repaired.
 
 ### Example: detecting a tampered byte
 

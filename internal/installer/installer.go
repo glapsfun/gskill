@@ -18,7 +18,6 @@ import (
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
-	"github.com/glapsfun/gskill/internal/store"
 )
 
 // Request is everything needed to install one skill.
@@ -45,8 +44,17 @@ type Request struct {
 	PreserveForeign bool
 	// PriorContentHash is the lockfile-recorded content hash of the previous
 	// install at this skill's destinations, accepted as owned content when
-	// PreserveForeign is set (a copy-mode install is a real directory).
+	// PreserveForeign is set (a copy-mode install is a real directory), and
+	// as the replaceable previous version of the repo-owned active entry.
 	PriorContentHash string
+	// LegacyStoreRoots are pre-022 store roots (e.g. the old home store):
+	// stale active symlinks into them are replaced by the real copy.
+	LegacyStoreRoots []string
+	// ReplaceActive allows replacing a repo-owned active entry whose content
+	// matches neither the expected nor the prior hash (drifted committed
+	// content). Only explicit force/repair paths set it — plain add, install,
+	// update, and sync fail closed on drift instead (spec 022 FR-008).
+	ReplaceActive bool
 }
 
 // Result is the outcome of a successful install, sufficient to build a lock entry.
@@ -69,35 +77,49 @@ type Result struct {
 	StoreScope string
 }
 
-// Installer runs the staging-verify-activate transaction over the content
-// store, cache, and git runner.
+// Store-reuse outcomes recorded on Result.StoreReuse: reused means no fetch
+// happened (committed content or a clone-cache hit satisfied the install).
+const (
+	StoreReused     = "reused"
+	StoreDownloaded = "downloaded"
+)
+
+// ScopeLabelCommitted labels installs served by the repo-owned model
+// (spec 022): committed content or the commit-keyed clone cache.
+const ScopeLabelCommitted = "committed"
+
+// Installer runs the verify-activate transaction over the commit-keyed clone
+// cache and git runner (spec 022: the repo owns skill content; there is no
+// content store).
 type Installer struct {
-	git     git.Runner
-	cache   *cache.Cache
-	content ContentStore
-	scans   *ScanCache // nil ⇒ no scan memoization
+	git   git.Runner
+	cache *cache.Cache
+	scans *ScanCache // nil ⇒ no scan memoization
 }
 
-// New builds an Installer over the legacy project-local store. The git runner
+// New builds an Installer over the commit-keyed clone cache. The git runner
 // may be nil for local-only installs.
-func New(g git.Runner, c *cache.Cache, s *store.Store) *Installer {
-	return NewWithStore(g, c, legacyStore{s: s})
+func New(g git.Runner, c *cache.Cache) *Installer {
+	return &Installer{git: g, cache: c}
 }
 
-// NewWithStore builds an Installer over any ContentStore (spec 015: the
-// user-level global store, or the legacy project store).
-func NewWithStore(g git.Runner, c *cache.Cache, cs ContentStore) *Installer {
-	return &Installer{git: g, cache: c, content: cs}
-}
-
-// Install materializes, verifies, and activates the requested skill (FR-015,
-// FR-018, FR-019, FR-020). When the expected content already sits verified in
-// the content store, the source is not fetched at all — the stored object is
-// reused (spec 015 FR-006). Content is always verified before activating into
-// any agent directory, failing closed on a checksum mismatch.
+// Install verifies and activates the requested skill (FR-015, FR-018,
+// FR-019, FR-020; spec 022). Committed repo content matching the expected
+// lock hash IS the restore — nothing is fetched and no store is consulted.
+// Otherwise the source materializes via the commit-keyed clone cache
+// (fetching only when cold) and activates directly from the materialization.
+// Content is always verified before activating into any agent directory,
+// failing closed on a checksum mismatch.
 func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
-	if req.ExpectContentHash != "" && i.content.Has(req.ExpectContentHash) {
-		return i.installFromStore(ctx, req)
+	if res, done, cErr := i.installFromCommitted(ctx, req); done {
+		return res, cErr
+	}
+
+	// A warm clone cache means no network fetch — the reuse decision the
+	// no-refetch guardrail observes (SC-002).
+	reuse := StoreDownloaded
+	if req.Revision.Commit != "" && i.cache != nil && i.cache.Has(req.Revision.Commit) {
+		reuse = StoreReused
 	}
 
 	material, err := i.materialize(ctx, req)
@@ -125,12 +147,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 			errs.ErrIntegrity, hashes.ContentHash, req.ExpectContentHash)
 	}
 
-	storePath, err := i.content.Put(ctx, hashes.ContentHash, skill.Dir, originFrom(req))
-	if err != nil {
-		return Result{}, err
-	}
-
-	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), storePath)
+	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), skill.Dir, hashes.ContentHash)
 	if err != nil {
 		return Result{}, err
 	}
@@ -145,64 +162,55 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 		ActivePath:    activePath,
 		Targets:       targets,
 		Warnings:      warnings,
-		StoreReuse:    StoreDownloaded,
-		StoreScope:    i.content.ScopeLabel(),
+		StoreReuse:    reuse,
+		StoreScope:    ScopeLabelCommitted,
 	}, nil
 }
 
-// installFromStore activates req directly from the verified content store,
-// with no source fetch (spec 015 FR-006, FR-018). The stored object is
-// verified before activation and fails closed on corruption (FR-020/021).
-func (i *Installer) installFromStore(ctx context.Context, req Request) (Result, error) {
-	hash := req.ExpectContentHash
-	if err := i.content.Verify(hash); err != nil {
-		return Result{}, err
+// installFromCommitted implements the committed-content fast path (spec 022
+// FR-007): the repo copy at .agents/skills/<name> matching the expected lock
+// hash is the restore. Committed content that exists but mismatches is drift
+// — an error with the repair hint (FR-008) — unless the caller explicitly
+// reconciles (ReplaceActive), in which case the full pipeline replaces it.
+func (i *Installer) installFromCommitted(ctx context.Context, req Request) (Result, bool, error) {
+	dest, state := committedCandidate(req)
+	switch state { //nolint:exhaustive // committedMatch falls through to the hit path below
+	case committedAbsent:
+		return Result{}, false, nil
+	case committedDrifted:
+		if req.ReplaceActive {
+			return Result{}, false, nil // force/repair restores lock-true content
+		}
+		return Result{}, true, errs.WithHint(
+			fmt.Errorf("%w: committed content for skill %q at %s no longer matches skills-lock.json",
+				errs.ErrInvalidLock, req.Name, active.Rel(req.Name)),
+			"run 'gskill repair' (or 'gskill install --force') to restore lock-true content, or re-add the skill to adopt the edited content as a new version")
 	}
-	contentPath := i.content.Path(hash)
 
-	skill, err := discovery.Discover(contentPath, "")
+	skill, err := discovery.Discover(dest, "")
 	if err != nil {
-		return Result{}, fmt.Errorf("discover stored content %s: %w", hash, err)
+		return Result{}, true, fmt.Errorf("discover committed content for %q: %w", req.Name, err)
 	}
-	// Reused content gets the same validation a fresh fetch gets (FR-043):
-	// admission validated it once, but the executable-bit warnings were not
-	// persisted, and a symlink planted after admission must still fail closed
-	// before this project activates the shared object.
-	warnings, err := validateContent(contentPath)
+	warnings, err := validateContent(dest)
 	if err != nil {
-		return Result{}, err
+		return Result{}, true, err
 	}
 	warnings = append(warnings, identityWarning(req.Name, skill.Frontmatter.Name)...)
-
-	skillFile, err := os.ReadFile(filepath.Join(contentPath, integrity.SkillFileName)) //nolint:gosec // store-internal path
+	skillFile, err := os.ReadFile(filepath.Join(dest, integrity.SkillFileName)) //nolint:gosec // repo-owned active entry
 	if err != nil {
-		return Result{}, fmt.Errorf("read stored %s: %w", integrity.SkillFileName, err)
+		return Result{}, true, fmt.Errorf("read committed %s: %w", integrity.SkillFileName, err)
 	}
 
-	// Close any live progress line: nothing is fetched for a store hit.
+	// Close any live progress line: nothing is fetched for a committed hit.
 	progress.Emit(ctx, progress.Event{Phase: progress.PhaseDone, Repo: req.Ref.Display()})
-	i.content.Touch(ctx, hash)
 
-	if origin := originFrom(req); origin.Commit != "" {
-		// Best-effort origin enrichment; identity never changes (FR-003).
-		// Stores that record origins expose the metadata-only path; falling
-		// back to Put would re-copy and re-verify the whole object just to
-		// merge one metadata record.
-		if rec, ok := i.content.(OriginRecorder); ok {
-			if recErr := rec.RecordOrigin(ctx, hash, origin); recErr != nil {
-				warnings = append(warnings, fmt.Sprintf("record origin for %s: %v", hash, recErr))
-			}
-		}
-	}
-
-	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), contentPath)
+	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), dest, req.ExpectContentHash)
 	if err != nil {
-		return Result{}, err
+		return Result{}, true, err
 	}
-
 	return Result{
 		Skill:         skill,
-		ContentHash:   hash,
+		ContentHash:   req.ExpectContentHash,
 		SkillFileHash: integrity.HashContent(skillFile),
 		Mode:          mode,
 		Modes:         modes,
@@ -211,31 +219,39 @@ func (i *Installer) installFromStore(ctx context.Context, req Request) (Result, 
 		Targets:       targets,
 		Warnings:      warnings,
 		StoreReuse:    StoreReused,
-		StoreScope:    i.content.ScopeLabel(),
-	}, nil
+		StoreScope:    ScopeLabelCommitted,
+	}, true, nil
 }
 
-// originFrom derives the descriptive store origin from an install request.
-func originFrom(req Request) ObjectOrigin {
-	ref := req.Revision.Tag
-	if ref == "" {
-		ref = req.Revision.Branch
+// committedState classifies the repo-owned active entry for the fast path.
+type committedState int
+
+const (
+	committedAbsent  committedState = iota // no usable committed dir: full pipeline
+	committedMatch                         // matches the expected lock hash
+	committedDrifted                       // a real dir that no longer matches
+)
+
+// committedCandidate inspects the active entry for the fast path: only a
+// real directory counts (legacy links and artifacts take the full pipeline),
+// and only project-scope lock-driven installs are eligible.
+func committedCandidate(req Request) (string, committedState) {
+	if req.ExpectContentHash == "" || req.Name == "" || req.Scope == ScopeGlobal {
+		return "", committedAbsent
 	}
-	src := req.Ref.URL
-	if src == "" {
-		src = req.Ref.LocalPath
+	dest := active.Path(req.ProjectRoot, req.Name)
+	info, err := os.Lstat(dest)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return dest, committedAbsent
 	}
-	if src == "" {
-		src = req.Ref.Display()
+	ok, _, err := integrity.VerifyDir(dest, req.ExpectContentHash)
+	if err != nil {
+		return dest, committedAbsent // unreadable: let the full pipeline decide
 	}
-	return ObjectOrigin{
-		SourceType: string(req.Ref.Type),
-		Source:     src,
-		SkillPath:  req.Path,
-		Version:    req.Revision.Version,
-		Ref:        ref,
-		Commit:     req.Revision.Commit,
+	if !ok {
+		return dest, committedDrifted
 	}
+	return dest, committedMatch
 }
 
 // Discover materializes the source and discovers the skill without activating
@@ -364,7 +380,9 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 		return i.cache.Path(commit), nil
 	}
 	if req.Offline {
-		return "", fmt.Errorf("%w: offline and commit %s is not cached", errs.ErrSourceUnavailable, commit)
+		return "", errs.WithHint(
+			fmt.Errorf("%w: offline and commit %s is not cached", errs.ErrSourceUnavailable, commit),
+			"drop --offline to fetch the commit, or restore on a machine whose clone cache holds it")
 	}
 	if i.git == nil {
 		return "", fmt.Errorf("%w: no git runner configured", errs.ErrSourceUnavailable)
@@ -399,34 +417,40 @@ func (i *Installer) EnsureCached(ctx context.Context, req Request) error {
 // activateAll materializes the active layer and links/copies it into every
 // target agent dir, returning the representative mode (the first agent's), the
 // project-relative active path, the per-agent target paths, and the per-agent
-// modes. For project scope each agent target derives from the shared active
-// entry (.agents/skills/<name>), which itself links into the store, so a skill
-// shared by N agents exists physically once. For global scope there is no
-// project active layer, so agents derive directly from the store. Modes can
-// differ per agent — a symlink falls back to a copy on a filesystem that rejects
-// it — so each is recorded rather than collapsed to one value.
-func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath string) (Mode, string, map[string]string, map[string]string, error) {
+// modes. For project scope the repo owns the content (spec 022): the active
+// entry .agents/skills/<name> is a real copied directory verified against
+// contentHash, and each agent target is a *relative* symlink into it, so both
+// are committable and survive a clone. For global scope there is no project
+// active layer, so agents derive directly from the store. Modes can differ
+// per agent — a symlink falls back to a copy on a filesystem that rejects it
+// — so each is recorded rather than collapsed to one value.
+func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath, contentHash string) (Mode, string, map[string]string, map[string]string, error) {
 	// linkTarget is what symlinked agents point at; copySource is the real
-	// directory copy-mode agents (and copy fallbacks) read from. Copies always
-	// read the resolved store content, never the active symlink itself.
+	// directory copy-mode agents (and copy fallbacks) read from. For project
+	// scope both are the repo-owned active entry itself.
 	linkTarget := storePath
 	copySource := storePath
 	var activeRel string
 	if req.Scope != ScopeGlobal {
 		// Propagate EnsureActive's error code verbatim so a foreign-occupant
 		// collision fails closed with its own exit code rather than being masked
-		// as a generic partial install.
-		// Both the resolved content root and the legacy project-local store
-		// root are gskill-owned link targets: a stale link into either (e.g.
-		// after the project transitions to the global store) re-points rather
-		// than failing as foreign (spec 015 FR-011).
-		activePath, err := active.EnsureActive(req.ProjectRoot, name, storePath,
-			i.content.Root(), filepath.Join(req.ProjectRoot, ".gskill", "store"))
+		// as a generic partial install. Stale symlinks into a pre-022 store
+		// root (resolved content root or legacy project-local store) are
+		// replaced by the real copy; anything else foreign fails closed.
+		activePath, err := active.EnsureActive(req.ProjectRoot, name, storePath, active.EnsureOptions{
+			ExpectedHash: contentHash,
+			AcceptHashes: []string{req.PriorContentHash, req.ExpectContentHash},
+			Replace:      req.ReplaceActive,
+			LegacyRoots:  append([]string{filepath.Join(req.ProjectRoot, ".gskill", "store")}, req.LegacyStoreRoots...),
+		})
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("ensure active %s: %w", name, err)
 		}
 		linkTarget = activePath
+		copySource = activePath
 		activeRel = i.recordTarget(req, activePath)
+	} else if abs, err := filepath.Abs(linkTarget); err == nil {
+		linkTarget = abs
 	}
 
 	targets := make(map[string]string, len(req.Agents))
@@ -438,7 +462,22 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 		if err := i.guardForeignTarget(req, dest, storePath); err != nil {
 			return "", "", nil, nil, err
 		}
-		usedMode, err := activateAgent(linkTarget, copySource, dest, agentActivation(req.ModePref, ag))
+		// Project-scope agent links store a relative target (spec 022: no
+		// committed artifact may reference a path outside the repo).
+		linkRef := linkTarget
+		if req.Scope != ScopeGlobal {
+			if rel, rErr := filepath.Rel(filepath.Dir(dest), linkTarget); rErr == nil {
+				linkRef = rel
+			}
+		}
+		act := agentActivation(req.ModePref, ag)
+		if req.Scope == ScopeGlobal {
+			// Agent-global installs are direct copies from the materialized
+			// content (spec 022: no store to link into; cache entries are
+			// evictable and must not be link targets).
+			act = activateCopy
+		}
+		usedMode, err := activateAgent(linkRef, copySource, dest, act)
 		if err != nil {
 			return "", "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
 		}
@@ -466,10 +505,8 @@ func (i *Installer) guardForeignTarget(req Request, dest, storePath string) erro
 	if _, err := os.Lstat(dest); err != nil {
 		return nil //nolint:nilerr // absent destination: nothing to protect, activation proceeds
 	}
-	roots := []string{
-		i.content.Root(), active.Dir(req.ProjectRoot),
-		filepath.Join(req.ProjectRoot, ".gskill", "store"),
-	}
+	// Ownership keys on the repo's .agents/skills root (spec 022).
+	roots := []string{active.Dir(req.ProjectRoot)}
 	hashes := []string{req.PriorContentHash, req.ExpectContentHash}
 	if h, err := integrity.HashDir(storePath); err == nil {
 		hashes = append(hashes, h.ContentHash)
@@ -491,8 +528,9 @@ func (i *Installer) targetDir(ag agent.Agent, req Request, name string) string {
 	return filepath.Join(ag.ProjectSkillDir(req.ProjectRoot), name)
 }
 
-// recordTarget returns the path stored in the lockfile: relative to the project
-// root for project scope, absolute for global scope.
+// recordTarget returns the path stored in the lockfile: repo-root-relative
+// with forward slashes for project scope (spec 022 path rule), absolute for
+// global scope.
 func (i *Installer) recordTarget(req Request, dest string) string {
 	if req.Scope == ScopeGlobal {
 		return dest
@@ -501,7 +539,7 @@ func (i *Installer) recordTarget(req Request, dest string) string {
 	if err != nil {
 		return dest
 	}
-	return rel
+	return filepath.ToSlash(rel)
 }
 
 // activation is how an agent target is materialized.
@@ -532,10 +570,11 @@ func agentActivation(modePref string, ag agent.Agent) activation {
 }
 
 // activateAgent places a skill at an agent's dest, reporting the mode used.
-// A symlinked target points at linkTarget (the active entry, or the store for
-// global scope); a copied target reads the resolved store content from
-// copySource, never the active symlink, so copies hold real content rather than
-// a recreated link.
+// A symlinked target stores linkTarget verbatim — the caller passes a
+// relative path for project scope (spec 022: committed links must not embed
+// absolute paths) and an absolute one for global scope. A copied target reads
+// the real content from copySource (the repo-owned active entry for project
+// scope).
 func activateAgent(linkTarget, copySource, dest string, mode activation) (Mode, error) {
 	if mode == activateCopy {
 		if err := clearAndCopy(copySource, dest); err != nil {
@@ -549,11 +588,7 @@ func activateAgent(linkTarget, copySource, dest string, mode activation) (Mode, 
 	if err := os.RemoveAll(dest); err != nil {
 		return "", fmt.Errorf("clear target %s: %w", dest, err)
 	}
-	abs, err := filepath.Abs(linkTarget)
-	if err != nil {
-		return "", fmt.Errorf("resolve link target: %w", err)
-	}
-	linkErr := os.Symlink(abs, dest)
+	linkErr := os.Symlink(linkTarget, dest)
 	if linkErr == nil {
 		return ModeSymlink, nil
 	}

@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
-	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/git"
@@ -190,6 +190,16 @@ func (a *App) finishLockRun(ctx context.Context, p *project, lf *skillslock.Stat
 		a.recordProjectState(ctx, p, lf)
 	}
 	return nil
+}
+
+// truthfulReuse corrects the per-skill reuse label: a skill the prefetch
+// fetched moments ago observes a cache hit at install time, but the run as a
+// whole downloaded it.
+func truthfulReuse(reuse string, prefetched bool) string {
+	if prefetched && reuse == installer.StoreReused {
+		return installer.StoreDownloaded
+	}
+	return reuse
 }
 
 // entryAgents returns an entry's declared gskill agents (nil for raw entries).
@@ -499,7 +509,9 @@ func emitRunPhase(emit func(InstallProgressEvent), p InstallPhase, total int) {
 // mixed results return ErrPartialInstall, total failure returns the first
 // cause, and successes are persisted either way.
 func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslock.Lock, req InstallFromLockRequest, res *InstallFromLockResult) (*skillslock.State, error) {
-	lf, err := loadOrNewLock(p.lockPath)
+	lf, err := a.loadLockMigrated(ctx, p, migrateRunOptions{
+		frozen: req.Frozen, dryRun: req.DryRun, offline: req.Offline,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +519,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 	var interrupted bool
 	var firstErr error
 	names := sortedLockNames(l)
-	a.maybePrefetch(ctx, p, lf, l, req, names)
+	prefetched := a.maybePrefetch(ctx, p, lf, l, req, names)
 	for k, name := range names {
 		e, _ := l.Entry(name)
 		// Cancellation is guaranteed between skills (contract guarantee 4):
@@ -520,6 +532,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 			continue
 		}
 		r := a.runOneLockEntry(ctx, p, lf, name, e, req, k+1, len(names))
+		r.StoreReuse = truthfulReuse(r.StoreReuse, prefetched[name])
 		res.Skills = append(res.Skills, r)
 		switch {
 		case r.Err != nil:
@@ -843,7 +856,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 
 	staged, err := a.stageAndVerifyLockEntry(ctx, p, lf, name, e, req, em)
 	if err != nil {
-		return fail(enrichOfflineMiss(p, e, req, err))
+		return fail(enrichOfflineMiss(e, req, err))
 	}
 
 	if req.DryRun {
@@ -855,6 +868,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 	// recorded hash marks managed copy-mode installs as gskill's own; anything
 	// else fails closed until --force approves the overwrite.
 	staged.ireq.PreserveForeign = !req.Force
+	staged.ireq.ReplaceActive = req.Force
 	if prior, ok := lf.Skills[name]; ok {
 		staged.ireq.PriorContentHash = prior.Resolved.ContentHash
 	}
@@ -907,7 +921,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 // content-store facts the user needs (spec 015 FR-019, error contract
 // object-not-found-offline): the required object identity that was absent
 // from the resolved store, and the remediation.
-func enrichOfflineMiss(p *project, e skillslock.Entry, req InstallFromLockRequest, err error) error {
+func enrichOfflineMiss(e skillslock.Entry, req InstallFromLockRequest, err error) error {
 	if !req.Offline || !errors.Is(err, errs.ErrSourceUnavailable) {
 		return err
 	}
@@ -919,8 +933,8 @@ func enrichOfflineMiss(p *project, e skillslock.Entry, req InstallFromLockReques
 		return err
 	}
 	return errs.WithHint(
-		fmt.Errorf("%w\n  required object: %s (not available in the %s store)",
-			err, hash, p.storeScope),
+		fmt.Errorf("%w\n  required content: %s (no committed copy, and the clone cache cannot serve it offline)",
+			err, hash),
 		"run without --offline to fetch it",
 	)
 }
@@ -1158,10 +1172,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		// output; that would silently stop catching that drift.
 		return LockSkillResult{}, false
 	}
-	if !p.contentHas(prior.Resolved.ContentHash) {
-		return LockSkillResult{}, false
-	}
-	if !a.storedContentUpToDate(p, prior.Resolved.ContentHash, e.ComputedHash) {
+	if !committedContentUpToDate(p, name, prior, e.ComputedHash) {
 		return LockSkillResult{}, false
 	}
 
@@ -1176,10 +1187,10 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	stampResultProvenance(&r, e, req)
 	r.Agents = ids
 	r.Commit = prior.Resolved.Commit
-	// The fast path is a store hit by definition: content came from the
-	// resolved store, nothing was fetched (spec 015 FR-007).
+	// The fast path is a committed-content hit by definition: nothing was
+	// fetched (spec 022 FR-007).
 	r.StoreReuse = installer.StoreReused
-	r.StoreScope = p.storeScope
+	r.StoreScope = installer.ScopeLabelCommitted
 	if len(missing) == 0 {
 		return r, true
 	}
@@ -1202,26 +1213,42 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	return r, true
 }
 
-// storedContentUpToDate establishes that the stored object still backs the
-// lock entry. The recorded hash must match the actual stored content —
+// committedContentUpToDate establishes that the committed repo copy still
+// backs the lock entry (spec 022 FR-007): its full content hash must match
+// the resolved contentHash AND its compat hash the entry's computedHash —
 // comparing the entry against itself would let an edited or corrupted
 // computedHash pass as "up to date" (it must fail closed, or be accepted via
-// --force, on the full path). CompatHash skips symlinks by design, so it
-// alone cannot notice one added into (or retargeted inside) a shared object:
-// for the global store the store's own verification also runs (depth per
-// store.verify_on_use), so a tampered object never satisfies the fast path
-// (FR-020) — it falls through to the full path, which fails closed or
-// quarantines.
-func (a *App) storedContentUpToDate(p *project, contentHash, computedHash string) bool {
-	if compat, err := integrity.CompatHash(p.contentPath(contentHash)); err != nil || compat != computedHash {
+// --force, on the full path). The full content hash covers symlinks that
+// CompatHash skips by design, so a tampered committed copy never satisfies
+// the fast path — it falls through to the full path, which fails closed.
+func committedContentUpToDate(p *project, name string, prior skillslock.Record, computedHash string) bool {
+	dest := installedContentPath(p, name, prior)
+	if dest == "" {
 		return false
 	}
-	if p.storeScope == config.StoreScopeGlobal && p.global != nil {
-		if err := newGlobalContentStore(p.global, a.cfg).Verify(contentHash); err != nil {
-			return false
-		}
+	if ok, _, err := integrity.VerifyDir(dest, prior.Resolved.ContentHash); err != nil || !ok {
+		return false
+	}
+	if compat, err := integrity.CompatHash(dest); err != nil || compat != computedHash {
+		return false
 	}
 	return true
+}
+
+// installedContentPath returns the directory holding this entry's installed
+// content: the repo-owned active entry for project scope, or — for a
+// user-global install, which has no active entry at all — the first recorded
+// agent target, which under spec 022 is a real copy of the same content.
+// Without the global carve-out the fast path could never fire for a
+// `--global` skill, so every install would re-run the full fetch pipeline.
+func installedContentPath(p *project, name string, prior skillslock.Record) string {
+	if prior.Installation.Scope != string(installer.ScopeGlobal) {
+		return active.Path(p.root, name)
+	}
+	for _, id := range sortedKeys(prior.Installation.Targets) {
+		return resolveTarget(p.root, prior.Installation.Targets[id])
+	}
+	return ""
 }
 
 // resolveLockEntry pins an entry to a revision: a previously recorded gskill

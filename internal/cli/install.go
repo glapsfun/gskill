@@ -276,9 +276,6 @@ func humanLockInstall(res app.InstallFromLockResult, sum app.InstallSummary) str
 	if line := storeReuseLine(res.Skills); line != "" {
 		b.WriteString("\n" + line)
 	}
-	if legacyStoreServed(res.Skills) {
-		b.WriteString("\nhint: run 'gskill migrate global-store' to share this content across projects")
-	}
 	for _, s := range res.Skills {
 		switch app.InstallStatus(s.Status) { //nolint:exhaustive // successful statuses render as counters only (clarification #2)
 		case app.InstallStatusFailed, app.InstallStatusCancelled, app.InstallStatusNotAttempted:
@@ -485,8 +482,13 @@ func storeReuseLine(skills []app.LockSkillResult) string {
 		return ""
 	}
 	label := "store"
-	if scope == "global" {
+	switch scope {
+	case "global":
 		label = "global store"
+	case installer.ScopeLabelCommitted:
+		// Spec 022 retired the content store: what reuse means now is
+		// committed repo content or the shared clone cache.
+		label = "content"
 	}
 	switch {
 	case downloaded == 0:
@@ -496,16 +498,4 @@ func storeReuseLine(skills []app.LockSkillResult) string {
 	default:
 		return fmt.Sprintf("%s: %d reused, %d downloaded", label, reused, downloaded)
 	}
-}
-
-// legacyStoreServed reports whether any skill was served by the legacy
-// project-local store — the migration-hint trigger (spec 015 FR-039 phase-2
-// rollout).
-func legacyStoreServed(skills []app.LockSkillResult) bool {
-	for _, s := range skills {
-		if s.StoreScope == "project" {
-			return true
-		}
-	}
-	return false
 }
