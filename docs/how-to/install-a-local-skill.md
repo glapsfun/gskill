@@ -18,11 +18,13 @@ gskill list                      # confirm it installed
 
 ## Expected result
 
-- The skill is installed into your detected agent's directory, e.g.
-  `.claude/skills/<name>/SKILL.md`.
+- The skill content lands at `.agents/skills/<name>/`, and your detected agent gets a relative
+  symlink to it, e.g. `.claude/skills/<name>` — so `.claude/skills/<name>/SKILL.md` resolves.
 - `skills-lock.json` gains an entry recording both intent (source, constraint, agents) and resolved
   reality (content hash, targets).
 - `gskill add` prints `Added <name> (<content-hash>) into N agent(s)` and exits `0`.
+- `git status` lists `.agents/skills/<name>/` and the agent link as addable — **commit them** along
+  with `skills-lock.json`; a fresh clone then works with zero gskill commands.
 - Re-running `gskill install` reports **no changes** — installs are idempotent.
 
 ## See also

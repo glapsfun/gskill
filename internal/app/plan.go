@@ -14,7 +14,6 @@ import (
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/agent"
-	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
@@ -299,10 +298,11 @@ func (a *App) planSelectedActions(plan *InstallPlan, req PlanRequest, p *project
 		Version: req.Version, Ref: req.Ref, Commit: req.Commit,
 		Agents: req.AgentIDs, Force: req.Force, Scope: req.Scope, Mode: req.Mode,
 	}
+	// Ownership keys on the repo's .agents/skills root only (spec 022). The
+	// user config dir used to host the content store and was accepted here;
+	// with the store retired it must not be, or any symlink into the user's
+	// gskill config would count as gskill-managed and be silently replaced.
 	roots := a.managedRoots(p)
-	if cfgDir, cfgErr := config.Dir(); cfgErr == nil {
-		roots = append(roots, cfgDir)
-	}
 	external, extErr := declaredExternalNames(p.lockPath, lf)
 	if extErr != nil {
 		return extErr

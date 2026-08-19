@@ -14,7 +14,7 @@ func completionWords() []string {
 		"add", "onboard", "install", "update", "remove",
 		"list", "info", "search", "outdated",
 		"project",
-		"cache", "config", "doctor", "store", "migrate", "projects",
+		"cache", "config", "doctor",
 		"dashboard", "completion", "version",
 	}
 	for _, m := range aliasTable {

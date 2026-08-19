@@ -87,7 +87,7 @@ func assertLockPersistedAfterCancel(t *testing.T, root string) {
 		t.Fatalf("lockfile does not validate after cancellation: %v", err)
 	}
 	e, ok := l.Entry("alpha")
-	if !ok || e.Ext == nil || e.Ext.StoreHash == "" {
+	if !ok || e.Ext == nil || e.Ext.ContentHash == "" {
 		t.Errorf("alpha lock entry not enriched after cancellation: %+v", e)
 	}
 }

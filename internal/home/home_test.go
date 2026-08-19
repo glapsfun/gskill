@@ -51,13 +51,9 @@ func TestHome_LayoutAccessors(t *testing.T) {
 		want string
 	}{
 		{"Root", h.Root(), root},
-		{"StoreDir", h.StoreDir(), filepath.Join(root, "store")},
 		{"CacheDir", h.CacheDir(), filepath.Join(root, "cache")},
 		{"TmpDir", h.TmpDir(), filepath.Join(root, "tmp")},
 		{"LocksDir", h.LocksDir(), filepath.Join(root, "locks")},
-		{"ProjectsDir", h.ProjectsDir(), filepath.Join(root, "projects")},
-		{"PinsDir", h.PinsDir(), filepath.Join(root, "pins")},
-		{"QuarantineDir", h.QuarantineDir(), filepath.Join(root, "quarantine")},
 		{"ConfigFile", h.ConfigFile(), filepath.Join(root, "config.toml")},
 	}
 	for _, tc := range cases {
@@ -76,10 +72,8 @@ func TestEnsure_CreatesOwnerOnlyTree(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 
-	for _, dir := range []string{
-		h.Root(), h.StoreDir(), h.CacheDir(), h.TmpDir(),
-		h.LocksDir(), h.ProjectsDir(), h.PinsDir(), h.QuarantineDir(),
-	} {
+	// Spec 022: the home is a cache — exactly cache/, locks/, tmp/ exist.
+	for _, dir := range []string{h.Root(), h.CacheDir(), h.TmpDir(), h.LocksDir()} {
 		info, err := os.Stat(dir)
 		if err != nil {
 			t.Fatalf("stat %s: %v", dir, err)
@@ -131,7 +125,7 @@ func TestCheckPerms_FlagsGroupAndWorldWritable(t *testing.T) {
 	if err := h.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if err := os.Chmod(h.StoreDir(), 0o777); err != nil { //nolint:gosec // intentional non-restrictive perms for the test
+	if err := os.Chmod(h.CacheDir(), 0o777); err != nil { //nolint:gosec // intentional non-restrictive perms for the test
 		t.Fatalf("chmod: %v", err)
 	}
 
@@ -140,11 +134,11 @@ func TestCheckPerms_FlagsGroupAndWorldWritable(t *testing.T) {
 		t.Fatalf("CheckPerms: %v", err)
 	}
 	if len(findings) == 0 {
-		t.Fatal("CheckPerms found nothing for a world-writable store dir")
+		t.Fatal("CheckPerms found nothing for a world-writable cache dir")
 	}
 	found := false
 	for _, f := range findings {
-		if f.Path == h.StoreDir() {
+		if f.Path == h.CacheDir() {
 			found = true
 			if f.Remedy == "" {
 				t.Error("finding has no remediation hint")
@@ -152,7 +146,7 @@ func TestCheckPerms_FlagsGroupAndWorldWritable(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("no finding for %s in %v", h.StoreDir(), findings)
+		t.Errorf("no finding for %s in %v", h.CacheDir(), findings)
 	}
 }
 
@@ -164,7 +158,7 @@ func TestCheckPathOwnership_OwnedPathOK(t *testing.T) {
 	if err := h.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if err := h.CheckPathSafety(h.StoreDir()); err != nil {
+	if err := h.CheckPathSafety(h.CacheDir()); err != nil {
 		t.Errorf("CheckPathSafety on owned 0700 dir: %v", err)
 	}
 }
@@ -180,7 +174,7 @@ func TestCheckPathSafety_WorldWritableRefused(t *testing.T) {
 	if err := h.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	dir := filepath.Join(h.StoreDir(), "unsafe")
+	dir := filepath.Join(h.CacheDir(), "unsafe")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

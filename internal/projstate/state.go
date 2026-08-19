@@ -11,8 +11,14 @@ import (
 	"github.com/glapsfun/gskill/internal/fsutil"
 )
 
-// schemaVersion is the state.json schema this build reads and writes.
-const schemaVersion = 1
+// schemaVersion is the state.json schema this build writes (spec 022: v2
+// keeps only the machine-local facts — projectId and per-agent placement).
+// legacySchemaVersion (v1, the pre-022 store model) is still readable; a v1
+// file upgrades to v2 on its next Save.
+const (
+	schemaVersion       = 2
+	legacySchemaVersion = 1
+)
 
 // fileName is the state file under the project's .gskill directory.
 const (
@@ -37,14 +43,20 @@ type State struct {
 	root string
 }
 
-// SkillState records which global object a skill activates and which links
-// gskill owns for it — enough for safe repair and removal (FR-014).
+// SkillState records the gskill-created agent targets for one skill — the
+// only machine-local facts left in the repo-owned model (spec 022 data-model
+// §4): per-agent mode records the symlink→copy fallback, which is per-agent
+// and per-machine. The active entry is always `.agents/skills/<name>`
+// (derivable) and content identity lives in the committed lockfile.
 type SkillState struct {
-	StoreHash    string                `json:"storeHash"`
-	StoreScope   string                `json:"storeScope,omitempty"`
-	ActiveTarget string                `json:"activeTarget,omitempty"`
-	ActiveMode   string                `json:"activeMode,omitempty"`
-	Agents       map[string]AgentState `json:"agents,omitempty"`
+	Agents map[string]AgentState `json:"agents,omitempty"`
+
+	// Legacy v1 fields: read for migration detection (spec 022 §9), never
+	// written — a v1 file upgrades on its next Save.
+	StoreHash    string `json:"storeHash,omitempty"`
+	StoreScope   string `json:"storeScope,omitempty"`
+	ActiveTarget string `json:"activeTarget,omitempty"`
+	ActiveMode   string `json:"activeMode,omitempty"`
 }
 
 // AgentState is one gskill-created agent target.
@@ -79,10 +91,13 @@ func LoadOrInit(root string) (*State, error) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return nil, fmt.Errorf("parse project state %s: %w", path, err)
 	}
-	if st.SchemaVersion != schemaVersion {
-		return nil, fmt.Errorf("project state %s has schema version %d; this gskill understands version %d",
-			path, st.SchemaVersion, schemaVersion)
+	if st.SchemaVersion != schemaVersion && st.SchemaVersion != legacySchemaVersion {
+		return nil, fmt.Errorf("project state %s has schema version %d; this gskill understands versions %d and %d",
+			path, st.SchemaVersion, legacySchemaVersion, schemaVersion)
 	}
+	// A v1 file upgrades on its next Save; legacy per-skill fields are
+	// dropped then too (they are never re-written).
+	st.SchemaVersion = schemaVersion
 	if st.Skills == nil {
 		st.Skills = map[string]SkillState{}
 	}

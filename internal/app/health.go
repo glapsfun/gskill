@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,31 +27,26 @@ const (
 	TargetModeMismatch TargetState = "mode-mismatch" // recorded mode differs from on disk
 	TargetLegacyStore  TargetState = "legacy-store"  // symlink directly into the store (pre-active-layer)
 	TargetCorrupt      TargetState = "corrupt"       // a copy whose content no longer matches the lock
+	// TargetSymlinklessCheckout is the core.symlinks=false artifact: a plain
+	// file holding the committed link's text (spec 022 FR-016). Detected and
+	// reported only — never repaired; symlinks are a platform requirement.
+	TargetSymlinklessCheckout TargetState = "symlinkless-checkout"
 )
 
 // SkillHealth is the evaluated three-hop state for one locked skill.
 type SkillHealth struct {
-	Name         string
-	Scope        string
-	StorePresent bool
-	Hashed       bool // whether store/copy content was hash-verified this evaluation
-	StoreHashOK  bool // only meaningful when Hashed
-	StorePath    string
-	ActiveState  active.Health
-	ActivePath   string // project-relative active entry
-	Agents       map[string]TargetState
-	Modes        map[string]string
+	Name        string
+	Scope       string
+	ActiveState active.Health
+	ActivePath  string // project-relative active entry
+	Agents      map[string]TargetState
+	Modes       map[string]string
+	Targets     map[string]string // agentID -> recorded target path (repo-relative)
 }
 
-// Healthy reports whether every rung of the chain is in a good state. When the
-// store was hash-verified, a content mismatch is unhealthy (fail closed).
+// Healthy reports whether every rung of the chain is in a good state (spec
+// 022: committed content → agent links; there is no store rung).
 func (h SkillHealth) Healthy() bool {
-	if !h.StorePresent {
-		return false
-	}
-	if h.Hashed && !h.StoreHashOK {
-		return false
-	}
 	if h.Scope != string(installer.ScopeGlobal) && h.ActiveState != active.HealthOK {
 		return false
 	}
@@ -65,29 +61,54 @@ func (h SkillHealth) Healthy() bool {
 // Faults returns human-readable descriptions of every non-OK rung.
 func (h SkillHealth) Faults() []string {
 	var out []string
-	if !h.StorePresent {
-		out = append(out, fmt.Sprintf("%s: store content %s missing", h.Name, h.StorePath))
-	} else if h.Hashed && !h.StoreHashOK {
-		out = append(out, h.Name+": store content hash mismatch")
-	}
 	if h.Scope != string(installer.ScopeGlobal) && h.ActiveState != active.HealthOK {
-		out = append(out, fmt.Sprintf("%s: active entry %s", h.Name, h.ActiveState))
+		if h.ActiveState == active.HealthDrifted {
+			out = append(out, fmt.Sprintf("%s: committed content at %s no longer matches skills-lock.json (drifted)", h.Name, h.ActivePath))
+		} else {
+			out = append(out, fmt.Sprintf("%s: active entry %s", h.Name, h.ActiveState))
+		}
 	}
 	for _, id := range sortedKeys(h.Agents) {
-		if st := h.Agents[id]; st != TargetOKSymlink && st != TargetOKCopy {
-			out = append(out, fmt.Sprintf("%s:%s %s", id, h.Name, st))
+		st := h.Agents[id]
+		if st == TargetOKSymlink || st == TargetOKCopy {
+			continue
 		}
+		if st == TargetSymlinklessCheckout {
+			out = append(out, symlinklessCheckoutMsg(cmp.Or(h.Targets[id], h.Name)))
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s:%s %s", id, h.Name, st))
 	}
 	return out
 }
 
-// IntegrityFault reports whether any fault is a content-integrity failure — a
-// hash-verified store mismatch or a corrupt copy target — which maps to a
-// fail-closed exit code.
-func (h SkillHealth) IntegrityFault() bool {
-	if h.Hashed && h.StorePresent && !h.StoreHashOK {
-		return true
+// symlinklessCheckoutMsg is the single error line check/doctor emit for a
+// degraded checkout — wording frozen by spec 022 (contracts/cli-surface.md).
+func symlinklessCheckoutMsg(relPath string) string {
+	return fmt.Sprintf("agent link %s is a plain file, not a symlink (checkout made without symlink support, e.g. core.symlinks=false); re-clone on a symlink-capable filesystem — gskill does not repair degraded checkouts", relPath)
+}
+
+// isSymlinklessArtifact reports whether path is a regular file holding link
+// text into the active layer — what a core.symlinks=false checkout leaves in
+// place of a committed agent link.
+func isSymlinklessArtifact(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+		return false
 	}
+	data, err := os.ReadFile(path) //nolint:gosec // recorded agent-target path, size-capped above
+	if err != nil {
+		return false
+	}
+	target := strings.TrimSpace(string(data))
+	return !strings.Contains(target, "\n") && strings.Contains(filepath.ToSlash(target), ".agents/skills/")
+}
+
+// IntegrityFault reports whether any fault is a content-integrity failure — a
+// corrupt copy target — which maps to a fail-closed exit code. Drifted
+// committed content is deliberately NOT one: spec 022 reports it as drift
+// (exit 7); `gskill verify` is the fail-closed hash check (exit 6).
+func (h SkillHealth) IntegrityFault() bool {
 	for _, st := range h.Agents {
 		if st == TargetCorrupt {
 			return true
@@ -101,14 +122,9 @@ func (h SkillHealth) IntegrityFault() bool {
 // (the integrity check); otherwise only presence is checked (the cheap path used
 // by reconcile to decide what to skip).
 func (a *App) evaluateHealth(p *project, lf *skillslock.State, verifyHash bool) ([]SkillHealth, error) {
-	storeRoot, err := filepath.Abs(p.contentRoot())
-	if err != nil {
-		return nil, fmt.Errorf("resolve store root: %w", err)
-	}
-
 	out := make([]SkillHealth, 0, len(lf.Skills))
 	for _, name := range sortedKeys(lf.Skills) {
-		h, evalErr := a.evaluateSkill(p, name, lf.Skills[name], storeRoot, verifyHash)
+		h, evalErr := a.evaluateSkill(p, name, lf.Skills[name], verifyHash)
 		if evalErr != nil {
 			return nil, evalErr
 		}
@@ -118,38 +134,28 @@ func (a *App) evaluateHealth(p *project, lf *skillslock.State, verifyHash bool) 
 }
 
 // evaluateSkill computes the health of a single locked skill.
-func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, storeRoot string, verifyHash bool) (SkillHealth, error) {
+func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, verifyHash bool) (SkillHealth, error) {
 	hash := locked.Resolved.ContentHash
-	storePath := p.contentPath(hash)
+	// Spec 022: there is no store rung — the committed repo copy is the
+	// content, evaluated below as the active entry's health.
 	h := SkillHealth{
-		Name:        name,
-		Scope:       locked.Installation.Scope,
-		StorePath:   storePath,
-		ActivePath:  activePathOf(locked, name),
-		StoreHashOK: true,
-		Agents:      make(map[string]TargetState, len(locked.Installation.Agents)),
-		Modes:       locked.Installation.Modes,
-	}
-
-	h.StorePresent = p.contentHas(hash)
-	if h.StorePresent && verifyHash {
-		hashes, err := integrity.HashDir(storePath)
-		if err != nil {
-			return SkillHealth{}, fmt.Errorf("hash store %s: %w", name, err)
-		}
-		h.Hashed = true
-		h.StoreHashOK = hashes.ContentHash == hash
+		Name:       name,
+		Scope:      locked.Installation.Scope,
+		ActivePath: activePathOf(locked, name),
+		Agents:     make(map[string]TargetState, len(locked.Installation.Agents)),
+		Modes:      locked.Installation.Modes,
+		Targets:    locked.Installation.Targets,
 	}
 
 	global := locked.Installation.Scope == string(installer.ScopeGlobal)
-	linkTarget := storePath
+	legacyRoots := p.legacyStoreRoots()
+	linkTarget := active.Path(p.root, name)
 	if !global {
-		state, err := active.HealthOf(p.root, name, storePath)
+		state, err := active.HealthOf(p.root, name, hash, legacyRoots...)
 		if err != nil {
 			return SkillHealth{}, err
 		}
 		h.ActiveState = state
-		linkTarget = active.Path(p.root, name)
 	} else {
 		h.ActiveState = active.HealthOK
 	}
@@ -161,7 +167,7 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, s
 			continue
 		}
 		recordedMode := locked.Installation.Modes[id]
-		state, err := agentTargetState(targetDir, linkTarget, storeRoot, recordedMode, verifyHash, hash)
+		state, err := agentTargetState(targetDir, linkTarget, legacyRoots, recordedMode, verifyHash, hash)
 		if err != nil {
 			return SkillHealth{}, err
 		}
@@ -202,7 +208,7 @@ func activePathOf(locked skillslock.Record, name string) string {
 // agentTargetState classifies a single agent target on disk. When verifyHash is
 // set, a copied target's content is hashed against expectedHash so a tampered or
 // truncated copy is reported as corrupt rather than blindly accepted.
-func agentTargetState(targetDir, linkTarget, storeRoot, recordedMode string, verifyHash bool, expectedHash string) (TargetState, error) {
+func agentTargetState(targetDir, linkTarget string, legacyRoots []string, recordedMode string, verifyHash bool, expectedHash string) (TargetState, error) {
 	info, err := os.Lstat(targetDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -212,6 +218,14 @@ func agentTargetState(targetDir, linkTarget, storeRoot, recordedMode string, ver
 	}
 
 	if info.Mode()&os.ModeSymlink == 0 {
+		if info.Mode().IsRegular() {
+			// A plain file where a link should be: the core.symlinks=false
+			// artifact (detected, never repaired) — or foreign content.
+			if isSymlinklessArtifact(targetDir) {
+				return TargetSymlinklessCheckout, nil
+			}
+			return TargetForeign, nil
+		}
 		// A real directory: a copy (or a foreign dir).
 		return copyTargetState(targetDir, recordedMode, verifyHash, expectedHash)
 	}
@@ -233,8 +247,10 @@ func agentTargetState(targetDir, linkTarget, storeRoot, recordedMode string, ver
 	if pathEqual(resolved, linkTarget) {
 		return TargetOKSymlink, nil
 	}
-	if under(resolved, storeRoot) {
-		return TargetLegacyStore, nil // links straight into the store, pre-active-layer
+	for _, legacyRoot := range legacyRoots {
+		if under(resolved, legacyRoot) {
+			return TargetLegacyStore, nil // links straight into a pre-022 store
+		}
 	}
 	return TargetModeMismatch, nil
 }

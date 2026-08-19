@@ -61,9 +61,6 @@ func Open() (*Home, error) {
 // Root returns the home root directory.
 func (h *Home) Root() string { return h.root }
 
-// StoreDir returns the content-addressed global store root.
-func (h *Home) StoreDir() string { return filepath.Join(h.root, "store") }
-
 // CacheDir returns the download cache directory.
 func (h *Home) CacheDir() string { return filepath.Join(h.root, "cache") }
 
@@ -73,25 +70,13 @@ func (h *Home) TmpDir() string { return filepath.Join(h.root, "tmp") }
 // LocksDir returns the directory holding all gskill lock files.
 func (h *Home) LocksDir() string { return filepath.Join(h.root, "locks") }
 
-// ProjectsDir returns the advisory project-registry directory.
-func (h *Home) ProjectsDir() string { return filepath.Join(h.root, "projects") }
-
-// PinsDir returns the directory of GC pin markers.
-func (h *Home) PinsDir() string { return filepath.Join(h.root, "pins") }
-
-// QuarantineDir returns where corrupted store objects are moved.
-func (h *Home) QuarantineDir() string { return filepath.Join(h.root, "quarantine") }
-
 // ConfigFile returns the user-level config file path inside the home.
 func (h *Home) ConfigFile() string { return filepath.Join(h.root, "config.toml") }
 
 // Ensure creates the home layout with owner-only permissions. It is
 // idempotent and never loosens permissions on existing directories.
 func (h *Home) Ensure() error {
-	for _, dir := range []string{
-		h.root, h.StoreDir(), h.CacheDir(), h.TmpDir(),
-		h.LocksDir(), h.ProjectsDir(), h.PinsDir(), h.QuarantineDir(),
-	} {
+	for _, dir := range []string{h.root, h.CacheDir(), h.TmpDir(), h.LocksDir()} {
 		if err := os.MkdirAll(dir, dirPerm); err != nil {
 			return fmt.Errorf("create home dir %s: %w", dir, err)
 		}

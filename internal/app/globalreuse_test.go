@@ -15,9 +15,6 @@ import (
 	"github.com/glapsfun/gskill/internal/installer"
 )
 
-// scopeGlobal is the store-scope label asserted throughout these tests.
-const scopeGlobal = "global"
-
 // globalHome returns a private gskill home and an App bound to it.
 func globalHome(t *testing.T) (string, *app.App) {
 	t.Helper()
@@ -54,12 +51,11 @@ func installLock(t *testing.T, a *app.App, root string, offline bool) (app.Insta
 	})
 }
 
-// TestGlobalReuse_TwoProjectsShareOneObject is spec 015 US1 scenarios 1–3 and
-// quickstart S1: two projects locking identical content share exactly one
-// global store object; the second project's install fetches nothing (the
-// source repo is deleted first to prove it), both active links resolve into
-// the store, state.json records the hash, and the committed lockfile carries
-// no user-specific store path (FR-016, SC-010).
+// TestGlobalReuse_TwoProjectsShareOneObject (spec 022 SC-002): the first
+// project's install fetches; a second project restoring the same lock is
+// served entirely by the commit-keyed clone cache — the source repo is
+// deleted first to prove no fetch happens. Both projects hold repo-owned
+// copies, and the committed lockfile carries no user-specific path.
 func TestGlobalReuse_TwoProjectsShareOneObject(t *testing.T) {
 	t.Parallel()
 
@@ -73,10 +69,6 @@ func TestGlobalReuse_TwoProjectsShareOneObject(t *testing.T) {
 		t.Fatalf("repo1 install: %v", err)
 	}
 	assertStoreDecisions(t, "repo1", res1, installer.StoreDownloaded)
-	objects := listStoreObjects(t, h)
-	if len(objects) != 2 {
-		t.Fatalf("store objects after repo1 = %v, want 2 (alpha, beta)", objects)
-	}
 
 	// repo2 is a fresh clone of the same project: same committed lockfile
 	// (including the gskill block repo1's install enriched). The source repo
@@ -99,38 +91,35 @@ func TestGlobalReuse_TwoProjectsShareOneObject(t *testing.T) {
 	}
 	assertStoreDecisions(t, "repo2", res2, installer.StoreReused)
 
-	// Still exactly one physical object per skill (FR-005).
-	objects = listStoreObjects(t, h)
-	if len(objects) != 2 {
-		t.Errorf("store objects after repo2 = %v, want still 2 (no duplicates)", objects)
-	}
-
 	for _, root := range []string{repo1, repo2} {
-		assertActiveLinksIntoHome(t, root, h, "alpha", "beta")
+		assertActiveRepoOwned(t, root, "alpha", "beta")
 		assertStateRecordsGlobal(t, root, "alpha", "beta")
 		assertLockfileHasNoHomePath(t, root, h)
 	}
 }
 
-// assertActiveLinksIntoHome checks every named skill's active link resolves
-// under the global home.
-func assertActiveLinksIntoHome(t *testing.T, root, h string, names ...string) {
+// assertActiveRepoOwned checks every named skill's active entry is a real
+// directory with content (spec 022: the repo owns skill content; entries are
+// never links into any store).
+func assertActiveRepoOwned(t *testing.T, root string, names ...string) {
 	t.Helper()
-	wantPrefix, _ := filepath.EvalSymlinks(h)
 	for _, name := range names {
-		link := filepath.Join(root, ".agents", "skills", name)
-		resolved, err := filepath.EvalSymlinks(link)
+		entry := filepath.Join(root, ".agents", "skills", name)
+		info, err := os.Lstat(entry)
 		if err != nil {
-			t.Fatalf("%s active link: %v", root, err)
+			t.Fatalf("%s active entry: %v", root, err)
 		}
-		if !strings.HasPrefix(resolved, wantPrefix+string(filepath.Separator)) {
-			t.Errorf("%s/%s resolves to %q, want under global home %q", root, name, resolved, wantPrefix)
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			t.Fatalf("%s/%s is not a real directory: mode %v", root, name, info.Mode())
+		}
+		if _, err := os.Stat(filepath.Join(entry, "SKILL.md")); err != nil {
+			t.Errorf("%s/%s has no content: %v", root, name, err)
 		}
 	}
 }
 
-// assertStateRecordsGlobal checks state.json records a project ID and, per
-// skill, a store hash with global scope (FR-014).
+// assertStateRecordsGlobal checks state.json (schema v2, spec 022) records a
+// project ID and, per skill, the gskill-created agent targets.
 func assertStateRecordsGlobal(t *testing.T, root string, names ...string) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, ".gskill", "state.json")) //nolint:gosec // test-controlled temp path
@@ -138,25 +127,31 @@ func assertStateRecordsGlobal(t *testing.T, root string, names ...string) {
 		t.Fatalf("%s state.json: %v", root, err)
 	}
 	var st struct {
-		ProjectID string `json:"projectId"`
-		Skills    map[string]struct {
-			StoreHash  string `json:"storeHash"`
-			StoreScope string `json:"storeScope"`
+		SchemaVersion int    `json:"schemaVersion"`
+		ProjectID     string `json:"projectId"`
+		Skills        map[string]struct {
+			StoreHash string `json:"storeHash"`
+			Agents    map[string]struct {
+				Target string `json:"target"`
+			} `json:"agents"`
 		} `json:"skills"`
 	}
 	if err := json.Unmarshal(data, &st); err != nil {
 		t.Fatalf("%s state.json: %v", root, err)
+	}
+	if st.SchemaVersion != 2 {
+		t.Errorf("%s state.json schemaVersion = %d, want 2", root, st.SchemaVersion)
 	}
 	if st.ProjectID == "" {
 		t.Errorf("%s state.json has no projectId", root)
 	}
 	for _, name := range names {
 		sk, ok := st.Skills[name]
-		if !ok || sk.StoreHash == "" {
-			t.Errorf("%s state.json missing storeHash for %s", root, name)
+		if !ok || len(sk.Agents) == 0 {
+			t.Errorf("%s state.json missing agent targets for %s", root, name)
 		}
-		if sk.StoreScope != scopeGlobal {
-			t.Errorf("%s state.json %s storeScope = %q, want global store scope", root, name, sk.StoreScope)
+		if sk.StoreHash != "" {
+			t.Errorf("%s state.json still records a storeHash for %s (legacy v1 field)", root, name)
 		}
 	}
 }
@@ -252,8 +247,8 @@ func assertCopyModeState(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	alpha := st.Skills["alpha"]
-	if alpha.StoreScope != scopeGlobal {
-		t.Errorf("storeScope = %q, want global store scope", alpha.StoreScope)
+	if alpha.StoreScope != "" {
+		t.Errorf("storeScope = %q, want empty (legacy v1 field, spec 022)", alpha.StoreScope)
 	}
 	if alpha.Agents[testAgent].Mode != "copy" {
 		t.Errorf("agent mode = %q, want copy", alpha.Agents[testAgent].Mode)
@@ -302,8 +297,8 @@ func assertStoreDecisions(t *testing.T, label string, res app.InstallFromLockRes
 		if s.StoreReuse != wantReuse {
 			t.Errorf("%s %s StoreReuse = %q, want %q", label, s.Name, s.StoreReuse, wantReuse)
 		}
-		if s.StoreScope != scopeGlobal {
-			t.Errorf("%s %s StoreScope = %q, want global store scope", label, s.Name, s.StoreScope)
+		if s.StoreScope != installer.ScopeLabelCommitted {
+			t.Errorf("%s %s StoreScope = %q, want %q (repo-owned model)", label, s.Name, s.StoreScope, installer.ScopeLabelCommitted)
 		}
 	}
 }

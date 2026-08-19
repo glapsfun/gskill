@@ -1,13 +1,17 @@
 # Work offline
 
-Restore skills without network access, using GSKILL's content cache. This is useful on planes, in
-air-gapped CI, or whenever you want to guarantee no network calls.
+Restore skills without network access. This is useful on planes, in air-gapped CI, or whenever you
+want to guarantee no network calls.
+
+> A fresh `git clone` already contains the skills — committed content needs **zero** gskill
+> commands and zero network. You only need the steps below to re-materialise deleted or missing
+> content.
 
 ## Before you start
 
 - A committed `skills-lock.json`.
-- A **warm cache**: the content was fetched at least once on this machine (e.g. a previous
-  `gskill add` or `gskill install`).
+- Committed skill content, **or** a warm clone cache (the source was fetched at least once on this
+  machine, e.g. by a previous `gskill add` or `gskill install`).
 
 ## Steps
 
@@ -17,10 +21,10 @@ gskill --offline install --frozen-lockfile
 
 ## Expected result
 
-- If the cache contains everything the lockfile needs, GSKILL restores it and exits `0` — no network
-  is touched.
-- If something required is missing from the cache, GSKILL fails closed rather than reaching out:
-  expect a non-zero exit (source unavailable, `5`) with a clear diagnostic.
+- Committed content that matches the lock is up to date without any work; anything missing is
+  restored from the clone cache by its recorded commit. GSKILL exits `0` — no network is touched.
+- If something required is missing from both the repo and the cache, GSKILL fails closed rather
+  than reaching out: expect a non-zero exit (source unavailable, `5`) with a clear diagnostic.
 
 ## Tips
 
@@ -31,4 +35,4 @@ gskill --offline install --frozen-lockfile
 ## See also
 
 - [Reproduce with --frozen-lockfile](reproduce-with-frozen-lockfile.md)
-- [The store and the cache](../explanation/store-and-cache.md)
+- [The clone cache](../explanation/store-and-cache.md)

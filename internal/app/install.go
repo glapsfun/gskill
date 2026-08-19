@@ -28,8 +28,6 @@ import (
 	"github.com/glapsfun/gskill/internal/source"
 )
 
-const defaultLockTimeout = 30 * time.Second
-
 // InitResult reports what Init created.
 type InitResult struct {
 	LockPath string
@@ -399,7 +397,7 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 	res := AddResult{Warnings: append([]string(nil), warnings...)}
 	reqIDs := agentIDs(ireq.Agents)
 	err := a.withLock(ctx, p, func() error {
-		lf, lockErr := loadOrNewLock(p.lockPath)
+		lf, lockErr := a.loadLockMigrated(ctx, p, migrateRunOptions{})
 		if lockErr != nil {
 			return lockErr
 		}
@@ -438,6 +436,7 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 			// documented override (spec 011 FR-016). The previously locked
 			// hash marks copy-mode installs as gskill's own.
 			ir.PreserveForeign = !req.Force
+			ir.ReplaceActive = req.Force
 			if locked, ok := lf.Skills[s.ID]; ok {
 				ir.PriorContentHash = locked.Resolved.ContentHash
 			}
@@ -702,6 +701,12 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 	ireq := a.installRequest(p.root, ref, rev, agents, cmp.Or(in.Scope, req.Scope), modeOr(req.Mode, in.Mode))
 	ireq.Name = name
 	ireq.Offline = req.Offline
+	// The previously locked hash marks the existing repo-owned entry as
+	// gskill's own version, replaceable on update; drifted content still
+	// fails closed (spec 022 FR-008).
+	if old, ok := lf.Skills[name]; ok {
+		ireq.PriorContentHash = old.Resolved.ContentHash
+	}
 	// Honor the declared in-repo path so a multi-skill source resolves to the
 	// declared skill instead of erroring on multiple SKILL.md files.
 	if in.Path != "" {
@@ -787,15 +792,20 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 // installRequest assembles an installer.Request with shared defaults.
 func (a *App) installRequest(root string, ref source.Ref, rev resolver.Revision, agents []agent.Agent, scope, mode string) installer.Request {
 	home, _ := os.UserHomeDir()
+	legacyRoots := []string{filepath.Join(root, stateDirName, "store")}
+	if h, err := a.openHome(); err == nil {
+		legacyRoots = append(legacyRoots, filepath.Join(h.Root(), "store"))
+	}
 	return installer.Request{
-		Ref:         ref,
-		Revision:    rev,
-		Path:        ref.Path,
-		Agents:      agents,
-		Scope:       scopeOr(scope),
-		ModePref:    modeOr(mode, ""),
-		ProjectRoot: root,
-		Home:        home,
+		Ref:              ref,
+		Revision:         rev,
+		Path:             ref.Path,
+		Agents:           agents,
+		Scope:            scopeOr(scope),
+		ModePref:         modeOr(mode, ""),
+		ProjectRoot:      root,
+		Home:             home,
+		LegacyStoreRoots: legacyRoots,
 	}
 }
 
@@ -806,7 +816,7 @@ func (a *App) withLock(ctx context.Context, p *project, fn func() error) error {
 	if err := os.MkdirAll(p.locksDir, 0o750); err != nil {
 		return fmt.Errorf("create locks dir: %w", err)
 	}
-	lock, err := fsutil.Acquire(ctx, p.mutateLockPath(), fsutil.LockExclusive, defaultLockTimeout)
+	lock, err := fsutil.Acquire(ctx, p.mutateLockPath(), fsutil.LockExclusive, a.storeLockTimeout())
 	if err != nil {
 		return err
 	}
@@ -1063,11 +1073,11 @@ func saveLock(path string, lf *skillslock.State) error {
 	return skillslock.Save(path, l)
 }
 
-// gskillIgnorePatterns are the gskill-managed, reproducible artifacts kept out
-// of version control: the content store/cache/locks (.gskill/) and the active
-// skill layer (.agents/). The committed manifest + lockfile regenerate both via
-// `gskill sync` (FR-007, clarification: gitignore both, regen on sync).
-var gskillIgnorePatterns = []string{".gskill/", ".agents/"}
+// gskillIgnorePatterns are the gskill-managed, machine-local artifacts kept
+// out of version control: only the local state dir (.gskill/). Skill content
+// (.agents/) and agent links are committed — clone equals working skills
+// (spec 022 FR-010, reversing spec 017 for content).
+var gskillIgnorePatterns = []string{".gskill/"}
 
 // ensureGitignore appends any missing gskill ignore hints, returning whether it
 // changed the file.
@@ -1103,7 +1113,7 @@ func ensureGitignore(root string) (bool, error) {
 		return false, fmt.Errorf("open .gitignore: %w", err)
 	}
 
-	changed := false
+	content, changed := removeManagedAgentsLine(content)
 	for _, pattern := range gskillIgnorePatterns {
 		if lineContains(content, pattern) {
 			continue
@@ -1121,6 +1131,46 @@ func ensureGitignore(root string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// unignoreAgentsLayer drops the gskill-written ".agents/" ignore line from an
+// already-initialized project (spec 022 FR-010). ensureGitignore only runs via
+// Init, which every existing project skips (its .gskill/ already exists), so
+// without this the migrated, committed skill content would stay ignored and a
+// fresh clone would come up empty. A missing .gitignore has nothing to fix.
+func unignoreAgentsLayer(root string) (bool, error) {
+	path := filepath.Join(root, ".gitignore")
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, nil //nolint:nilerr // no .gitignore: nothing is ignored
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // project-root .gitignore
+	if err != nil {
+		return false, fmt.Errorf("read .gitignore: %w", err)
+	}
+	content, changed := removeManagedAgentsLine(string(data))
+	if !changed {
+		return false, nil
+	}
+	if err := fsutil.WriteFileAtomic(path, []byte(content), info.Mode().Perm()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// removeManagedAgentsLine drops the gskill-written ".agents/" ignore line —
+// recognizable exactly as the line immediately following the managed
+// ".gskill/" line, the pair earlier gskill versions appended together (spec
+// 017) — so existing projects become committable (spec 022 FR-010). A
+// ".agents/" line anywhere else is user-authored and is never touched.
+func removeManagedAgentsLine(content string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == ".agents/" && strings.TrimSpace(lines[i-1]) == ".gskill/" {
+			return strings.Join(append(lines[:i], lines[i+1:]...), "\n"), true
+		}
+	}
+	return content, false
 }
 
 // lineContains reports whether content has pattern as a whole trimmed line, so

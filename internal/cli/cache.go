@@ -5,18 +5,19 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/glapsfun/gskill/internal/app"
 )
 
-// cacheCmd groups cache-management subcommands.
+// cacheCmd groups cache-management subcommands. The cache is the home-level
+// commit-keyed clone cache shared by every project on the machine (spec 022):
+// cleaning it affects all projects, but it is purely a performance cache —
+// anything removed is re-fetched on demand.
 type cacheCmd struct {
 	Path  cachePathCmd  `cmd:"" help:"Print the cache directory."`
 	Stats cacheStatsCmd `cmd:"" help:"Show cache size and entry count."`
 	List  cacheListCmd  `cmd:"" help:"List cached entries."`
 	Clean cacheCleanCmd `cmd:"" help:"Remove all cached material."`
-}
-
-func cacheDir(root string) string {
-	return filepath.Join(root, ".gskill", "cache")
 }
 
 type cachePathCmd struct{}
@@ -27,8 +28,11 @@ func (cachePathCmd) Help() string {
 }
 
 // Run prints the cache directory.
-func (cachePathCmd) Run(out *Output, root projectRoot) error {
-	dir := cacheDir(string(root))
+func (cachePathCmd) Run(out *Output, a *app.App) error {
+	dir, err := a.CacheDir()
+	if err != nil {
+		return err
+	}
 	return out.Result(dir, map[string]any{"path": dir})
 }
 
@@ -40,10 +44,14 @@ func (cacheStatsCmd) Help() string {
 }
 
 // Run reports cache file count and total size.
-func (cacheStatsCmd) Run(out *Output, root projectRoot) error {
+func (cacheStatsCmd) Run(out *Output, a *app.App) error {
+	dir, dirErr := a.CacheDir()
+	if dirErr != nil {
+		return dirErr
+	}
 	var files int
 	var bytes int64
-	err := filepath.WalkDir(cacheDir(string(root)), func(_ string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -73,18 +81,20 @@ func (cacheListCmd) Help() string {
 	return examplesHelp("gskill cache list")
 }
 
-// Run lists top-level cache entries (algorithm/hash).
-func (cacheListCmd) Run(out *Output, root projectRoot) error {
-	dir := cacheDir(string(root))
+// Run lists cached entries (commit-keyed clones).
+func (cacheListCmd) Run(out *Output, a *app.App) error {
+	dir, dirErr := a.CacheDir()
+	if dirErr != nil {
+		return dirErr
+	}
 	keys := make([]string, 0)
-	algos, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read cache: %w", err)
 	}
-	for _, algo := range algos {
-		entries, _ := os.ReadDir(filepath.Join(dir, algo.Name()))
-		for _, e := range entries {
-			keys = append(keys, algo.Name()+":"+e.Name())
+	for _, e := range entries {
+		if e.IsDir() {
+			keys = append(keys, e.Name())
 		}
 	}
 	human := fmt.Sprintf("%d cached entr(ies)", len(keys))
@@ -99,9 +109,14 @@ func (cacheCleanCmd) Help() string {
 	return examplesHelp("gskill cache clean")
 }
 
-// Run removes all cached material.
-func (cacheCleanCmd) Run(out *Output, root projectRoot) error {
-	if err := os.RemoveAll(cacheDir(string(root))); err != nil {
+// Run removes all cached material (the shared home clone cache — affects
+// every project on this machine; content is re-fetched on demand).
+func (cacheCleanCmd) Run(out *Output, a *app.App) error {
+	dir, dirErr := a.CacheDir()
+	if dirErr != nil {
+		return dirErr
+	}
+	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("clean cache: %w", err)
 	}
 	human := "cache cleaned"

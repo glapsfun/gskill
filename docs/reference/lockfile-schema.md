@@ -27,12 +27,11 @@ Format: JSON, 2-space indent, trailing newline, stable key order (new entries ap
         "version": "2.1.3",
         "agents": ["claude", "codex"],
         "installMode": "symlink",
-        "scope": "project",
-        "storeHash": "sha256:…",
+        "contentHash": "sha256:…",
         "skillFileHash": "sha256:…",
         "installedAt": "2026-07-10T12:00:00Z",
         "updatedAt": "2026-07-10T12:00:00Z",
-        "state": { "…": "residual install state (targets, pins, metadata)" }
+        "state": { "…": "residual install state (targets, metadata)" }
       }
     }
   }
@@ -49,11 +48,14 @@ Format: JSON, 2-space indent, trailing newline, stable key order (new entries ap
 | core | `sourceType` | `github` \| `local` are installable by gskill; unknown types fail that entry clearly. |
 | core | `skillPath` | Path to the skill's `SKILL.md` inside the source; validated against traversal. |
 | core | `computedHash` | SHA-256 over the skill folder's files (path + raw bytes, locale-sorted), hex, no prefix — identical to the external tool's hash and verified before every install. Only `install --force` may rewrite it. |
-| `gskill` | `sourceUrl` / `ref` / `commit` / `version` | The resolved, immutable identity gskill pinned to. |
-| `gskill` | `agents` / `installMode` / `scope` | How and where the skill is installed. |
-| `gskill` | `storeHash` / `skillFileHash` | gskill's own canonical checksums (`sha256:`-prefixed) used by `verify` and the content store. |
+| `gskill` | `sourceUrl` / `ref` / `commit` / `version` | The resolved, immutable identity gskill pinned to; `commit` is also the clone-cache key for restores. |
+| `gskill` | `agents` / `installMode` | How and where the skill is installed. |
+| `gskill` | `contentHash` / `skillFileHash` | gskill's own canonical checksums (`sha256:`-prefixed). `contentHash` is the full-content identity of the committed skill copy — it covers symlinks that the shared `computedHash` skips, so restores and `verify` check against it. |
 | `gskill` | `installedAt` / `updatedAt` | Audit timestamps; excluded from reproducibility. |
-| `gskill` | `state` | Residual machine state (per-agent targets and modes, requested pins, frontmatter metadata) that keeps every existing command working. |
+| `gskill` | `state` | Residual machine state (per-agent targets and modes, frontmatter metadata) that keeps every existing command working. |
+
+Pre-022 entries may still carry `scope` and `storeHash`. They parse cleanly, are never written
+anymore, and are dropped on the entry's first rewrite.
 
 **Core fields are shared property.** gskill fills them only when absent and never rewrites them
 (except `computedHash`, the shared verification fact). Unknown top-level fields, unknown entry
@@ -70,3 +72,4 @@ fields — that is what makes committing `skills-lock.json` worthwhile. Under
 
 - [Reproduce with --frozen-lockfile](../how-to/reproduce-with-frozen-lockfile.md)
 - [The reproducibility model](../explanation/reproducibility-model.md)
+- [Repo-owned storage](../explanation/repo-owned-storage.md)

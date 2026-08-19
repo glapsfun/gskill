@@ -13,7 +13,7 @@ Every entry in `skills-lock.json` carries two kinds of facts:
   which install mode. `update` follows this intent.
 
 - **Reality** is everything the resolution produced: the shared `computedHash`, and — under
-  `gskill` — the exact commit, resolved version, store hash, and per-agent targets. It is
+  `gskill` — the exact commit, resolved version, content hash, and per-agent targets. It is
   machine-generated, deterministic, and never hand-edited.
 
 You commit the one file. The intent stays flexible (`^2.0.0` lets `update` pick up `2.1.3` later);
@@ -26,6 +26,14 @@ rewrites the resolution — never an accident.
 The file is the shared project-level v1 format also written by compatible external tooling (such as
 `npx skills`). GSKILL co-owns it losslessly: unknown fields and other tools' entries survive every
 rewrite byte-for-byte, and everything gskill-specific stays inside the per-entry `gskill` block.
+
+## Restore order: committed → cache → fetch
+
+Because skill content is [committed in the repository](repo-owned-storage.md), a fresh clone
+already *is* the reproduced environment. When `gskill install` does run, it reproduces from
+`skills-lock.json` alone, cheapest layer first: committed content whose hash matches the lock is up
+to date (zero network); missing content restores from the clone cache by the recorded commit; a
+cold cache fetches exactly once from the recorded source.
 
 ## What `--frozen-lockfile` guarantees
 
@@ -50,5 +58,6 @@ branch) are resolved to an immutable commit before being written.
 ## See also
 
 - [`skills-lock.json` schema](../reference/lockfile-schema.md)
+- [Repo-owned storage](repo-owned-storage.md)
 - [Reproduce with --frozen-lockfile](../how-to/reproduce-with-frozen-lockfile.md)
 - [Integrity and trust](integrity-and-trust.md)

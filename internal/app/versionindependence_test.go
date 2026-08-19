@@ -148,11 +148,8 @@ func TestVersionIndependence_TwoProjectsTwoVersions(t *testing.T) {
 		}
 	}
 
-	// (a) Two distinct objects; each project resolves its own version.
-	objects := listStoreObjects(t, h)
-	if len(objects) != 2 {
-		t.Fatalf("store objects = %v, want 2 distinct versions", objects)
-	}
+	// (a) Each project resolves its own committed version (spec 022: no
+	// shared store — independence comes from repo-owned copies).
 	readActive := func(root string) string {
 		t.Helper()
 		data, err := os.ReadFile(filepath.Join(root, ".agents", "skills", "gamma", "SKILL.md")) //nolint:gosec // test-controlled temp path
@@ -166,17 +163,18 @@ func TestVersionIndependence_TwoProjectsTwoVersions(t *testing.T) {
 	}
 
 	// (b) Update repo1 to v2: repo2 stays byte-identical, and the old object
-	// is not deleted (FR-010).
+	// is not deleted (FR-010). The lock was rewritten by hand while the
+	// committed content still holds v1, which the repo-owned model treats as
+	// drift (spec 022 FR-008) — Force is the documented repair path.
 	repo2Before := digestTree(t, repo2)
 	writeVersionLock(t, repo1, repo, "v2.0.0", hv2)
-	if _, err := installLock(t, a, repo1, false); err != nil {
+	if _, err := a.InstallFromLock(context.Background(), app.InstallFromLockRequest{
+		Root: repo1, Agents: []string{testAgent}, Force: true,
+	}); err != nil {
 		t.Fatalf("update repo1: %v", err)
 	}
 	if got := digestTree(t, repo2); got != repo2Before {
 		t.Error("updating repo1 changed repo2's tree")
-	}
-	if got := listStoreObjects(t, h); len(got) != 2 {
-		t.Errorf("store objects after update = %v, want both versions retained", got)
 	}
 	if readActive(repo1) != readActive(repo2) {
 		t.Error("after update both projects should resolve v2 content")
@@ -185,16 +183,13 @@ func TestVersionIndependence_TwoProjectsTwoVersions(t *testing.T) {
 	assertRemoveKeepsGlobalContent(t, a, h, repo1, repo2)
 }
 
-// assertRemoveKeepsGlobalContent removes gamma from repo1 and checks the
-// global objects survive, repo2 stays healthy, and repo1's state entry is
-// dropped (FR-009, FR-014, US2 scenario 3).
-func assertRemoveKeepsGlobalContent(t *testing.T, a *app.App, h, repo1, repo2 string) {
+// assertRemoveKeepsGlobalContent removes gamma from repo1 and checks repo2
+// stays healthy and repo1's state entry is dropped (spec 022: each project
+// owns its committed copy; removal in one never affects another).
+func assertRemoveKeepsGlobalContent(t *testing.T, a *app.App, _, repo1, repo2 string) {
 	t.Helper()
 	if _, err := a.Remove(context.Background(), repo1, []string{"gamma"}); err != nil {
 		t.Fatalf("remove in repo1: %v", err)
-	}
-	if got := listStoreObjects(t, h); len(got) != 2 {
-		t.Errorf("store objects after remove = %v, want global content untouched", got)
 	}
 	if _, err := os.Lstat(filepath.Join(repo1, ".agents", "skills", "gamma")); !os.IsNotExist(err) {
 		t.Error("repo1 active link still present after remove")

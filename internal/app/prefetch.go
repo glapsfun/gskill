@@ -5,7 +5,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
@@ -26,18 +28,19 @@ type prefetchJob struct {
 // (offline) or must not (dry-run) touch the network, or there is nothing to
 // warm. names is the run's already-sorted entry list (installAllLockEntries
 // computed it); reusing it avoids a second clone-and-sort of the lock.
-func (a *App) maybePrefetch(ctx context.Context, p *project, lf *skillslock.State, l *skillslock.Lock, req InstallFromLockRequest, names []string) {
+func (a *App) maybePrefetch(ctx context.Context, p *project, lf *skillslock.State, l *skillslock.Lock, req InstallFromLockRequest, names []string) map[string]bool {
 	if req.DryRun || req.Offline {
-		return
+		return nil
 	}
-	jobs := a.planPrefetch(p, lf, l, req, names)
+	jobs, fetched := a.planPrefetch(p, lf, l, req, names)
 	if len(jobs) == 0 {
 		// Nothing to warm (fully up to date, or every remaining entry is
 		// foreign under --frozen-lockfile): no phase, no phantom UI line.
-		return
+		return nil
 	}
 	emitRunPhase(req.Progress, InstallPhasePrefetching, len(names))
 	a.runPrefetch(ctx, p, lf, req.Root, jobs)
+	return fetched
 }
 
 // planPrefetch selects the distinct units the run will need, deduplicated
@@ -45,14 +48,24 @@ func (a *App) maybePrefetch(ctx context.Context, p *project, lf *skillslock.Stat
 // reject before ever touching the network (a foreign entry has no gskill
 // extension; lockEntryTargets fails it outright) are excluded rather than
 // prefetched and discarded.
-func (a *App) planPrefetch(p *project, lf *skillslock.State, l *skillslock.Lock, req InstallFromLockRequest, names []string) []prefetchJob {
+//
+// The second return value is every skill that needs the network, recorded
+// BEFORE the cache is warmed and undeduplicated (skills sharing a commit
+// share one fetch job): after the prefetch their install observes a cache
+// hit, but the run as a whole downloaded them (truthful StoreReuse
+// reporting). It is computed here, from the same pass, because
+// entryNeedsNetwork now hashes the committed copy — running it twice would
+// hash every installed skill twice before the run even starts.
+func (a *App) planPrefetch(p *project, lf *skillslock.State, l *skillslock.Lock, req InstallFromLockRequest, names []string) ([]prefetchJob, map[string]bool) {
 	seen := map[string]bool{}
+	needsNetwork := make(map[string]bool, len(names))
 	var jobs []prefetchJob
 	for _, name := range names {
 		e, ok := l.Entry(name)
 		if !ok || (req.Frozen && e.Ext == nil) || !a.entryNeedsNetwork(p, lf, name, e, req) {
 			continue
 		}
+		needsNetwork[name] = true
 		key := prefetchKey(lf, name, e)
 		if seen[key] {
 			continue
@@ -60,7 +73,7 @@ func (a *App) planPrefetch(p *project, lf *skillslock.State, l *skillslock.Lock,
 		seen[key] = true
 		jobs = append(jobs, prefetchJob{name: name, e: e})
 	}
-	return jobs
+	return jobs, needsNetwork
 }
 
 // runPrefetch warms the resolution memo and commit cache for jobs in
@@ -69,22 +82,9 @@ func (a *App) planPrefetch(p *project, lf *skillslock.State, l *skillslock.Lock,
 // memoized answer and remains the single authority for failure
 // classification, phases, and exit codes.
 func (a *App) runPrefetch(ctx context.Context, p *project, lf *skillslock.State, root string, jobs []prefetchJob) {
-	// A scope's installer is identical for every job that uses it; build
-	// each one once instead of re-resolving config/cache/store dirs per
-	// goroutine.
-	insts := map[string]*installer.Installer{}
-	scopeOf := func(e skillslock.Entry) string {
-		if e.Ext != nil {
-			return e.Ext.Scope
-		}
-		return ""
-	}
-	for _, j := range jobs {
-		scope := scopeOf(j.e)
-		if _, ok := insts[scope]; !ok {
-			insts[scope] = a.installerForScope(p, scope)
-		}
-	}
+	// Every scope is served by the same home clone cache (spec 022), so one
+	// installer covers the whole run; build it once rather than per goroutine.
+	inst := a.installerFor(p)
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(prefetchConcurrency)
@@ -99,7 +99,6 @@ func (a *App) runPrefetch(ctx context.Context, p *project, lf *skillslock.State,
 			// report every entry not-attempted anyway.
 			break
 		}
-		inst := insts[scopeOf(j.e)]
 		g.Go(func() error {
 			a.prefetchOne(gctx, inst, lf, root, j.name, j.e)
 			return gctx.Err()
@@ -164,7 +163,12 @@ func (a *App) entryNeedsNetwork(p *project, lf *skillslock.State, name string, e
 		// pipeline in this case too (lockinstall.go's up-to-date fast path).
 		return true
 	}
-	return !p.contentHas(prior.Resolved.ContentHash)
+	// Committed content matching the lock is the restore (spec 022 FR-007),
+	// and a warm clone cache satisfies a missing copy without the network.
+	if ok, _, err := integrity.VerifyDir(active.Path(p.root, name), prior.Resolved.ContentHash); err == nil && ok {
+		return false
+	}
+	return prior.Resolved.Commit == "" || p.cache == nil || !p.cache.Has(prior.Resolved.Commit)
 }
 
 // entrySourceRef returns the source URL and requested ref an entry resolves

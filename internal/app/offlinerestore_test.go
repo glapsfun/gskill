@@ -110,8 +110,8 @@ func TestOfflineRestore_MissingObjectFailsWithRequiredHash(t *testing.T) {
 		if !strings.Contains(msg, s.Name) {
 			t.Errorf("error does not name the skill: %q", msg)
 		}
-		if !strings.Contains(msg, "sha256:") {
-			t.Errorf("error does not name the required object: %q", msg)
+		if !strings.Contains(msg, "commit") {
+			t.Errorf("error does not name the required commit: %q", msg)
 		}
 	}
 	if !found {
@@ -149,8 +149,8 @@ func TestFrozenRestore_MissingObjectFetchesExactCommit(t *testing.T) {
 	if _, err := coldApp.InstallFromLock(t.Context(), installFromLockReq(clone, true, false)); err != nil {
 		t.Fatalf("frozen restore with source available: %v", err)
 	}
-	if got := listStoreObjects(t, freshHome); len(got) != 2 {
-		t.Errorf("fresh home store objects = %v, want the fetched pair", got)
+	if entries, _ := os.ReadDir(filepath.Join(freshHome, "cache")); len(entries) == 0 {
+		t.Error("fresh home clone cache empty, want the fetched commit")
 	}
 	assertAgentTargets(t, clone, "alpha", "beta")
 }
