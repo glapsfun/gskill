@@ -207,8 +207,18 @@ func (a *App) frozenRequest(p *project, name string, locked skillslock.Record, r
 	ref := refFromLock(locked.Source)
 	rev := revFromLock(locked.Resolved)
 
+	// The declared override is part of restoring: ExpectContentHash below is
+	// the *post-override* hash, so re-materializing without re-applying the
+	// override would hash the bare upstream and fail closed on its own
+	// restore (spec 023 FR-017).
+	spec, _, err := a.overrideFor(p.root, name)
+	if err != nil {
+		return installer.Request{}, err
+	}
+
 	home, _ := os.UserHomeDir()
 	return installer.Request{
+		Override:          spec,
 		Ref:               ref,
 		Revision:          rev,
 		Name:              name,

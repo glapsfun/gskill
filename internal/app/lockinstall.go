@@ -18,6 +18,7 @@ import (
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/overrides"
 
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/skillslock"
@@ -897,6 +898,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 		return fail(err)
 	}
 	ls.Resolved.CompatHash = staged.compat
+	ls.Resolved.BaseHash = carriedBaseHash(lf, name, ls.Resolved)
 
 	// Only after the new lock entry is fully built (so a buildLockEntry
 	// failure leaves lf untouched by the removal side) do dropped agents'
@@ -1079,10 +1081,48 @@ func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skill
 	}
 	staged := stagedLockEntry{ref: ref, rev: rev, ireq: ireq, compat: compat}
 	em.phase(InstallPhaseVerifying)
-	if e.ComputedHash == "" || compat == e.ComputedHash {
+	if e.ComputedHash == "" || compat == e.ComputedHash || a.overrideChanged(p, name, e, req) {
 		return staged, nil
 	}
 	return a.retryOrRejectMismatch(ctx, inst, req, name, skillDir, mode, extScope, e, staged, pinned, em)
+}
+
+// carriedBaseHash keeps an overridden entry's recorded upstream hash when the
+// install that produced r never saw the upstream extract — a committed-content
+// hit reports none — so a restore does not silently drop baseHash from an
+// entry that still has an override.
+func carriedBaseHash(lf *skillslock.State, name string, r skillslock.Resolved) string {
+	if r.BaseHash != "" || r.Override.Empty() {
+		return r.BaseHash
+	}
+	prior, ok := lf.Skills[name]
+	if !ok {
+		return ""
+	}
+	return prior.Resolved.BaseHash
+}
+
+// overrideChanged reports whether the manifest's declaration for name differs
+// from the one the lock recorded, in which case the recorded computedHash
+// describes the *previous* declaration's output and has nothing to say about
+// the entry being staged: install re-resolves and rewrites just that entry
+// (FR-012) instead of rejecting it as a mismatch.
+//
+// Under --frozen-lockfile the same disagreement is exactly what must fail, so
+// the bypass is withheld and the mismatch surfaces (FR-013).
+func (a *App) overrideChanged(p *project, name string, e skillslock.Entry, req InstallFromLockRequest) bool {
+	if req.Frozen {
+		return false
+	}
+	_, digest, err := a.overrideFor(p.root, name)
+	if err != nil {
+		return false
+	}
+	recorded := ""
+	if e.Ext != nil {
+		recorded = e.Ext.OverrideDigest
+	}
+	return digest != recorded
 }
 
 // retryOrRejectMismatch handles a computedHash mismatch on the recorded pin:
@@ -1144,7 +1184,16 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 			errs.ErrInvalidLock, path.Join(skillDir, integrity.SkillFileName), ref.Original)
 	}
 	em.phase(InstallPhaseHashing)
-	compat, err := integrity.CompatHash(found.Dir)
+	// Hash what would actually ship, not the raw extract: the lock's
+	// computedHash records the post-override result, so hashing the untouched
+	// extract here would compare an upstream hash against a shipped one and
+	// reject every overridden entry as an integrity failure.
+	hashDir, cleanup, mErr := overrides.Materialize(found.Dir, req.Root, spec)
+	if mErr != nil {
+		return installer.Request{}, "", mErr
+	}
+	defer cleanup()
+	compat, err := integrity.CompatHash(hashDir)
 	if err != nil {
 		return installer.Request{}, "", err
 	}

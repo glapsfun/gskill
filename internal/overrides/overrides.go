@@ -58,7 +58,51 @@ func Apply(skillDir, repoRoot string, spec Spec) error {
 	if err := fsutil.CopyDir(skillDir, staged); err != nil {
 		return errs.Wrap(errs.CodeGeneric, "stage override", err)
 	}
+	if err := run(staged, skillDir, repoRoot, spec); err != nil {
+		return err
+	}
 
+	return swapIn(skillDir, staged)
+}
+
+// Materialize copies src into a scratch directory and transforms the copy,
+// returning the transformed directory and a cleanup to run when the caller is
+// done with it. An empty declaration hands back src itself with a no-op
+// cleanup, so a caller needs no special case.
+//
+// It exists because two callers need the *result* rather than an in-place
+// transformation: the installer, which must not write to the shared clone
+// cache or to a local source the user owns, and the reconcile path, which
+// hashes what would ship before deciding whether to ship it. Both must see
+// identical bytes, so they run the identical pipeline.
+func Materialize(src, repoRoot string, spec Spec) (string, func(), error) {
+	noop := func() {}
+	if spec.Empty() {
+		return src, noop, nil
+	}
+	tmp, err := os.MkdirTemp("", "gskill-override-")
+	if err != nil {
+		return "", noop, errs.Wrap(errs.CodeGeneric, "stage override", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	staged := filepath.Join(tmp, filepath.Base(src))
+	if err := fsutil.CopyDir(src, staged); err != nil {
+		cleanup()
+		return "", noop, errs.Wrap(errs.CodeGeneric, "stage override", err)
+	}
+	// Confinement resolves against the staged copy: it is a faithful copy of
+	// src, so a symlinked escape is caught there just as it would be at the
+	// source, and the check then describes the very tree being written to.
+	if err := run(staged, staged, repoRoot, spec); err != nil {
+		cleanup()
+		return "", noop, err
+	}
+	return staged, cleanup, nil
+}
+
+// run executes the three stages in their fixed order (FR-004) against an
+// already-staged copy.
+func run(staged, skillDir, repoRoot string, spec Spec) error {
 	for _, stage := range []func(string, string, string, Spec) error{
 		applyReplace,
 		applyPatches,
@@ -68,8 +112,7 @@ func Apply(skillDir, repoRoot string, spec Spec) error {
 			return err
 		}
 	}
-
-	return swapIn(skillDir, staged)
+	return nil
 }
 
 // applyReplace performs whole-file swaps. Targets are visited in sorted order

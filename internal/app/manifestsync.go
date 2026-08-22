@@ -141,11 +141,20 @@ func (a *App) overrideFor(root, name string) (overrides.Spec, string, error) {
 // An empty declaration clears the fields rather than leaving stale ones behind,
 // so removing an override cannot leave a phantom identity in the lock.
 func recordOverride(r *skillslock.Resolved, root string, spec overrides.Spec, baseHash string) error {
-	r.BaseHash = baseHash
 	if spec.Empty() {
+		// With nothing overridden the base *is* the content, so recording it
+		// twice would grow every spec 022 entry with a redundant field that
+		// FR-008 says is omitted.
+		r.BaseHash = ""
 		r.OverrideDigest = ""
 		r.Override = nil
 		return nil
+	}
+	// An install served from committed content never sees the upstream
+	// extract and so reports no base hash; leave whatever the record already
+	// carries rather than stamping an empty one over it.
+	if baseHash != "" {
+		r.BaseHash = baseHash
 	}
 	digest, err := integrity.OverrideDigest(root, integrity.OverrideSpec(spec))
 	if err != nil {

@@ -371,6 +371,34 @@ func (a *App) chooseInteractive(req AddRequest, candidates []discovery.Discovere
 	return chosen, nil
 }
 
+// addInstallRequest specializes the run-wide install request for one selected
+// skill.
+//
+// A skill the manifest already declares an override for is added *with* it:
+// otherwise `add` would ship un-customized content while writing a manifest
+// that claims otherwise, and the lock would record an empty override identity
+// for a project that declares one.
+func (a *App) addInstallRequest(base installer.Request, req AddRequest, lf *skillslock.State, s discovery.DiscoveredSkill, plan addPlan) (installer.Request, error) {
+	ir := base
+	ir.Name = s.ID
+	ir.Path = s.RepoPath
+	ir.Agents = plan.activate
+	// Adds never clobber content gskill does not own; --force is the
+	// documented override (spec 011 FR-016). The previously locked hash marks
+	// copy-mode installs as gskill's own.
+	ir.PreserveForeign = !req.Force
+	ir.ReplaceActive = req.Force
+	spec, _, err := a.overrideFor(req.Root, s.ID)
+	if err != nil {
+		return installer.Request{}, err
+	}
+	ir.Override = spec
+	if locked, ok := lf.Skills[s.ID]; ok {
+		ir.PriorContentHash = locked.Resolved.ContentHash
+	}
+	return ir, nil
+}
+
 // installSelected installs the chosen skills atomically. For a skill already
 // declared from the same source, a new target agent unions into the existing
 // install (reusing the one store + active entry and adding only the missing
@@ -428,17 +456,10 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 				rollback()
 				return planErr
 			}
-			ir := ireq
-			ir.Name = s.ID
-			ir.Path = s.RepoPath
-			ir.Agents = plan.activate
-			// Adds never clobber content gskill does not own; --force is the
-			// documented override (spec 011 FR-016). The previously locked
-			// hash marks copy-mode installs as gskill's own.
-			ir.PreserveForeign = !req.Force
-			ir.ReplaceActive = req.Force
-			if locked, ok := lf.Skills[s.ID]; ok {
-				ir.PriorContentHash = locked.Resolved.ContentHash
+			ir, irErr := a.addInstallRequest(ireq, req, lf, s, plan)
+			if irErr != nil {
+				rollback()
+				return irErr
 			}
 			result, instErr := inst.Install(ctx, ir)
 			if instErr != nil {

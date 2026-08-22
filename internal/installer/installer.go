@@ -670,34 +670,5 @@ func hashShipped(dir, expect string) (integrity.Hashes, string, error) {
 // path (or, for a local source, the user's own directory), so transforming in
 // place would corrupt the cache for every other project on the machine.
 func applyOverride(src string, req Request) (string, func(), error) {
-	if req.Override.Empty() {
-		return src, func() {}, nil
-	}
-	staged, cleanup, err := stageForOverride(src)
-	if err != nil {
-		return "", func() {}, err
-	}
-	if err := overrides.Apply(staged, req.ProjectRoot, req.Override); err != nil {
-		cleanup()
-		return "", func() {}, err
-	}
-	return staged, cleanup, nil
-}
-
-// stageForOverride copies upstream content into a scratch directory so the
-// override pipeline never writes to the shared clone cache or to a local
-// source the user owns. The returned cleanup always runs, including on the
-// error paths, so a failed install leaves no staging behind.
-func stageForOverride(src string) (string, func(), error) {
-	tmp, err := os.MkdirTemp("", "gskill-override-")
-	if err != nil {
-		return "", func() {}, fmt.Errorf("stage override: %w", err)
-	}
-	cleanup := func() { _ = os.RemoveAll(tmp) }
-	staged := filepath.Join(tmp, filepath.Base(src))
-	if err := fsutil.CopyDir(src, staged); err != nil {
-		cleanup()
-		return "", func() {}, fmt.Errorf("stage override: %w", err)
-	}
-	return staged, cleanup, nil
+	return overrides.Materialize(src, req.ProjectRoot, req.Override)
 }
