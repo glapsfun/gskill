@@ -35,9 +35,16 @@ func manifestSkillFrom(name string, r skillslock.Record) manifest.Skill {
 	if r.Source.Path != "" && r.Source.Path != name {
 		s.Skill = r.Source.Path
 	}
+	// Intent first, resolution only as a fallback. A skill added with a semver
+	// constraint tracks that constraint; writing the tag it resolved to would
+	// turn a range into a hard pin and leave `update` nothing to advance.
 	switch {
+	case r.Requested.Version != "":
+		s.Version = r.Requested.Version
 	case r.Requested.Ref != "":
 		s.Ref = r.Requested.Ref
+	case r.Requested.Commit != "":
+		s.Commit = r.Requested.Commit
 	case r.Resolved.Tag != "":
 		s.Ref = r.Resolved.Tag
 	case r.Resolved.Branch != "":
@@ -58,7 +65,7 @@ func manifestSkillFrom(name string, r skillslock.Record) manifest.Skill {
 // obtained, never how it is customized.
 func (a *App) syncManifestSkills(p *project, lf *skillslock.State, names []string) error {
 	path := manifestPath(p.root)
-	existing, err := manifest.Load(path)
+	existing, err := a.loadManifest(p.root)
 	if err != nil {
 		return err
 	}
@@ -76,6 +83,7 @@ func (a *App) syncManifestSkills(p *project, lf *skillslock.State, names []strin
 		if err := manifest.Upsert(path, decl); err != nil {
 			return err
 		}
+		a.invalidateManifest(p.root)
 	}
 	return nil
 }
@@ -91,6 +99,7 @@ func (a *App) dropManifestSkills(p *project, names []string) error {
 			return err
 		}
 	}
+	a.invalidateManifest(p.root)
 	m, err := manifest.Load(path)
 	if err != nil || m == nil {
 		return err
@@ -111,11 +120,8 @@ func (a *App) dropManifestSkills(p *project, names []string) error {
 // Validation runs here, before any fetch, so a malformed declaration costs
 // nothing (FR-005).
 func (a *App) overrideFor(root, name string) (overrides.Spec, string, error) {
-	m, err := manifest.Load(manifestPath(root))
+	m, err := a.loadManifest(root)
 	if err != nil || m == nil {
-		return overrides.Spec{}, "", err
-	}
-	if err := m.Validate(root); err != nil {
 		return overrides.Spec{}, "", err
 	}
 	decl := m.Skills[name].Override
@@ -196,4 +202,55 @@ func (a *App) syncManifestAfterAdd(p *project, lf *skillslock.State, res AddResu
 		added = append(added, s.Name)
 	}
 	return a.syncManifestSkills(p, lf, added)
+}
+
+// loadManifest reads, validates, and memoizes the project manifest for the
+// current run, surfacing its advisories exactly once.
+//
+// Memoizing matters: overrideFor is consulted per skill and more than once per
+// skill, so an unmemoized read re-parses the whole manifest and re-hashes every
+// override input O(N^2) times for an N-skill project. The cache is per run and
+// per root, and any write invalidates it, so a user's edit between runs is
+// always seen.
+func (a *App) loadManifest(root string) (*manifest.Manifest, error) {
+	a.manifestMu.Lock()
+	defer a.manifestMu.Unlock()
+
+	if cached, ok := a.manifests[root]; ok {
+		return cached, nil
+	}
+	m, err := manifest.Load(manifestPath(root))
+	if err != nil {
+		return nil, err
+	}
+	if m != nil {
+		if vErr := m.Validate(root); vErr != nil {
+			return nil, vErr
+		}
+	}
+	if a.manifests == nil {
+		a.manifests = map[string]*manifest.Manifest{}
+	}
+	a.manifests[root] = m
+	return m, nil
+}
+
+// invalidateManifest drops the memoized manifest for root after a write, so a
+// later read in the same run observes what was just written.
+func (a *App) invalidateManifest(root string) {
+	a.manifestMu.Lock()
+	defer a.manifestMu.Unlock()
+	delete(a.manifests, root)
+}
+
+// manifestWarnings returns the manifest's non-fatal advisories (V3 unknown
+// configuration key, V9 ref and commit both declared) so a command can put
+// them in front of the user. They are computed during parsing, and a warning
+// nobody sees is the same as no warning at all.
+func (a *App) manifestWarnings(root string) []string {
+	m, err := a.loadManifest(root)
+	if err != nil || m == nil {
+		return nil
+	}
+	return append([]string(nil), m.Warnings...)
 }

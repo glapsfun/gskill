@@ -221,6 +221,11 @@ func (c installCmd) runLockWizard(ctx context.Context, out *Output, a *app.App, 
 // agentsKept/agentsAdded/agentsRemoved JSON fields and the "removed for" /
 // dry-run agent plan lines.
 func renderLockInstall(out *Output, res app.InstallFromLockResult, explicit bool) error {
+	// Manifest advisories first: they describe the declaration the rest of the
+	// run acted on, so they belong above the per-skill outcomes.
+	for _, w := range res.Warnings {
+		out.Warn("%s", w)
+	}
 	sum := app.Aggregate(res.Skills)
 	skills := make([]map[string]any, 0, len(res.Skills))
 	for _, s := range res.Skills {
@@ -238,6 +243,7 @@ func renderLockInstall(out *Output, res app.InstallFromLockResult, explicit bool
 		"summary":     summaryJSON(sum),
 		"skills":      skills,
 		"pruned":      res.Pruned,
+		"warnings":    nonNilStrings(res.Warnings),
 	}
 	return out.Result(humanLockInstall(res, sum), doc)
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -45,9 +46,14 @@ type Manifest struct {
 
 // Skill is one `[skills.<name>]` declaration.
 type Skill struct {
-	Name     string
-	Source   string
-	Skill    string
+	Name   string
+	Source string
+	Skill  string
+	// Version is a semver constraint (e.g. "^1.0.0") the skill tracks. It is
+	// intent, not a resolution: `update` advances within it. Recording the tag
+	// it happened to resolve to instead would silently convert a tracking
+	// range into a hard pin the user never declared.
+	Version  string
 	Ref      string
 	Commit   string
 	Agents   []string
@@ -173,7 +179,7 @@ func Parse(data []byte) (*Manifest, error) {
 // transformation the user believes is applied, producing content that is wrong
 // yet internally consistent and hash-verified.
 var (
-	skillKeys    = map[string]bool{"source": true, "skill": true, "ref": true, "commit": true, "agents": true, "mode": true, "override": true}
+	skillKeys    = map[string]bool{"source": true, "skill": true, "version": true, "ref": true, "commit": true, "agents": true, "mode": true, "override": true}
 	overrideKeys = map[string]bool{"replace": true, "patch": true, "prepend": true, "append": true}
 )
 
@@ -224,6 +230,7 @@ func parseSkillFields(name string, table map[string]any) (Skill, error) {
 	}{
 		{"source", &s.Source},
 		{"skill", &s.Skill},
+		{"version", &s.Version},
 		{"ref", &s.Ref},
 		{"commit", &s.Commit},
 		{"mode", &s.Mode},
@@ -372,4 +379,20 @@ func sortedSet(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ProjectConfig returns the [config] table declared in the manifest at root,
+// suitable for config.Sources.ProjectMap. A project with no manifest, or one
+// declaring no configuration, yields nil — the layer simply contributes
+// nothing rather than erroring, so a project without a manifest behaves as it
+// always did.
+//
+// A malformed manifest is reported: silently ignoring it would let a typo
+// disable project configuration with no signal at all.
+func ProjectConfig(root string) (map[string]any, error) {
+	m, err := Load(filepath.Join(root, FileName))
+	if err != nil || m == nil {
+		return nil, err
+	}
+	return m.Config, nil
 }

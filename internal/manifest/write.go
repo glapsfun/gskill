@@ -148,6 +148,7 @@ func renderSkill(s Skill) []string {
 	}
 	add("source", s.Source)
 	add("skill", s.Skill)
+	add("version", s.Version)
 	add("ref", s.Ref)
 	add("commit", s.Commit)
 	if len(s.Agents) > 0 {

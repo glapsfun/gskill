@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/glapsfun/gskill/internal/cache"
+	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/home"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/projstate"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
@@ -81,11 +83,34 @@ func (p *project) legacyStoreRoots() []string {
 // non-positive values (a zero-valued config, or "0s" in config.toml) to the
 // documented 60s default. Every store/registry Locker construction must go
 // through this — a raw 0 makes fsutil.Acquire fail instantly even uncontended.
-func (a *App) storeLockTimeout() time.Duration {
-	if t := a.cfg.StoreLockTimeout; t > 0 {
+// storeLockTimeout resolves the timeout with the project's own [config]
+// table merged in (spec 023 FR-002). A lock timeout is inherently
+// project-scoped — it describes contention on one repository — so a project
+// that needs a longer one must be able to declare it and have every teammate
+// inherit it from the committed manifest.
+func (a *App) storeLockTimeout(root string) time.Duration {
+	cfg := a.cfg
+	if root != "" {
+		if merged, err := a.projectConfig(root); err == nil && merged != nil {
+			cfg = merged
+		}
+	}
+	if t := cfg.StoreLockTimeout; t > 0 {
 		return t
 	}
 	return 60 * time.Second
+}
+
+// projectConfig re-resolves configuration with the manifest's [config] table
+// occupying the project layer. It is computed per call rather than cached on
+// the App: the manifest is a committed file a user edits between runs, and a
+// stale cached layer would silently ignore their edit.
+func (a *App) projectConfig(root string) (*config.Config, error) {
+	projectMap, err := manifest.ProjectConfig(root)
+	if err != nil || len(projectMap) == 0 {
+		return nil, err
+	}
+	return config.Load(config.Sources{ProjectMap: projectMap})
 }
 
 // openHome resolves and ensures the gskill home: the App-level override when

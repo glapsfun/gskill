@@ -97,3 +97,28 @@ func TestManifestLifecycle_AddPreservesUserEdits(t *testing.T) {
 		t.Errorf("second skill not declared:\n%s", got)
 	}
 }
+
+// TestManifestLifecycle_PreservesVersionConstraint: a skill added with a
+// semver constraint must be declared with that constraint, not with the tag it
+// happened to resolve to. Writing `ref = "v1.0.0"` would silently convert a
+// tracking range into a hard pin the user never asked for, and `update` would
+// then have nothing to advance.
+func TestManifestLifecycle_PreservesVersionConstraint(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+
+	got := readManifest(t, proj)
+	if !strings.Contains(got, `version = "^1.0.0"`) {
+		t.Errorf("manifest lost the version constraint:\n%s", got)
+	}
+	if strings.Contains(got, `ref = "v1.0.0"`) {
+		t.Errorf("constraint was rewritten as a hard pin:\n%s", got)
+	}
+}

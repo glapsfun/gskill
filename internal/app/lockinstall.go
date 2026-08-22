@@ -118,6 +118,9 @@ type InstallFromLockResult struct {
 	Skills      []LockSkillResult
 	Pruned      []string
 	Changed     bool
+	// Warnings carries the manifest's non-fatal advisories so the CLI can show
+	// them; they are diagnostics for the user, not structured log output.
+	Warnings []string
 }
 
 // InstallFromLock implements the install pipeline: locate and validate
@@ -146,6 +149,7 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 		return res, err
 	}
 	res.Initialized = initialized
+	res.Warnings = a.manifestWarnings(p.root)
 
 	installErr := a.withLock(ctx, p, func() error {
 		// Loaded here, under the same lock installAllLockEntries uses to load

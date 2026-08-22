@@ -9,11 +9,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/registry"
 )
 
@@ -28,6 +30,8 @@ type RepoLister interface {
 // is added by sibling files (install.go, inspect.go, lifecycle.go, ...).
 type App struct {
 	cfg        *config.Config
+	manifests  map[string]*manifest.Manifest
+	manifestMu sync.Mutex
 	log        *slog.Logger
 	agents     *agent.Registry
 	git        git.Runner
