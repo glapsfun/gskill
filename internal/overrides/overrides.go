@@ -34,6 +34,26 @@ func (s Spec) Empty() bool {
 	return len(s.Replace) == 0 && len(s.Patch) == 0 && len(s.Prepend) == 0 && len(s.Append) == 0
 }
 
+// Inputs returns every repo-relative file the declaration references, in a
+// stable order: replace sources sorted by target, then patch, prepend, and
+// append in declared order. Order must never depend on map iteration, since
+// the same list feeds the identity digest (Constitution I).
+func (s Spec) Inputs() []string {
+	targets := make([]string, 0, len(s.Replace))
+	for t := range s.Replace {
+		targets = append(targets, t)
+	}
+	sort.Strings(targets)
+	out := make([]string, 0, len(targets)+len(s.Patch)+len(s.Prepend)+len(s.Append))
+	for _, t := range targets {
+		out = append(out, s.Replace[t])
+	}
+	out = append(out, s.Patch...)
+	out = append(out, s.Prepend...)
+	out = append(out, s.Append...)
+	return out
+}
+
 // Apply transforms skillDir in place, resolving override inputs against
 // repoRoot. Stages run in the fixed order replace → patch → layer (FR-004):
 // replace establishes the file that ships, patch adjusts that file, and

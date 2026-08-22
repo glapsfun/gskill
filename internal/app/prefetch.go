@@ -111,7 +111,7 @@ func (a *App) runPrefetch(ctx context.Context, p *project, lf *skillslock.State,
 // warms the commit cache. Failures are logged at debug and otherwise
 // ignored — see runPrefetch.
 func (a *App) prefetchOne(ctx context.Context, inst *installer.Installer, lf *skillslock.State, root, name string, e skillslock.Entry) {
-	ref, rev, _, err := a.resolveLockEntry(ctx, lf, name, e)
+	ref, rev, _, err := a.resolveLockEntry(ctx, root, lf, name, e)
 	if err != nil {
 		a.log.Debug("prefetch resolve", "skill", name, "error", err)
 		return

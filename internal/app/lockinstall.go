@@ -1066,7 +1066,7 @@ type stagedLockEntry struct {
 // nothing to verify against; it is recorded after the install.
 func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest, em *skillEmitter) (stagedLockEntry, error) {
 	em.phase(InstallPhaseResolving)
-	ref, rev, pinned, err := a.resolveLockEntry(ctx, lf, name, e)
+	ref, rev, pinned, err := a.resolveLockEntry(ctx, p.root, lf, name, e)
 	if err != nil {
 		return stagedLockEntry{}, err
 	}
@@ -1085,7 +1085,7 @@ func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skill
 	}
 	staged := stagedLockEntry{ref: ref, rev: rev, ireq: ireq, compat: compat}
 	em.phase(InstallPhaseVerifying)
-	if e.ComputedHash == "" || compat == e.ComputedHash || a.overrideChanged(p, name, e, req) {
+	if e.ComputedHash == "" || compat == e.ComputedHash || a.declarationChanged(p, lf, name, e, req) {
 		return staged, nil
 	}
 	return a.retryOrRejectMismatch(ctx, inst, req, name, skillDir, mode, extScope, e, staged, pinned, em)
@@ -1106,17 +1106,21 @@ func carriedBaseHash(lf *skillslock.State, name string, r skillslock.Resolved) s
 	return prior.Resolved.BaseHash
 }
 
-// overrideChanged reports whether the manifest's declaration for name differs
-// from the one the lock recorded, in which case the recorded computedHash
-// describes the *previous* declaration's output and has nothing to say about
-// the entry being staged: install re-resolves and rewrites just that entry
-// (FR-012) instead of rejecting it as a mismatch.
+// declarationChanged reports whether the manifest's declaration for name — its
+// pin or its override — differs from the one the lock recorded. When it does,
+// the recorded computedHash describes the *previous* declaration's output and
+// has nothing to say about the entry being staged: install re-resolves and
+// rewrites just that entry (FR-004, FR-012) instead of rejecting it as a
+// mismatch the user cannot resolve.
 //
 // Under --frozen-lockfile the same disagreement is exactly what must fail, so
 // the bypass is withheld and the mismatch surfaces (FR-013).
-func (a *App) overrideChanged(p *project, name string, e skillslock.Entry, req InstallFromLockRequest) bool {
+func (a *App) declarationChanged(p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest) bool {
 	if req.Frozen {
 		return false
+	}
+	if _, pinChanged := a.manifestPinChanged(p.root, name, lf); pinChanged {
+		return true
 	}
 	_, digest, err := a.overrideFor(p.root, name)
 	if err != nil {
@@ -1225,8 +1229,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	// entry is re-resolved. Without this, editing an override would be
 	// silently ignored — the committed content would still match the recorded
 	// hash, and install would report success having changed nothing.
-	_, digest, oErr := a.overrideFor(p.root, name)
-	if oErr != nil || !overrideMatchesLock(prior, digest) {
+	if !a.declarationMatchesLock(p, lf, name, prior) {
 		return LockSkillResult{}, false
 	}
 	ids := agentIDs(agents)
@@ -1327,7 +1330,15 @@ func installedContentPath(p *project, name string, prior skillslock.Record) stri
 // tool updated the entry (new computedHash), the stale pin would refetch the
 // OLD revision and --force would then overwrite the external update, so the
 // source is re-resolved instead.
-func (a *App) resolveLockEntry(ctx context.Context, lf *skillslock.State, name string, e skillslock.Entry) (ref source.Ref, rev resolver.Revision, pinned bool, err error) {
+func (a *App) resolveLockEntry(ctx context.Context, root string, lf *skillslock.State, name string, e skillslock.Entry) (ref source.Ref, rev resolver.Revision, pinned bool, err error) {
+	// The manifest is intent, so a declared pin that no longer matches what
+	// the lock recorded must be resolved afresh (FR-004). Reusing the recorded
+	// commit here is what made an edited `version`/`ref`/`commit` silently do
+	// nothing — one of the four advertised override kinds had no effect at all.
+	if req, changed := a.manifestPinChanged(root, name, lf); changed {
+		ref, rev, err = a.resolveDeclaredPin(ctx, e, req)
+		return ref, rev, false, err
+	}
 	if prior, ok := lf.Skills[name]; ok && prior.Resolved.Commit != "" {
 		return refFromLock(prior.Source), revFromLock(prior.Resolved), true, nil
 	}
@@ -1373,4 +1384,67 @@ func skillAtRepoPath(scan discovery.Result, repoPath string) (discovery.Discover
 		}
 	}
 	return discovery.DiscoveredSkill{}, false
+}
+
+// manifestPinChanged reports whether the manifest declares a pin for name that
+// differs from the intent the lock recorded, returning the declared one.
+//
+// It compares against Requested — what was *asked for* — not against the
+// resolved commit: a constraint like "^1.0.0" legitimately resolves to a moving
+// tag, and comparing against the resolution would re-resolve on every run.
+func (a *App) manifestPinChanged(root, name string, lf *skillslock.State) (resolver.Requested, bool) {
+	m, err := a.loadManifest(root)
+	if err != nil || m == nil {
+		return resolver.Requested{}, false
+	}
+	decl, ok := m.Skills[name]
+	if !ok {
+		return resolver.Requested{}, false
+	}
+	declared := resolver.Requested{Version: decl.Version, Ref: decl.Ref, Commit: decl.Commit}
+	if declared == (resolver.Requested{}) {
+		return resolver.Requested{}, false
+	}
+	prior, ok := lf.Skills[name]
+	if !ok {
+		return declared, true
+	}
+	recorded := resolver.Requested{
+		Version: prior.Requested.Version,
+		Ref:     prior.Requested.Ref,
+		Commit:  prior.Requested.Commit,
+	}
+	return declared, declared != recorded
+}
+
+// resolveDeclaredPin resolves an entry against the manifest's declaration
+// rather than the lock's recorded revision.
+func (a *App) resolveDeclaredPin(ctx context.Context, e skillslock.Entry, req resolver.Requested) (source.Ref, resolver.Revision, error) {
+	srcStr, _ := entrySourceRef(e)
+	ref, err := source.Parse(srcStr)
+	if err != nil {
+		return source.Ref{}, resolver.Revision{}, err
+	}
+	ref = promoteLocalGit(ref)
+	rev, _, err := resolver.Resolve(ctx, a.git, ref, req)
+	if err != nil {
+		return source.Ref{}, resolver.Revision{}, err
+	}
+	return ref, rev, nil
+}
+
+// declarationMatchesLock reports whether the manifest still agrees with what
+// the lock recorded for name, across both the override and the pin.
+//
+// This is what "up to date" means once intent lives in a file the user edits
+// (spec 023 FR-012): without it, editing a declaration would be silently
+// ignored — the committed content would still match the recorded hash, and
+// install would report success having changed nothing.
+func (a *App) declarationMatchesLock(p *project, lf *skillslock.State, name string, prior skillslock.Record) bool {
+	_, digest, err := a.overrideFor(p.root, name)
+	if err != nil || !overrideMatchesLock(prior, digest) {
+		return false
+	}
+	_, pinChanged := a.manifestPinChanged(p.root, name, lf)
+	return !pinChanged
 }

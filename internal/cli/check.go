@@ -27,7 +27,11 @@ func (c checkCmd) Run(ctx context.Context, out *Output, a *app.App, root project
 	report, err := a.Check(ctx, string(root), c.FailOnDrift)
 	skills := make([]map[string]any, 0, len(report.Skills))
 	for _, s := range report.Skills {
-		skills = append(skills, map[string]any{"name": s.Name, "status": s.Status})
+		entry := map[string]any{"name": s.Name, "status": s.Status}
+		// Emitted for every skill, empty when nothing overrode drifted, so a
+		// consumer can branch on the value rather than on the key's presence.
+		entry["override_drift"] = s.OverrideDrift
+		skills = append(skills, entry)
 	}
 
 	human := out.summary(fmt.Sprintf("Checked %d skill(s): no drift", len(report.Skills)))
