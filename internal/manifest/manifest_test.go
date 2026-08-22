@@ -11,7 +11,7 @@ import (
 	"github.com/glapsfun/gskill/internal/manifest"
 )
 
-// writeRepo lays out a temp repo containing gskill.toml plus any extra files,
+// writeRepo lays out a temp repo containing skills.toml plus any extra files,
 // and returns its root. Extra paths are repo-relative.
 func writeRepo(t *testing.T, toml string, extra ...string) string {
 	t.Helper()

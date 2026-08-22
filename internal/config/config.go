@@ -54,7 +54,7 @@ type Sources struct {
 	UserFile    string
 	ProjectFile string
 	// ProjectMap is the project layer supplied in memory rather than as a
-	// file: gskill.toml holds project configuration inside its [config] table
+	// file: skills.toml holds project configuration inside its [config] table
 	// alongside skill declarations, so the manifest hands over just that
 	// sub-table (spec 023 FR-002). It shares the project layer's precedence
 	// slot with ProjectFile — above the user file, below environment and flags.

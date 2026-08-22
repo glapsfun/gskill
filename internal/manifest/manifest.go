@@ -1,4 +1,4 @@
-// Package manifest reads and writes gskill.toml, the committed, hand-authored
+// Package manifest reads and writes skills.toml, the committed, hand-authored
 // declaration of a project's skills, overrides, and project configuration
 // (spec 023). It is the intent half of the pair; skills-lock.json records what
 // that intent resolved to.
@@ -19,7 +19,14 @@ import (
 )
 
 // FileName is the manifest's fixed name at the repository root.
-const FileName = "gskill.toml"
+//
+// Deliberately NOT "gskill.toml": that name belonged to a manifest released in
+// v0.0.1–v0.2.0 and retired in #32 ("skills-lock.json is the only project
+// state"), and lockonly_guard_test.go still guards against its return. A
+// pre-v0.3.0 project may hold one on disk with an incompatible schema
+// (schema_version, [defaults], install_mode, path), so reusing the name would
+// either misread it or hard-fail every command in that project.
+const FileName = "skills.toml"
 
 // Install modes a skill may declare (data-model.md §1.1).
 const (
@@ -28,7 +35,7 @@ const (
 	ModeAuto    = "auto"
 )
 
-// Manifest is a parsed gskill.toml. Warnings carry non-fatal findings (V3, V9)
+// Manifest is a parsed skills.toml. Warnings carry non-fatal findings (V3, V9)
 // that the CLI surfaces without failing the run.
 type Manifest struct {
 	Skills   map[string]Skill

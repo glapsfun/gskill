@@ -15,6 +15,7 @@ import (
 	"github.com/glapsfun/gskill/internal/fsutil"
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/overrides"
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/source"
@@ -47,6 +48,10 @@ type Request struct {
 	// PreserveForeign is set (a copy-mode install is a real directory), and
 	// as the replaceable previous version of the repo-owned active entry.
 	PriorContentHash string
+	// Override is the resolved override declaration for this skill (spec 023).
+	// Empty means the upstream extract ships unchanged, in which case the
+	// install behaves exactly as it did before overrides existed.
+	Override overrides.Spec
 	// LegacyStoreRoots are pre-022 store roots (e.g. the old home store):
 	// stale active symlinks into them are replaced by the real copy.
 	LegacyStoreRoots []string
@@ -59,8 +64,16 @@ type Request struct {
 
 // Result is the outcome of a successful install, sufficient to build a lock entry.
 type Result struct {
-	Skill         discovery.Skill
-	ContentHash   string
+	Skill discovery.Skill
+	// BaseHash is the upstream extract's hash, before any override. It equals
+	// ContentHash when nothing was overridden (spec 023 FR-008).
+	BaseHash    string
+	ContentHash string
+	// CompatHash is the npx-compatible computedHash of the *shipped* content.
+	// With an override applied this differs from a hash of the upstream
+	// extract, so callers must use it rather than re-hashing Skill.Dir —
+	// otherwise the shared lock field would describe content never installed.
+	CompatHash    string
 	SkillFileHash string
 	Mode          Mode              // representative mode (the first agent's)
 	Modes         map[string]string // agentID -> actual mode used
@@ -138,23 +151,32 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 	}
 	warnings = append(warnings, identityWarning(req.Name, skill.Frontmatter.Name)...)
 
-	hashes, err := integrity.HashDir(skill.Dir)
+	baseHashes, err := integrity.HashDir(skill.Dir)
 	if err != nil {
 		return Result{}, err
 	}
-	if req.ExpectContentHash != "" && hashes.ContentHash != req.ExpectContentHash {
-		return Result{}, fmt.Errorf("%w: content %s does not match locked %s",
-			errs.ErrIntegrity, hashes.ContentHash, req.ExpectContentHash)
+
+	contentDir, cleanup, err := applyOverride(skill.Dir, req)
+	if err != nil {
+		return Result{}, err
+	}
+	defer cleanup()
+
+	hashes, compat, err := hashShipped(contentDir, req.ExpectContentHash)
+	if err != nil {
+		return Result{}, err
 	}
 
-	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), skill.Dir, hashes.ContentHash)
+	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), contentDir, hashes.ContentHash)
 	if err != nil {
 		return Result{}, err
 	}
 
 	return Result{
 		Skill:         skill,
+		BaseHash:      baseHashes.ContentHash,
 		ContentHash:   hashes.ContentHash,
+		CompatHash:    compat,
 		SkillFileHash: hashes.SkillFileHash,
 		Mode:          mode,
 		Modes:         modes,
@@ -619,4 +641,63 @@ func agentIDs(agents []agent.Agent) []string {
 		ids = append(ids, ag.ID())
 	}
 	return ids
+}
+
+// hashShipped hashes the content that will actually be installed and verifies
+// it against the caller's expected hash. Both hashes describe the *shipped*
+// bytes, so an overridden skill records what it ships rather than what it
+// started from, and a frozen restore still fails closed on a mismatch.
+func hashShipped(dir, expect string) (integrity.Hashes, string, error) {
+	hashes, err := integrity.HashDir(dir)
+	if err != nil {
+		return integrity.Hashes{}, "", err
+	}
+	if expect != "" && hashes.ContentHash != expect {
+		return integrity.Hashes{}, "", fmt.Errorf("%w: content %s does not match locked %s",
+			errs.ErrIntegrity, hashes.ContentHash, expect)
+	}
+	compat, err := integrity.CompatHash(dir)
+	if err != nil {
+		return integrity.Hashes{}, "", err
+	}
+	return hashes, compat, nil
+}
+
+// applyOverride returns the directory holding the content that will actually
+// ship, plus a cleanup to run when the install finishes.
+//
+// Overrides transform a *copy*: materialize returns the shared clone cache
+// path (or, for a local source, the user's own directory), so transforming in
+// place would corrupt the cache for every other project on the machine.
+func applyOverride(src string, req Request) (string, func(), error) {
+	if req.Override.Empty() {
+		return src, func() {}, nil
+	}
+	staged, cleanup, err := stageForOverride(src)
+	if err != nil {
+		return "", func() {}, err
+	}
+	if err := overrides.Apply(staged, req.ProjectRoot, req.Override); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return staged, cleanup, nil
+}
+
+// stageForOverride copies upstream content into a scratch directory so the
+// override pipeline never writes to the shared clone cache or to a local
+// source the user owns. The returned cleanup always runs, including on the
+// error paths, so a failed install leaves no staging behind.
+func stageForOverride(src string) (string, func(), error) {
+	tmp, err := os.MkdirTemp("", "gskill-override-")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("stage override: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	staged := filepath.Join(tmp, filepath.Base(src))
+	if err := fsutil.CopyDir(src, staged); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("stage override: %w", err)
+	}
+	return staged, cleanup, nil
 }

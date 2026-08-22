@@ -1124,6 +1124,13 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 	ireq := a.installRequest(req.Root, ref, rev, nil, scope, mode)
 	ireq.Name = name
 	ireq.Offline = req.Offline
+	// The declared override travels with the request, so what gets hashed and
+	// materialized is the transformed result (spec 023 FR-012).
+	spec, _, oErr := a.overrideFor(req.Root, name)
+	if oErr != nil {
+		return installer.Request{}, "", oErr
+	}
+	ireq.Override = spec
 
 	em.phase(InstallPhaseFetching)
 	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{})
@@ -1157,6 +1164,16 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, agents []agent.Agent, req InstallFromLockRequest) (LockSkillResult, bool) {
 	prior, ok := lf.Skills[name]
 	if !ok || e.ComputedHash == "" {
+		return LockSkillResult{}, false
+	}
+	// The declaration is part of what "up to date" means (spec 023 FR-012):
+	// an entry whose manifest override still matches the lock is reused, and a
+	// changed pin or override falls through to the full path so only that
+	// entry is re-resolved. Without this, editing an override would be
+	// silently ignored — the committed content would still match the recorded
+	// hash, and install would report success having changed nothing.
+	_, digest, oErr := a.overrideFor(p.root, name)
+	if oErr != nil || !overrideMatchesLock(prior, digest) {
 		return LockSkillResult{}, false
 	}
 	ids := agentIDs(agents)

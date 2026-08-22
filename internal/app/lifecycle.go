@@ -307,6 +307,11 @@ func (a *App) Remove(ctx context.Context, root string, names []string) (RemoveRe
 		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
 			return saveErr
 		}
+		// The declaration goes with the lock entry (spec 023 FR-020), leaving
+		// no orphaned intent for a skill that is no longer installed.
+		if mErr := a.dropManifestSkills(p, names); mErr != nil {
+			return mErr
+		}
 
 		// Drop the removed skills' machine-local bookkeeping (FR-014).
 		a.recordProjectState(ctx, p, lf)
