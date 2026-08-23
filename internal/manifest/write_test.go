@@ -175,3 +175,48 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// TestUpsert_KeepsOwnDocCommentAndPosition is the case an earlier test missed
+// by only re-adding a *different* skill: re-declaring a skill that already
+// exists must keep the comment documenting it and leave it where it stands.
+// Re-appending the block at EOF would silently delete that comment on every
+// `add` — exactly the damage splicing as text exists to avoid.
+func TestUpsert_KeepsOwnDocCommentAndPosition(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), manifest.FileName)
+	original := `# The review skill; do not remove.
+[skills.demo]
+source = "github:org/skills"
+ref    = "v1"
+
+# docs stay put
+[skills.docs]
+source = "github:org/docs"
+`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := manifest.Upsert(path, manifest.Skill{
+		Name: "demo", Source: "github:org/skills", Ref: "v2",
+	})
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	got := readFile(t, path)
+	if !strings.Contains(got, "# The review skill; do not remove.") {
+		t.Errorf("re-declaring a skill deleted its own comment:\n%s", got)
+	}
+	if !strings.Contains(got, `ref = "v2"`) {
+		t.Errorf("update not applied:\n%s", got)
+	}
+	// Position: demo must still precede docs.
+	if strings.Index(got, "[skills.demo]") > strings.Index(got, "[skills.docs]") {
+		t.Errorf("block was moved to the end instead of rewritten in place:\n%s", got)
+	}
+	if strings.Count(got, "[skills.demo]") != 1 {
+		t.Errorf("block duplicated:\n%s", got)
+	}
+}

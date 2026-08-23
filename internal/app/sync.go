@@ -193,7 +193,7 @@ func (a *App) reconcileNeeded(p *project, name string, locked skillslock.Record,
 	if err != nil {
 		return true, err
 	}
-	return !h.Healthy(), nil
+	return !h.WithoutOverrideDrift().Healthy(), nil
 }
 
 // frozenRequest builds an installer request that reproduces a locked skill

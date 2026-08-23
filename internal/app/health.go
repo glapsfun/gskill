@@ -68,10 +68,26 @@ func (h SkillHealth) Healthy() bool {
 	return true
 }
 
+// WithoutOverrideDrift returns h with override drift cleared.
+//
+// sync and repair reproduce the *locked* content — they pin the recorded
+// content hash and never re-resolve — so a changed declaration is not theirs to
+// repair; only `install` re-materializes it (FR-010). Counting it as a broken
+// rung makes them re-materialize an entry the committed fast path then serves
+// unchanged, and report a repair that never happened.
+func (h SkillHealth) WithoutOverrideDrift() SkillHealth {
+	h.OverrideDrift = ""
+	return h
+}
+
 // Faults returns human-readable descriptions of every non-OK rung.
 func (h SkillHealth) Faults() []string {
 	var out []string
-	if h.OverrideDrift != "" {
+	if h.OverrideDrift == manifest.FileName {
+		out = append(out, fmt.Sprintf(
+			"%s: the override declaration in %s changed since install; the committed content no longer matches it",
+			h.Name, manifest.FileName))
+	} else if h.OverrideDrift != "" {
 		out = append(out, fmt.Sprintf(
 			"%s: override input %s changed since install; the committed content no longer matches its declaration",
 			h.Name, h.OverrideDrift))
@@ -320,40 +336,36 @@ func under(path, root string) bool {
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
 }
 
-// overrideDriftOf names the override input responsible when the declaration's
-// current identity no longer matches what the lock recorded (spec 023 FR-010).
+// overrideDriftOf names what drifted when the declaration's current identity no
+// longer matches what the lock recorded (spec 023 FR-010), returning the
+// override input when it can be pinned down and manifest.FileName otherwise.
 //
 // It compares digests rather than watching files: the digest covers the
 // declaration *and* the bytes of every file it references, so an edit anywhere
-// in that set changes it. The first input whose content hash differs from the
-// recorded one is named, because "something changed" is not actionable and
-// "house-rules.md changed" is.
+// in that set changes it. The flip side is that a digest mismatch says only
+// "something in this set changed": the lock records the declaration's input
+// *paths*, not their bytes, so with several inputs there is nothing to compare
+// per file. A specific file is therefore named only when the declaration
+// references exactly one input and that input was already declared — otherwise
+// the report would confidently point at a file the user never touched.
 func (a *App) overrideDriftOf(p *project, name string, locked skillslock.Record) string {
 	spec, digest, err := a.overrideFor(p.root, name)
 	if err != nil || digest == locked.Resolved.OverrideDigest {
 		return ""
 	}
-	if digest == "" && locked.Resolved.OverrideDigest == "" {
-		return ""
-	}
-	// Name the specific input when one can be identified; fall back to the
-	// declaration itself when the change is structural (a kind added, an entry
-	// reordered) rather than a file edit.
-	for _, rel := range spec.Inputs() {
-		if declaredBefore(rel, locked.Resolved.Override) {
-			return rel
-		}
+	if inputs := spec.Inputs(); len(inputs) == 1 && declaredBefore(inputs[0], locked.Resolved.Override) {
+		return inputs[0]
 	}
 	return manifest.FileName
 }
 
 // declaredBefore reports whether rel was already part of the declaration the
 // lock recorded. An input present in both is one whose *bytes* the digest
-// disagreed over, which is the case a per-file comparison can attribute to a
-// specific file.
+// disagreed over; one that is new is a declaration change, not a file edit, and
+// must not be reported as "changed since install".
 func declaredBefore(rel string, recorded *skillslock.OverrideDecl) bool {
 	if recorded == nil {
-		return true
+		return false
 	}
 	for _, known := range (&overrides.Spec{
 		Replace: recorded.Replace,

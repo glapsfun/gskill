@@ -31,7 +31,7 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 			if hErr != nil {
 				return hErr
 			}
-			if h.Healthy() {
+			if h.WithoutOverrideDrift().Healthy() {
 				continue
 			}
 			// Re-materialize the broken rungs (committed copy → agent targets)

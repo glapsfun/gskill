@@ -25,13 +25,28 @@ func Upsert(path string, s Skill) error {
 	if err != nil {
 		return err
 	}
-	lines = dropSkillBlock(lines, s.Name)
 	block := renderSkill(s)
 
-	// Keep exactly one blank line between blocks.
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-		lines = lines[:len(lines)-1]
+	// An existing declaration is rewritten where it stands, keeping the comment
+	// that documents it. Re-appending it at the end instead would silently
+	// delete that comment and shuffle the file on every `add` — the very
+	// damage splicing as text exists to avoid.
+	rest, at := dropSkillBlockAt(lines, s.Name)
+	if at >= 0 {
+		out := make([]string, 0, len(rest)+len(block)+1)
+		out = append(out, rest[:at]...)
+		out = append(out, block...)
+		if tail := rest[at:]; len(tail) > 0 {
+			if strings.TrimSpace(tail[0]) != "" {
+				out = append(out, "")
+			}
+			out = append(out, tail...)
+		}
+		return writeLines(path, trimTrailingBlanks(out))
 	}
+
+	// Keep exactly one blank line between blocks.
+	lines = trimTrailingBlanks(rest)
 	if len(lines) > 0 {
 		lines = append(lines, "")
 	}
@@ -57,15 +72,66 @@ func Remove(path, name string) error {
 // table documents that table, so leaving it orphaned would be worse than
 // removing it.
 func dropSkillBlock(lines []string, name string) []string {
-	b := blockDropper{
-		header: "[skills." + name + "]",
-		prefix: "[skills." + name + ".",
-		out:    make([]string, 0, len(lines)),
-	}
+	b := newBlockDropper(lines, name, false)
 	for _, line := range lines {
 		b.feed(line)
 	}
-	return b.finish()
+	// Dropping the block leaves its blank separator on one side and the
+	// removed comment's on the other; collapsing keeps the file looking
+	// hand-written rather than accumulating a blank line per removal.
+	return trimTrailingBlanks(collapseBlankRuns(b.finish()))
+}
+
+// collapseBlankRuns reduces every run of blank lines to a single one.
+func collapseBlankRuns(lines []string) []string {
+	out := make([]string, 0, len(lines))
+	blank := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			if blank {
+				continue
+			}
+			blank = true
+		} else {
+			blank = false
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// dropSkillBlockAt removes the table but keeps its documenting comment, and
+// reports the index in the returned slice where the block stood (-1 when the
+// manifest did not declare it). Upsert splices the rewritten block back at that
+// index, so an existing declaration keeps both its comment and its position.
+func dropSkillBlockAt(lines []string, name string) ([]string, int) {
+	b := newBlockDropper(lines, name, true)
+	for _, line := range lines {
+		b.feed(line)
+	}
+	out := b.finish()
+	at := b.at
+	if at > len(out) {
+		at = len(out)
+	}
+	return out, at
+}
+
+func newBlockDropper(lines []string, name string, keepDoc bool) *blockDropper {
+	return &blockDropper{
+		header:  "[skills." + name + "]",
+		prefix:  "[skills." + name + ".",
+		keepDoc: keepDoc,
+		at:      -1,
+		out:     make([]string, 0, len(lines)),
+	}
+}
+
+func trimTrailingBlanks(out []string) []string {
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	return out
 }
 
 // blockDropper filters a table and its sub-tables out of a TOML file while
@@ -73,11 +139,16 @@ func dropSkillBlock(lines []string, name string) []string {
 // skipping are held back rather than dropped: they may document the next
 // table, and that is only knowable once the next header appears.
 type blockDropper struct {
-	header   string
-	prefix   string
+	header string
+	prefix string
+	// keepDoc keeps the comment above the table instead of removing it with
+	// it: a rewrite (Upsert) puts the table straight back, a removal does not.
+	keepDoc  bool
 	out      []string
 	pending  []string
 	skipping bool
+	// at is where in out the block began, or -1 when it was never seen.
+	at int
 }
 
 func (b *blockDropper) feed(line string) {
@@ -101,12 +172,7 @@ func (b *blockDropper) feed(line string) {
 
 func (b *blockDropper) feedHeader(line, trimmed string) {
 	if trimmed == b.header || strings.HasPrefix(trimmed, b.prefix) {
-		if !b.skipping {
-			// Entering the block: its own preceding comment goes with it.
-			b.out = dropTrailingDoc(b.out)
-		}
-		b.pending = nil
-		b.skipping = true
+		b.enterBlock()
 		return
 	}
 	if b.skipping {
@@ -117,14 +183,26 @@ func (b *blockDropper) feedHeader(line, trimmed string) {
 	b.out = append(b.out, line)
 }
 
+// enterBlock marks the start of the table being filtered out. The comment
+// above it goes with it on a removal, and stays on a rewrite, where the caller
+// is about to splice the table straight back in.
+func (b *blockDropper) enterBlock() {
+	if !b.skipping {
+		if !b.keepDoc {
+			b.out = dropTrailingDoc(b.out)
+		}
+		if b.at < 0 {
+			b.at = len(b.out)
+		}
+	}
+	b.pending = nil
+	b.skipping = true
+}
+
 func (b *blockDropper) finish() []string {
 	b.out = append(b.out, b.pending...)
 	b.pending = nil
-	out := b.out
-	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
-		out = out[:len(out)-1]
-	}
-	return out
+	return b.out
 }
 
 // dropTrailingDoc removes a comment block (and one blank separator) that
