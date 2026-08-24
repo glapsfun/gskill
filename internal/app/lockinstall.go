@@ -773,7 +773,7 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 			errs.ErrInvalidLock, errUnsupportedSourceType, e.SourceType))
 	}
 
-	agents, done := a.lockEntryTargets(&r, e, req)
+	agents, done := a.lockEntryTargets(&r, name, e, req)
 	if done {
 		return r
 	}
@@ -976,7 +976,7 @@ func (a *App) planStagedEntry(p *project, lf *skillslock.State, name string, rem
 // with no selection, or an unknown agent). done=false with a nil/empty
 // agents slice means a genuine explicit narrow-to-zero (FR-012): the caller
 // falls through to the removal path instead of treating it as a no-op.
-func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req InstallFromLockRequest) ([]agent.Agent, bool) {
+func (a *App) lockEntryTargets(r *LockSkillResult, name string, e skillslock.Entry, req InstallFromLockRequest) ([]agent.Agent, bool) {
 	fail := func(err error) ([]agent.Agent, bool) {
 		r.Status = LockSkillFailed
 		r.Err = fmt.Errorf("skill %q: %w", r.Name, err)
@@ -992,6 +992,20 @@ func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req Insta
 
 	explicit := req.Agents != nil
 	ids := entryAgents(e)
+	// The manifest is the intent half (FR-001), so a declared agent set drives
+	// installation. Without this, `agents` would be written into every
+	// generated block and then ignored — a file that documents a choice the
+	// tool does not act on. An explicit --agent flag still wins, as the
+	// highest-precedence expression of intent.
+	//
+	// An entry recorded with *no* agents is left alone: that state is reached
+	// by unlinking every agent, which is itself a deliberate and more recent
+	// instruction than the declaration, and a plain install must not undo it.
+	if len(ids) > 0 {
+		if declared := a.declaredAgents(req.Root, name); len(declared) > 0 {
+			ids = declared
+		}
+	}
 	if explicit {
 		ids = normalizeAgentIDs(req.Agents)
 	}
@@ -1447,4 +1461,13 @@ func (a *App) declarationMatchesLock(p *project, lf *skillslock.State, name stri
 	}
 	_, pinChanged := a.manifestPinChanged(p.root, name, lf)
 	return !pinChanged
+}
+
+// declaredAgents returns the agent set the manifest declares for name, if any.
+func (a *App) declaredAgents(root, name string) []string {
+	m, err := a.loadManifest(root)
+	if err != nil || m == nil {
+		return nil
+	}
+	return normalizeAgentIDs(m.Skills[name].Agents)
 }

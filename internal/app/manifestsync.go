@@ -52,9 +52,11 @@ func manifestSkillFrom(name string, r skillslock.Record) manifest.Skill {
 	default:
 		s.Commit = r.Resolved.Commit
 	}
-	if m := r.Installation.Mode; m != "" && m != manifest.ModeAuto {
-		s.Mode = m
-	}
+	// Mode is deliberately not derived from r.Installation.Mode: that is the
+	// *resolved* mode, so a machine that happens to support symlinks would
+	// commit mode = "symlink" as if it were a choice, and every teammate would
+	// inherit a decision nobody made. It is written only when the user asked
+	// for one explicitly (see syncManifestSkills).
 	sort.Strings(s.Agents)
 	return s
 }
@@ -63,7 +65,7 @@ func manifestSkillFrom(name string, r skillslock.Record) manifest.Skill {
 // manifest, creating it when absent (FR-019). Any override block a user
 // authored for a skill is carried over untouched: `add` records how a skill is
 // obtained, never how it is customized.
-func (a *App) syncManifestSkills(p *project, lf *skillslock.State, names []string) error {
+func (a *App) syncManifestSkills(p *project, lf *skillslock.State, names []string, explicitMode string) error {
 	path := manifestPath(p.root)
 	existing, err := a.loadManifest(p.root)
 	if err != nil {
@@ -75,11 +77,10 @@ func (a *App) syncManifestSkills(p *project, lf *skillslock.State, names []strin
 			continue
 		}
 		decl := manifestSkillFrom(name, locked)
-		if existing != nil {
-			if prior, had := existing.Skills[name]; had && prior.Override != nil {
-				decl.Override = prior.Override
-			}
+		if explicitMode != "" && explicitMode != manifest.ModeAuto {
+			decl.Mode = explicitMode
 		}
+		decl = carryAuthored(decl, existing)
 		if err := manifest.Upsert(path, decl); err != nil {
 			return err
 		}
@@ -186,22 +187,22 @@ func overrideMatchesLock(r skillslock.Record, digest string) bool {
 // persistAdd writes both halves of the record in one step: the generated lock
 // and the authored declarations. They are written together because a failure
 // between them would leave the two disagreeing (spec 023 FR-019).
-func (a *App) persistAdd(p *project, lf *skillslock.State, res AddResult) error {
+func (a *App) persistAdd(p *project, lf *skillslock.State, res AddResult, explicitMode string) error {
 	if err := saveLock(p.lockPath, lf); err != nil {
 		return err
 	}
-	return a.syncManifestAfterAdd(p, lf, res)
+	return a.syncManifestAfterAdd(p, lf, res, explicitMode)
 }
 
 // syncManifestAfterAdd writes declarations for everything an add installed, in
 // the same run as the lock entry, so the authored and generated halves can
 // never disagree after a successful add (spec 023 FR-019).
-func (a *App) syncManifestAfterAdd(p *project, lf *skillslock.State, res AddResult) error {
+func (a *App) syncManifestAfterAdd(p *project, lf *skillslock.State, res AddResult, explicitMode string) error {
 	added := make([]string, 0, len(res.Installed))
 	for _, s := range res.Installed {
 		added = append(added, s.Name)
 	}
-	return a.syncManifestSkills(p, lf, added)
+	return a.syncManifestSkills(p, lf, added, explicitMode)
 }
 
 // loadManifest reads, validates, and memoizes the project manifest for the
@@ -253,4 +254,25 @@ func (a *App) manifestWarnings(root string) []string {
 		return nil
 	}
 	return append([]string(nil), m.Warnings...)
+}
+
+// carryAuthored preserves the parts of an existing declaration that no lock
+// entry can reconstruct: the override block, and a mode the user wrote by
+// hand. `add` records how a skill is obtained, never how it is customized, so
+// re-running it must not quietly discard either.
+func carryAuthored(decl manifest.Skill, existing *manifest.Manifest) manifest.Skill {
+	if existing == nil {
+		return decl
+	}
+	prior, had := existing.Skills[decl.Name]
+	if !had {
+		return decl
+	}
+	if prior.Override != nil {
+		decl.Override = prior.Override
+	}
+	if decl.Mode == "" {
+		decl.Mode = prior.Mode
+	}
+	return decl
 }

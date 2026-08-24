@@ -83,6 +83,14 @@ func (a *App) findSources(ctx context.Context, scope FindScope) (sources, warnin
 		}
 		return sources, nil
 	default:
+		// Project configuration participates here too (FR-002): a repository
+		// list declared in the manifest travels with the repo, so a teammate
+		// searching the same project sees the same sources with no local
+		// setup. Without this, [config] repositories would parse and then be
+		// silently ignored.
+		if cfg, err := a.projectConfig(scope.Root); err == nil && cfg != nil && len(cfg.Repositories) > 0 {
+			return cfg.Repositories, nil
+		}
 		return a.cfg.Repositories, nil
 	}
 }

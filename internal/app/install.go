@@ -479,7 +479,7 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 		}
 
 		emitRunPhase(progress, InstallPhaseLocking, len(selected))
-		if saveErr := a.persistAdd(p, lf, res); saveErr != nil {
+		if saveErr := a.persistAdd(p, lf, res, req.Mode); saveErr != nil {
 			rollback()
 			return saveErr
 		}

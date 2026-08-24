@@ -15,6 +15,7 @@ import (
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
+	"github.com/glapsfun/gskill/internal/logging"
 	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/registry"
 )
@@ -111,3 +112,31 @@ func (a *App) Logger() *slog.Logger { return a.log }
 
 // Agents returns the agent registry.
 func (a *App) Agents() *agent.Registry { return a.agents }
+
+// ApplyProjectConfig re-resolves configuration with the project's own [config]
+// table in the project layer, and rebuilds the logger to match (spec 023
+// FR-002).
+//
+// It runs once the project directory is known, which is necessarily after
+// startup: configuration is loaded before any command parses -C, so the
+// project layer cannot exist yet at that point. Without this step a declared
+// log_level would appear in `config list` and change nothing, which is worse
+// than not supporting it.
+//
+// A missing or malformed manifest leaves the current configuration untouched:
+// the manifest's own validation reports the problem where it can say something
+// useful, and startup is not that place.
+func (a *App) ApplyProjectConfig(root string) {
+	if root == "" {
+		return
+	}
+	cfg, err := a.projectConfig(root)
+	if err != nil || cfg == nil {
+		return
+	}
+	a.cfg = cfg
+	a.log = logging.New(logging.Options{
+		Level:  logging.ParseLevel(cfg.LogLevel),
+		Format: logging.Format(cfg.LogFormat),
+	})
+}

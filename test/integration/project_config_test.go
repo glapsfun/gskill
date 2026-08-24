@@ -86,3 +86,27 @@ func TestProjectConfig_WarningsReachTheUser(t *testing.T) {
 		t.Errorf("manifest warning never reached the user:\n%s", stderr)
 	}
 }
+
+// TestProjectConfig_ReachesRepositories closes the other half of FR-002: a
+// declared repository list must actually drive `find`. Parsing it and then
+// ignoring it would make the config table decorative in exactly the way the
+// manifest's skill fields once were.
+func TestProjectConfig_ReachesRepositories(t *testing.T) {
+	t.Parallel()
+
+	proj := newProject(t)
+	initProject(t, proj)
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	if err := os.WriteFile(filepath.Join(proj, "skills.toml"),
+		[]byte("[config]\nrepositories = [\""+repo+"\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, code := runGskill(t, proj, "find", "demo")
+	if code != 0 {
+		t.Fatalf("find: exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "demo") {
+		t.Errorf("declared repositories did not reach find:\n%s\n%s", stdout, stderr)
+	}
+}

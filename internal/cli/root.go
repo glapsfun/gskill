@@ -245,6 +245,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	})
 
 	root.resolveDir()
+	// The project layer only becomes resolvable once -C has been parsed, so
+	// configuration declared in the manifest is applied here rather than at
+	// startup (spec 023 FR-002).
+	application.ApplyProjectConfig(root.Dir)
 	kctx.BindTo(ctx, (*context.Context)(nil))
 	kctx.Bind(application)
 	kctx.Bind(projectRoot(root.Dir))
