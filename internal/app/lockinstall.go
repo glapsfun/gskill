@@ -781,7 +781,11 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 	explicit := req.Agents != nil
 	ids := agentIDs(agents)
 	r.Agents = ids
-	kept, added, removed := agentDiff(lf, name, ids, explicit)
+	// A declared agent set narrows just as an explicit --agent does, so the
+	// diff must be taken against the recorded set either way. Skipping it
+	// would let the entry drop an agent from the lock while its managed target
+	// stayed on disk, untracked by every later command.
+	kept, added, removed := agentDiff(lf, name, ids, explicit || len(a.declaredAgents(req.Root, name)) > 0)
 	r.AgentsKept, r.AgentsAdded, r.AgentsRemoved = kept, added, removed
 
 	if explicit && len(ids) == 0 && len(removed) > 0 {
@@ -897,7 +901,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 	r.StoreScope = result.StoreScope
 
 	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result,
-		requestedForEntry(lf, name, e, staged.rev))
+		a.requestedForLockEntry(p.root, lf, name, e, staged.rev))
 	if err != nil {
 		return fail(err)
 	}
@@ -1042,6 +1046,19 @@ func (a *App) lockEntryTargets(r *LockSkillResult, name string, e skillslock.Ent
 		return fail(err)
 	}
 	return agents, false
+}
+
+// requestedForLockEntry derives the intent to record, preferring the pin the
+// manifest declares. Recording the *prior* intent after installing a declared
+// pin would leave the two halves permanently disagreeing: manifestPinChanged
+// would keep firing, so every later `install` would re-resolve over the
+// network and rewrite the entry instead of reporting it up to date, and
+// `update` would advance within the constraint the user replaced.
+func (a *App) requestedForLockEntry(root string, lf *skillslock.State, name string, e skillslock.Entry, rev resolver.Revision) skillslock.Requested {
+	if declared, changed := a.manifestPinChanged(root, name, lf); changed {
+		return skillslock.Requested{Version: declared.Version, Ref: declared.Ref, Commit: declared.Commit}
+	}
+	return requestedForEntry(lf, name, e, rev)
 }
 
 // requestedForEntry derives the tracking intent to record for one installed

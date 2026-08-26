@@ -348,9 +348,21 @@ func under(path, root string) bool {
 // per file. A specific file is therefore named only when the declaration
 // references exactly one input and that input was already declared — otherwise
 // the report would confidently point at a file the user never touched.
+// A declaration gskill cannot read fails closed for an entry that was
+// installed with one: a deleted override input (or a manifest that no longer
+// validates) is exactly the state `install` refuses to proceed from, so
+// `check` must not answer "no drift" for it. An entry with no recorded
+// override has nothing to disagree with and is left alone, so one broken
+// declaration does not flag every sibling skill.
 func (a *App) overrideDriftOf(p *project, name string, locked skillslock.Record) string {
 	spec, digest, err := a.overrideFor(p.root, name)
-	if err != nil || digest == locked.Resolved.OverrideDigest {
+	if err != nil {
+		if locked.Resolved.OverrideDigest == "" {
+			return ""
+		}
+		return manifest.FileName
+	}
+	if digest == locked.Resolved.OverrideDigest {
 		return ""
 	}
 	if inputs := spec.Inputs(); len(inputs) == 1 && declaredBefore(inputs[0], locked.Resolved.Override) {

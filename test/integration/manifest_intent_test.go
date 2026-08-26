@@ -76,3 +76,38 @@ func TestManifestIntent_ExplicitModeIsRecorded(t *testing.T) {
 		t.Errorf("explicitly requested mode was not recorded:\n%s", got)
 	}
 }
+
+// TestManifestIntent_NarrowingRemovesTargets: narrowing the declared agent set
+// must remove the dropped agent's target, not just its lock record. Leaving the
+// directory behind produces an orphan no later command tracks — the agent keeps
+// reading a skill gskill believes it uninstalled.
+func TestManifestIntent_NarrowingRemovesTargets(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude,codex"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(proj, ".codex", "skills", "demo")); err != nil {
+		t.Fatalf("codex target missing after add: %v", err)
+	}
+
+	// Narrow the declaration to claude alone.
+	data, err := os.ReadFile(manifestPath(proj))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := strings.Replace(string(data), `agents = ["claude", "codex"]`, `agents = ["claude"]`, 1)
+	if err := os.WriteFile(manifestPath(proj), []byte(out), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("install: %s", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(proj, ".codex", "skills", "demo")); err == nil {
+		t.Error("dropped agent's target survived as an untracked orphan")
+	}
+}

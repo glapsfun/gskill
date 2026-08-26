@@ -73,3 +73,46 @@ func TestPin_ManifestRefSelectsRevision(t *testing.T) {
 		t.Errorf("lock did not record the newly pinned revision:\n%s", lock)
 	}
 }
+
+// TestPin_EditConverges: after a declared pin is installed, the lock must
+// record that pin as the intent. Recording the prior intent instead leaves the
+// two halves disagreeing forever — every later install re-resolves over the
+// network and rewrites the entry rather than reporting it up to date, and
+// update advances within the constraint the user replaced.
+func TestPin_EditConverges(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	publishNewVersion(t, repo, "demo", "v1.1.0")
+
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+
+	setManifestKey(t, proj, "demo", "version", "1.1.0")
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("install: %s", stderr)
+	}
+	settled := readLock(t, proj)
+
+	// The declared pin is now the recorded intent, so a second run changes
+	// nothing at all.
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("second install: %s", stderr)
+	}
+	if after := readLock(t, proj); after != settled {
+		t.Errorf("install after a pin edit never converges\n--- first ---\n%s\n--- second ---\n%s", settled, after)
+	}
+	// The recorded *intent* must be the declared pin, not the prior one. This
+	// is the fact that makes the run converge: comparing lock bytes alone
+	// passes even when intent is stale, because re-resolving the same pin
+	// reproduces identical output while still hitting the network every run.
+	if !strings.Contains(settled, `"requestedVersion": "1.1.0"`) {
+		t.Errorf("lock recorded stale intent after a pin edit:\n%s", settled)
+	}
+	if strings.Contains(settled, `"requestedVersion": "1.0.0"`) {
+		t.Errorf("lock still records the replaced constraint:\n%s", settled)
+	}
+}
