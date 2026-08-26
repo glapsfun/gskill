@@ -211,6 +211,10 @@ func dropTrailingDoc(out []string) []string {
 	for len(out) > 0 && strings.HasPrefix(strings.TrimSpace(out[len(out)-1]), "#") {
 		out = out[:len(out)-1]
 	}
+	// Drop one blank line separating the comment block from the table.
+	if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
 	return out
 }
 
