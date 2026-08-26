@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -144,6 +145,82 @@ func TestDocsExamples_JSONStatusCommands(t *testing.T) {
 		}
 		if !json.Valid([]byte(stdout)) {
 			t.Errorf("%v stdout is not valid JSON:\n%s", full, stdout)
+		}
+	}
+}
+
+// TestDocsExamples_CustomizeASkill backs:
+//   - docs/how-to/customize-a-skill.md
+//   - docs/reference/manifest.md
+//
+// The page tells a reader to write a file, declare an append override, and run
+// install. If that stops producing the documented outcome, the page is wrong
+// and this test is how we find out.
+func TestDocsExamples_CustomizeASkill(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("code-review"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+
+	// As documented: write the content, declare it, install.
+	rules := filepath.Join(proj, "gskill", "code-review", "house-rules.md")
+	if err := os.MkdirAll(filepath.Dir(rules), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rules, []byte("\n## House rules\nAlways cite file:line.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	declareOverride(t, proj, "code-review", "append = [\"gskill/code-review/house-rules.md\"]\n")
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("install: %s", stderr)
+	}
+
+	content, err := os.ReadFile(filepath.Join(proj, ".agents", "skills", "code-review", "SKILL.md")) //nolint:gosec // test project
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "House rules") {
+		t.Errorf("documented append did not reach the committed content:\n%s", content)
+	}
+
+	assertDocumentedSurface(t, proj)
+
+	// And that editing the input afterwards is reported, as the page says.
+	if err := os.WriteFile(rules, []byte("\n## House rules\nAlso: never guess.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// check reports drift in its output; a non-zero exit is reserved for
+	// --fail-on-drift, which is the contract the page describes.
+	checkOut, checkErr, _ := runGskill(t, proj, "check")
+	if !strings.Contains(checkOut+checkErr, "house-rules.md") {
+		t.Errorf("check does not name the changed input, contrary to the page:\n%s\n%s", checkOut, checkErr)
+	}
+	if _, _, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 7 {
+		t.Errorf("check --fail-on-drift = exit %d, want 7", code)
+	}
+}
+
+// assertDocumentedSurface checks the surface docs/how-to/customize-a-skill.md
+// promises: list marks the skill, and info reports the identity keys.
+func assertDocumentedSurface(t *testing.T, proj string) {
+	t.Helper()
+
+	stdout, _, _ := runGskill(t, proj, "list")
+	if !strings.Contains(stdout, "(overridden)") {
+		t.Errorf("list does not mark the skill as documented:\n%s", stdout)
+	}
+	infoOut, _, _ := runGskill(t, proj, "info", "code-review", "--json")
+	var info map[string]any
+	if err := json.Unmarshal([]byte(infoOut), &info); err != nil {
+		t.Fatalf("info --json invalid: %v", err)
+	}
+	for _, key := range []string{"overridden", "base_hash", "override_digest"} {
+		if _, ok := info[key]; !ok {
+			t.Errorf("info --json omits documented key %q", key)
 		}
 	}
 }
