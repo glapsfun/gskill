@@ -371,6 +371,34 @@ func (a *App) chooseInteractive(req AddRequest, candidates []discovery.Discovere
 	return chosen, nil
 }
 
+// addInstallRequest specializes the run-wide install request for one selected
+// skill.
+//
+// A skill the manifest already declares an override for is added *with* it:
+// otherwise `add` would ship un-customized content while writing a manifest
+// that claims otherwise, and the lock would record an empty override identity
+// for a project that declares one.
+func (a *App) addInstallRequest(base installer.Request, req AddRequest, lf *skillslock.State, s discovery.DiscoveredSkill, plan addPlan) (installer.Request, error) {
+	ir := base
+	ir.Name = s.ID
+	ir.Path = s.RepoPath
+	ir.Agents = plan.activate
+	// Adds never clobber content gskill does not own; --force is the
+	// documented override (spec 011 FR-016). The previously locked hash marks
+	// copy-mode installs as gskill's own.
+	ir.PreserveForeign = !req.Force
+	ir.ReplaceActive = req.Force
+	spec, _, err := a.overrideFor(req.Root, s.ID)
+	if err != nil {
+		return installer.Request{}, err
+	}
+	ir.Override = spec
+	if locked, ok := lf.Skills[s.ID]; ok {
+		ir.PriorContentHash = locked.Resolved.ContentHash
+	}
+	return ir, nil
+}
+
 // installSelected installs the chosen skills atomically. For a skill already
 // declared from the same source, a new target agent unions into the existing
 // install (reusing the one store + active entry and adding only the missing
@@ -428,17 +456,10 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 				rollback()
 				return planErr
 			}
-			ir := ireq
-			ir.Name = s.ID
-			ir.Path = s.RepoPath
-			ir.Agents = plan.activate
-			// Adds never clobber content gskill does not own; --force is the
-			// documented override (spec 011 FR-016). The previously locked
-			// hash marks copy-mode installs as gskill's own.
-			ir.PreserveForeign = !req.Force
-			ir.ReplaceActive = req.Force
-			if locked, ok := lf.Skills[s.ID]; ok {
-				ir.PriorContentHash = locked.Resolved.ContentHash
+			ir, irErr := a.addInstallRequest(ireq, req, lf, s, plan)
+			if irErr != nil {
+				rollback()
+				return irErr
 			}
 			result, instErr := inst.Install(ctx, ir)
 			if instErr != nil {
@@ -458,7 +479,7 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 		}
 
 		emitRunPhase(progress, InstallPhaseLocking, len(selected))
-		if saveErr := saveLock(p.lockPath, lf); saveErr != nil {
+		if saveErr := a.persistAdd(p, lf, res, req.Mode); saveErr != nil {
 			rollback()
 			return saveErr
 		}
@@ -701,6 +722,15 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 	ireq := a.installRequest(p.root, ref, rev, agents, cmp.Or(in.Scope, req.Scope), modeOr(req.Mode, in.Mode))
 	ireq.Name = name
 	ireq.Offline = req.Offline
+	// `update` runs through here, so the declared override is re-applied on
+	// top of the newer upstream and the recorded hashes advance together
+	// (spec 023 FR-018). Without it an update would silently discard a user's
+	// customization while reporting success.
+	spec, _, oErr := a.overrideFor(p.root, name)
+	if oErr != nil {
+		return SkillChange{}, oErr
+	}
+	ireq.Override = spec
 	// The previously locked hash marks the existing repo-owned entry as
 	// gskill's own version, replaceable on update; drifted content still
 	// fails closed (spec 022 FR-008).
@@ -816,7 +846,7 @@ func (a *App) withLock(ctx context.Context, p *project, fn func() error) error {
 	if err := os.MkdirAll(p.locksDir, 0o750); err != nil {
 		return fmt.Errorf("create locks dir: %w", err)
 	}
-	lock, err := fsutil.Acquire(ctx, p.mutateLockPath(), fsutil.LockExclusive, a.storeLockTimeout())
+	lock, err := fsutil.Acquire(ctx, p.mutateLockPath(), fsutil.LockExclusive, a.storeLockTimeout(p.root))
 	if err != nil {
 		return err
 	}
@@ -930,11 +960,26 @@ func buildLockEntry(ref source.Ref, rev resolver.Revision, ireq installer.Reques
 	// consumable by external tooling (spec 012 FR-024). A hashing failure must
 	// surface: silently leaving it empty would let a stale computedHash for
 	// changed content survive in the shared lock.
-	compat, err := integrity.CompatHash(result.Skill.Dir)
-	if err != nil {
-		return skillslock.Record{}, fmt.Errorf("compute shared computedHash for %s: %w", ireq.Name, err)
+	//
+	// It comes from the installer, which hashed the content it actually
+	// shipped. Re-hashing result.Skill.Dir here would describe the *upstream*
+	// extract, so an overridden skill would record a hash of content that was
+	// never installed — and never satisfy the up-to-date fast path again.
+	compat := result.CompatHash
+	if compat == "" {
+		var err error
+		if compat, err = integrity.CompatHash(result.Skill.Dir); err != nil {
+			return skillslock.Record{}, fmt.Errorf("compute shared computedHash for %s: %w", ireq.Name, err)
+		}
 	}
 	resolved.CompatHash = compat
+
+	// Override identity travels with the entry so the lock stays
+	// self-describing about what was applied (spec 023 FR-007).
+	if err := recordOverride(&resolved, ireq.ProjectRoot, ireq.Override, result.BaseHash); err != nil {
+		return skillslock.Record{}, err
+	}
+
 	if rev.RefKind == resolver.RefKindLocal {
 		resolved.LocalPathHash = result.ContentHash
 	}

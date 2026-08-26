@@ -2,7 +2,25 @@ package app
 
 import (
 	"context"
+	"fmt"
+
+	"github.com/glapsfun/gskill/internal/errs"
 )
+
+// repairHint explains a failed restore whose real cause is a moved override
+// declaration. Repair reproduces the *locked* content, but the locked hash is
+// the output of the declaration as it stood at install time; once an override
+// input changes, no restore can reproduce it and the bare "content does not
+// match locked" mismatch sends the user nowhere. `install` is the command that
+// re-applies a changed declaration, so say so.
+func repairHint(name string, h SkillHealth, err error) error {
+	if h.OverrideDrift == "" {
+		return err
+	}
+	return errs.WithHint(
+		fmt.Errorf("skill %q: %w", name, err),
+		"the override declaration changed since install, so the locked content cannot be reproduced; run 'gskill install' to re-apply it")
+}
 
 // RepairResult reports a repair run.
 type RepairResult struct {
@@ -31,7 +49,7 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 			if hErr != nil {
 				return hErr
 			}
-			if h.Healthy() {
+			if h.WithoutOverrideDrift().Healthy() {
 				continue
 			}
 			// Re-materialize the broken rungs (committed copy → agent targets)
@@ -46,7 +64,7 @@ func (a *App) Repair(ctx context.Context, root string) (RepairResult, error) {
 			ireq.ReplaceActive = true
 			sctx := stampSkill(ctx, name, k+1, len(names))
 			if _, instErr := a.installerForScope(p, string(ireq.Scope)).Install(sctx, ireq); instErr != nil {
-				return instErr
+				return repairHint(name, h, instErr)
 			}
 			out.Repaired = append(out.Repaired, name)
 		}

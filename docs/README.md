@@ -33,6 +33,7 @@ Problem-oriented recipes — one per feature. See the [full index](how-to/index.
 - [Add a skill from Git](how-to/add-a-git-skill.md)
 - [Reproduce exactly with `--frozen-lockfile`](how-to/reproduce-with-frozen-lockfile.md)
 - [Verify integrity](how-to/verify-integrity.md)
+- [Customize a skill without forking it](how-to/customize-a-skill.md)
 - [Gate CI on drift](how-to/gate-ci-on-drift.md)
 - [Reuse skills across projects](how-to/reuse-skills-across-projects.md)
 - [Script GSKILL with `--json`](how-to/script-with-json.md)
@@ -44,6 +45,7 @@ Authoritative, exhaustive lookup.
 - [Commands](reference/commands.md) — *generated from the CLI*
 - [Exit codes](reference/exit-codes.md) — *generated from the CLI*
 - [Configuration](reference/configuration.md)
+- [`skills.toml` manifest](reference/manifest.md)
 - [`skills-lock.json` lockfile schema](reference/lockfile-schema.md)
 - [`SKILL.md` frontmatter schema](reference/frontmatter-schema.md)
 - [Supported agents](reference/agents.md)

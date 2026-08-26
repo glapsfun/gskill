@@ -26,6 +26,10 @@ type ListedSkill struct {
 	ContentHash string
 	Active      string
 	AgentHealth []AgentHealthEntry
+	// Overridden reports whether a customization was applied. A customized
+	// skill is not the same artifact as its upstream, so listing them
+	// identically would hide the difference that matters most.
+	Overridden bool
 }
 
 // AgentHealthEntry is one agent's install mode and health for a skill.
@@ -80,6 +84,7 @@ func (a *App) List(_ context.Context, root string) ([]ListedSkill, error) {
 			ContentHash: locked.Resolved.ContentHash,
 			Active:      string(h.ActiveState),
 			AgentHealth: agentHealth,
+			Overridden:  locked.Resolved.OverrideDigest != "",
 		})
 	}
 	return out, nil
@@ -94,9 +99,15 @@ type SkillInfo struct {
 	ContentHash string
 	Description string
 	License     string
-	Requires    skillslock.Requires
-	Agents      []string
-	Targets     map[string]string
+	// BaseHash, OverrideDigest, and Override describe the customization: the
+	// upstream hash before it, its identity, and the declaration that produced
+	// it. Empty for a skill installed unchanged.
+	BaseHash       string
+	OverrideDigest string
+	Override       *skillslock.OverrideDecl
+	Requires       skillslock.Requires
+	Agents         []string
+	Targets        map[string]string
 }
 
 // Info returns the full detail for one locked skill.
@@ -118,9 +129,13 @@ func (a *App) Info(_ context.Context, root, name string) (SkillInfo, error) {
 		ContentHash: locked.Resolved.ContentHash,
 		Description: locked.Metadata.Description,
 		License:     locked.Metadata.License,
-		Requires:    locked.Requires,
-		Agents:      locked.Installation.Agents,
-		Targets:     locked.Installation.Targets,
+
+		BaseHash:       locked.Resolved.BaseHash,
+		OverrideDigest: locked.Resolved.OverrideDigest,
+		Override:       locked.Resolved.Override,
+		Requires:       locked.Requires,
+		Agents:         locked.Installation.Agents,
+		Targets:        locked.Installation.Targets,
 	}, nil
 }
 

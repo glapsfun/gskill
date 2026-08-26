@@ -12,6 +12,8 @@ GSKILL? Start with the [tutorial](../tutorials/getting-started.md) first.
 - [Target specific agents](target-specific-agents.md) — install into Claude Code, Codex, Cursor, and/or
   Gemini CLI, and choose project vs global scope.
 - [Copy vs symlink](copy-vs-symlink.md) — choose how installed content lands on disk.
+- [Customize a skill without forking it](customize-a-skill.md) — patch, replace, or layer content
+  onto an upstream skill and keep taking updates.
 
 ## Reproducing & verifying
 

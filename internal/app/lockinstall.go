@@ -18,6 +18,7 @@ import (
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/overrides"
 
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/skillslock"
@@ -117,6 +118,9 @@ type InstallFromLockResult struct {
 	Skills      []LockSkillResult
 	Pruned      []string
 	Changed     bool
+	// Warnings carries the manifest's non-fatal advisories so the CLI can show
+	// them; they are diagnostics for the user, not structured log output.
+	Warnings []string
 }
 
 // InstallFromLock implements the install pipeline: locate and validate
@@ -145,6 +149,7 @@ func (a *App) InstallFromLock(ctx context.Context, req InstallFromLockRequest) (
 		return res, err
 	}
 	res.Initialized = initialized
+	res.Warnings = a.manifestWarnings(p.root)
 
 	installErr := a.withLock(ctx, p, func() error {
 		// Loaded here, under the same lock installAllLockEntries uses to load
@@ -768,7 +773,7 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 			errs.ErrInvalidLock, errUnsupportedSourceType, e.SourceType))
 	}
 
-	agents, done := a.lockEntryTargets(&r, e, req)
+	agents, done := a.lockEntryTargets(&r, name, e, req)
 	if done {
 		return r
 	}
@@ -776,7 +781,11 @@ func (a *App) installOneLockEntry(ctx context.Context, p *project, lf *skillsloc
 	explicit := req.Agents != nil
 	ids := agentIDs(agents)
 	r.Agents = ids
-	kept, added, removed := agentDiff(lf, name, ids, explicit)
+	// A declared agent set narrows just as an explicit --agent does, so the
+	// diff must be taken against the recorded set either way. Skipping it
+	// would let the entry drop an agent from the lock while its managed target
+	// stayed on disk, untracked by every later command.
+	kept, added, removed := agentDiff(lf, name, ids, explicit || len(a.declaredAgents(req.Root, name)) > 0)
 	r.AgentsKept, r.AgentsAdded, r.AgentsRemoved = kept, added, removed
 
 	if explicit && len(ids) == 0 && len(removed) > 0 {
@@ -892,11 +901,12 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 	r.StoreScope = result.StoreScope
 
 	ls, err := buildLockEntry(staged.ref, staged.rev, staged.ireq, result,
-		requestedForEntry(lf, name, e, staged.rev))
+		a.requestedForLockEntry(p.root, lf, name, e, staged.rev))
 	if err != nil {
 		return fail(err)
 	}
 	ls.Resolved.CompatHash = staged.compat
+	ls.Resolved.BaseHash = carriedBaseHash(lf, name, ls.Resolved)
 
 	// Only after the new lock entry is fully built (so a buildLockEntry
 	// failure leaves lf untouched by the removal side) do dropped agents'
@@ -970,7 +980,7 @@ func (a *App) planStagedEntry(p *project, lf *skillslock.State, name string, rem
 // with no selection, or an unknown agent). done=false with a nil/empty
 // agents slice means a genuine explicit narrow-to-zero (FR-012): the caller
 // falls through to the removal path instead of treating it as a no-op.
-func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req InstallFromLockRequest) ([]agent.Agent, bool) {
+func (a *App) lockEntryTargets(r *LockSkillResult, name string, e skillslock.Entry, req InstallFromLockRequest) ([]agent.Agent, bool) {
 	fail := func(err error) ([]agent.Agent, bool) {
 		r.Status = LockSkillFailed
 		r.Err = fmt.Errorf("skill %q: %w", r.Name, err)
@@ -986,6 +996,20 @@ func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req Insta
 
 	explicit := req.Agents != nil
 	ids := entryAgents(e)
+	// The manifest is the intent half (FR-001), so a declared agent set drives
+	// installation. Without this, `agents` would be written into every
+	// generated block and then ignored — a file that documents a choice the
+	// tool does not act on. An explicit --agent flag still wins, as the
+	// highest-precedence expression of intent.
+	//
+	// An entry recorded with *no* agents is left alone: that state is reached
+	// by unlinking every agent, which is itself a deliberate and more recent
+	// instruction than the declaration, and a plain install must not undo it.
+	if len(ids) > 0 {
+		if declared := a.declaredAgents(req.Root, name); len(declared) > 0 {
+			ids = declared
+		}
+	}
 	if explicit {
 		ids = normalizeAgentIDs(req.Agents)
 	}
@@ -1024,6 +1048,19 @@ func (a *App) lockEntryTargets(r *LockSkillResult, e skillslock.Entry, req Insta
 	return agents, false
 }
 
+// requestedForLockEntry derives the intent to record, preferring the pin the
+// manifest declares. Recording the *prior* intent after installing a declared
+// pin would leave the two halves permanently disagreeing: manifestPinChanged
+// would keep firing, so every later `install` would re-resolve over the
+// network and rewrite the entry instead of reporting it up to date, and
+// `update` would advance within the constraint the user replaced.
+func (a *App) requestedForLockEntry(root string, lf *skillslock.State, name string, e skillslock.Entry, rev resolver.Revision) skillslock.Requested {
+	if declared, changed := a.manifestPinChanged(root, name, lf); changed {
+		return skillslock.Requested{Version: declared.Version, Ref: declared.Ref, Commit: declared.Commit}
+	}
+	return requestedForEntry(lf, name, e, rev)
+}
+
 // requestedForEntry derives the tracking intent to record for one installed
 // entry: the prior record's intent when it is still consistent with the core
 // ref (an external core-ref edit overrides gskill's stale intent), else the
@@ -1060,7 +1097,7 @@ type stagedLockEntry struct {
 // nothing to verify against; it is recorded after the install.
 func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest, em *skillEmitter) (stagedLockEntry, error) {
 	em.phase(InstallPhaseResolving)
-	ref, rev, pinned, err := a.resolveLockEntry(ctx, lf, name, e)
+	ref, rev, pinned, err := a.resolveLockEntry(ctx, p.root, lf, name, e)
 	if err != nil {
 		return stagedLockEntry{}, err
 	}
@@ -1079,10 +1116,52 @@ func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skill
 	}
 	staged := stagedLockEntry{ref: ref, rev: rev, ireq: ireq, compat: compat}
 	em.phase(InstallPhaseVerifying)
-	if e.ComputedHash == "" || compat == e.ComputedHash {
+	if e.ComputedHash == "" || compat == e.ComputedHash || a.declarationChanged(p, lf, name, e, req) {
 		return staged, nil
 	}
 	return a.retryOrRejectMismatch(ctx, inst, req, name, skillDir, mode, extScope, e, staged, pinned, em)
+}
+
+// carriedBaseHash keeps an overridden entry's recorded upstream hash when the
+// install that produced r never saw the upstream extract — a committed-content
+// hit reports none — so a restore does not silently drop baseHash from an
+// entry that still has an override.
+func carriedBaseHash(lf *skillslock.State, name string, r skillslock.Resolved) string {
+	if r.BaseHash != "" || r.Override.Empty() {
+		return r.BaseHash
+	}
+	prior, ok := lf.Skills[name]
+	if !ok {
+		return ""
+	}
+	return prior.Resolved.BaseHash
+}
+
+// declarationChanged reports whether the manifest's declaration for name — its
+// pin or its override — differs from the one the lock recorded. When it does,
+// the recorded computedHash describes the *previous* declaration's output and
+// has nothing to say about the entry being staged: install re-resolves and
+// rewrites just that entry (FR-004, FR-012) instead of rejecting it as a
+// mismatch the user cannot resolve.
+//
+// Under --frozen-lockfile the same disagreement is exactly what must fail, so
+// the bypass is withheld and the mismatch surfaces (FR-013).
+func (a *App) declarationChanged(p *project, lf *skillslock.State, name string, e skillslock.Entry, req InstallFromLockRequest) bool {
+	if req.Frozen {
+		return false
+	}
+	if _, pinChanged := a.manifestPinChanged(p.root, name, lf); pinChanged {
+		return true
+	}
+	_, digest, err := a.overrideFor(p.root, name)
+	if err != nil {
+		return false
+	}
+	recorded := ""
+	if e.Ext != nil {
+		recorded = e.Ext.OverrideDigest
+	}
+	return digest != recorded
 }
 
 // retryOrRejectMismatch handles a computedHash mismatch on the recorded pin:
@@ -1124,6 +1203,13 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 	ireq := a.installRequest(req.Root, ref, rev, nil, scope, mode)
 	ireq.Name = name
 	ireq.Offline = req.Offline
+	// The declared override travels with the request, so what gets hashed and
+	// materialized is the transformed result (spec 023 FR-012).
+	spec, _, oErr := a.overrideFor(req.Root, name)
+	if oErr != nil {
+		return installer.Request{}, "", oErr
+	}
+	ireq.Override = spec
 
 	em.phase(InstallPhaseFetching)
 	scan, err := inst.DiscoverAll(ctx, ireq, discovery.Options{})
@@ -1137,7 +1223,16 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 			errs.ErrInvalidLock, path.Join(skillDir, integrity.SkillFileName), ref.Original)
 	}
 	em.phase(InstallPhaseHashing)
-	compat, err := integrity.CompatHash(found.Dir)
+	// Hash what would actually ship, not the raw extract: the lock's
+	// computedHash records the post-override result, so hashing the untouched
+	// extract here would compare an upstream hash against a shipped one and
+	// reject every overridden entry as an integrity failure.
+	hashDir, cleanup, mErr := overrides.Materialize(found.Dir, req.Root, spec)
+	if mErr != nil {
+		return installer.Request{}, "", mErr
+	}
+	defer cleanup()
+	compat, err := integrity.CompatHash(hashDir)
 	if err != nil {
 		return installer.Request{}, "", err
 	}
@@ -1157,6 +1252,15 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.State, name string, e skillslock.Entry, agents []agent.Agent, req InstallFromLockRequest) (LockSkillResult, bool) {
 	prior, ok := lf.Skills[name]
 	if !ok || e.ComputedHash == "" {
+		return LockSkillResult{}, false
+	}
+	// The declaration is part of what "up to date" means (spec 023 FR-012):
+	// an entry whose manifest override still matches the lock is reused, and a
+	// changed pin or override falls through to the full path so only that
+	// entry is re-resolved. Without this, editing an override would be
+	// silently ignored — the committed content would still match the recorded
+	// hash, and install would report success having changed nothing.
+	if !a.declarationMatchesLock(p, lf, name, prior) {
 		return LockSkillResult{}, false
 	}
 	ids := agentIDs(agents)
@@ -1257,7 +1361,15 @@ func installedContentPath(p *project, name string, prior skillslock.Record) stri
 // tool updated the entry (new computedHash), the stale pin would refetch the
 // OLD revision and --force would then overwrite the external update, so the
 // source is re-resolved instead.
-func (a *App) resolveLockEntry(ctx context.Context, lf *skillslock.State, name string, e skillslock.Entry) (ref source.Ref, rev resolver.Revision, pinned bool, err error) {
+func (a *App) resolveLockEntry(ctx context.Context, root string, lf *skillslock.State, name string, e skillslock.Entry) (ref source.Ref, rev resolver.Revision, pinned bool, err error) {
+	// The manifest is intent, so a declared pin that no longer matches what
+	// the lock recorded must be resolved afresh (FR-004). Reusing the recorded
+	// commit here is what made an edited `version`/`ref`/`commit` silently do
+	// nothing — one of the four advertised override kinds had no effect at all.
+	if req, changed := a.manifestPinChanged(root, name, lf); changed {
+		ref, rev, err = a.resolveDeclaredPin(ctx, e, req)
+		return ref, rev, false, err
+	}
 	if prior, ok := lf.Skills[name]; ok && prior.Resolved.Commit != "" {
 		return refFromLock(prior.Source), revFromLock(prior.Resolved), true, nil
 	}
@@ -1303,4 +1415,76 @@ func skillAtRepoPath(scan discovery.Result, repoPath string) (discovery.Discover
 		}
 	}
 	return discovery.DiscoveredSkill{}, false
+}
+
+// manifestPinChanged reports whether the manifest declares a pin for name that
+// differs from the intent the lock recorded, returning the declared one.
+//
+// It compares against Requested — what was *asked for* — not against the
+// resolved commit: a constraint like "^1.0.0" legitimately resolves to a moving
+// tag, and comparing against the resolution would re-resolve on every run.
+func (a *App) manifestPinChanged(root, name string, lf *skillslock.State) (resolver.Requested, bool) {
+	m, err := a.loadManifest(root)
+	if err != nil || m == nil {
+		return resolver.Requested{}, false
+	}
+	decl, ok := m.Skills[name]
+	if !ok {
+		return resolver.Requested{}, false
+	}
+	declared := resolver.Requested{Version: decl.Version, Ref: decl.Ref, Commit: decl.Commit}
+	if declared == (resolver.Requested{}) {
+		return resolver.Requested{}, false
+	}
+	prior, ok := lf.Skills[name]
+	if !ok {
+		return declared, true
+	}
+	recorded := resolver.Requested{
+		Version: prior.Requested.Version,
+		Ref:     prior.Requested.Ref,
+		Commit:  prior.Requested.Commit,
+	}
+	return declared, declared != recorded
+}
+
+// resolveDeclaredPin resolves an entry against the manifest's declaration
+// rather than the lock's recorded revision.
+func (a *App) resolveDeclaredPin(ctx context.Context, e skillslock.Entry, req resolver.Requested) (source.Ref, resolver.Revision, error) {
+	srcStr, _ := entrySourceRef(e)
+	ref, err := source.Parse(srcStr)
+	if err != nil {
+		return source.Ref{}, resolver.Revision{}, err
+	}
+	ref = promoteLocalGit(ref)
+	rev, _, err := resolver.Resolve(ctx, a.git, ref, req)
+	if err != nil {
+		return source.Ref{}, resolver.Revision{}, err
+	}
+	return ref, rev, nil
+}
+
+// declarationMatchesLock reports whether the manifest still agrees with what
+// the lock recorded for name, across both the override and the pin.
+//
+// This is what "up to date" means once intent lives in a file the user edits
+// (spec 023 FR-012): without it, editing a declaration would be silently
+// ignored — the committed content would still match the recorded hash, and
+// install would report success having changed nothing.
+func (a *App) declarationMatchesLock(p *project, lf *skillslock.State, name string, prior skillslock.Record) bool {
+	_, digest, err := a.overrideFor(p.root, name)
+	if err != nil || !overrideMatchesLock(prior, digest) {
+		return false
+	}
+	_, pinChanged := a.manifestPinChanged(p.root, name, lf)
+	return !pinChanged
+}
+
+// declaredAgents returns the agent set the manifest declares for name, if any.
+func (a *App) declaredAgents(root, name string) []string {
+	m, err := a.loadManifest(root)
+	if err != nil || m == nil {
+		return nil
+	}
+	return normalizeAgentIDs(m.Skills[name].Agents)
 }

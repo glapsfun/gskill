@@ -51,8 +51,16 @@ type Resolved struct {
 	TreeHash      string
 	ContentHash   string
 	SkillFileHash string
-	MutableRef    bool
-	LocalPathHash string
+	// BaseHash, OverrideDigest, and Override carry the spec 023 override
+	// identity: the upstream hash before transformation, the canonical digest
+	// of the declaration plus its inputs, and the declaration itself. All
+	// three are empty for a skill with no override, so spec 022 records are
+	// unaffected.
+	BaseHash       string
+	OverrideDigest string
+	Override       *OverrideDecl
+	MutableRef     bool
+	LocalPathHash  string
 	// CompatHash is the npx-skills-compatible computedHash (spec 012). The
 	// shared skills-lock.json persists it as the core computedHash field.
 	CompatHash string

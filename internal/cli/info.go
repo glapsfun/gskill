@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
 // infoCmd shows details for one skill.
@@ -50,6 +51,12 @@ func (c infoCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 		"license":      info.License,
 		"agents":       info.Agents,
 		"targets":      info.Targets,
+		// Always present, empty for a skill installed unchanged, so adding
+		// them cannot break an existing consumer (contract C3).
+		"overridden":      info.OverrideDigest != "",
+		"override_digest": info.OverrideDigest,
+		"base_hash":       info.BaseHash,
+		"override":        overrideJSON(info.Override),
 		"requires": map[string]any{
 			"skills":      info.Requires.Skills,
 			"commands":    info.Requires.Commands,
@@ -57,4 +64,18 @@ func (c infoCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 			"mcp":         info.Requires.MCP,
 		},
 	})
+}
+
+// overrideJSON renders the resolved declaration, or an empty object when the
+// skill was installed unchanged, so the key's type never varies.
+func overrideJSON(o *skillslock.OverrideDecl) map[string]any {
+	if o == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"replace": o.Replace,
+		"patch":   o.Patch,
+		"prepend": o.Prepend,
+		"append":  o.Append,
+	}
 }

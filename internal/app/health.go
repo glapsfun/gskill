@@ -12,6 +12,8 @@ import (
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/manifest"
+	"github.com/glapsfun/gskill/internal/overrides"
 )
 
 // TargetState classifies one agent target's health relative to the locked state.
@@ -42,11 +44,19 @@ type SkillHealth struct {
 	Agents      map[string]TargetState
 	Modes       map[string]string
 	Targets     map[string]string // agentID -> recorded target path (repo-relative)
+	// OverrideDrift names the override input whose content no longer matches
+	// the identity recorded in the lock (spec 023 FR-010). It is reported
+	// separately from content drift because the causes and the remedies
+	// differ: here the *declaration* moved, not the installed content.
+	OverrideDrift string
 }
 
 // Healthy reports whether every rung of the chain is in a good state (spec
 // 022: committed content → agent links; there is no store rung).
 func (h SkillHealth) Healthy() bool {
+	if h.OverrideDrift != "" {
+		return false
+	}
 	if h.Scope != string(installer.ScopeGlobal) && h.ActiveState != active.HealthOK {
 		return false
 	}
@@ -58,9 +68,30 @@ func (h SkillHealth) Healthy() bool {
 	return true
 }
 
+// WithoutOverrideDrift returns h with override drift cleared.
+//
+// sync and repair reproduce the *locked* content — they pin the recorded
+// content hash and never re-resolve — so a changed declaration is not theirs to
+// repair; only `install` re-materializes it (FR-010). Counting it as a broken
+// rung makes them re-materialize an entry the committed fast path then serves
+// unchanged, and report a repair that never happened.
+func (h SkillHealth) WithoutOverrideDrift() SkillHealth {
+	h.OverrideDrift = ""
+	return h
+}
+
 // Faults returns human-readable descriptions of every non-OK rung.
 func (h SkillHealth) Faults() []string {
 	var out []string
+	if h.OverrideDrift == manifest.FileName {
+		out = append(out, fmt.Sprintf(
+			"%s: the override declaration in %s changed since install; the committed content no longer matches it",
+			h.Name, manifest.FileName))
+	} else if h.OverrideDrift != "" {
+		out = append(out, fmt.Sprintf(
+			"%s: override input %s changed since install; the committed content no longer matches its declaration",
+			h.Name, h.OverrideDrift))
+	}
 	if h.Scope != string(installer.ScopeGlobal) && h.ActiveState != active.HealthOK {
 		if h.ActiveState == active.HealthDrifted {
 			out = append(out, fmt.Sprintf("%s: committed content at %s no longer matches skills-lock.json (drifted)", h.Name, h.ActivePath))
@@ -146,6 +177,8 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, v
 		Modes:      locked.Installation.Modes,
 		Targets:    locked.Installation.Targets,
 	}
+
+	h.OverrideDrift = a.overrideDriftOf(p, name, locked)
 
 	global := locked.Installation.Scope == string(installer.ScopeGlobal)
 	legacyRoots := p.legacyStoreRoots()
@@ -301,4 +334,61 @@ func under(path, root string) bool {
 	path = filepath.Clean(path)
 	root = filepath.Clean(root)
 	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+}
+
+// overrideDriftOf names what drifted when the declaration's current identity no
+// longer matches what the lock recorded (spec 023 FR-010), returning the
+// override input when it can be pinned down and manifest.FileName otherwise.
+//
+// It compares digests rather than watching files: the digest covers the
+// declaration *and* the bytes of every file it references, so an edit anywhere
+// in that set changes it. The flip side is that a digest mismatch says only
+// "something in this set changed": the lock records the declaration's input
+// *paths*, not their bytes, so with several inputs there is nothing to compare
+// per file. A specific file is therefore named only when the declaration
+// references exactly one input and that input was already declared — otherwise
+// the report would confidently point at a file the user never touched.
+// A declaration gskill cannot read fails closed for an entry that was
+// installed with one: a deleted override input (or a manifest that no longer
+// validates) is exactly the state `install` refuses to proceed from, so
+// `check` must not answer "no drift" for it. An entry with no recorded
+// override has nothing to disagree with and is left alone, so one broken
+// declaration does not flag every sibling skill.
+func (a *App) overrideDriftOf(p *project, name string, locked skillslock.Record) string {
+	spec, digest, err := a.overrideFor(p.root, name)
+	if err != nil {
+		if locked.Resolved.OverrideDigest == "" {
+			return ""
+		}
+		return manifest.FileName
+	}
+	if digest == locked.Resolved.OverrideDigest {
+		return ""
+	}
+	if inputs := spec.Inputs(); len(inputs) == 1 && declaredBefore(inputs[0], locked.Resolved.Override) {
+		return inputs[0]
+	}
+	return manifest.FileName
+}
+
+// declaredBefore reports whether rel was already part of the declaration the
+// lock recorded. An input present in both is one whose *bytes* the digest
+// disagreed over; one that is new is a declaration change, not a file edit, and
+// must not be reported as "changed since install".
+func declaredBefore(rel string, recorded *skillslock.OverrideDecl) bool {
+	if recorded == nil {
+		return false
+	}
+	for _, known := range (&overrides.Spec{
+		Replace: recorded.Replace,
+		Patch:   recorded.Patch,
+		Prepend: recorded.Prepend,
+		Append:  recorded.Append,
+	}).Inputs() {
+		if known == rel {
+			// Present in both: its bytes are what the digest disagreed over.
+			return true
+		}
+	}
+	return false
 }

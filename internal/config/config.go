@@ -53,6 +53,12 @@ type Sources struct {
 	// is skipped without error.
 	UserFile    string
 	ProjectFile string
+	// ProjectMap is the project layer supplied in memory rather than as a
+	// file: skills.toml holds project configuration inside its [config] table
+	// alongside skill declarations, so the manifest hands over just that
+	// sub-table (spec 023 FR-002). It shares the project layer's precedence
+	// slot with ProjectFile — above the user file, below environment and flags.
+	ProjectMap map[string]any
 	// Environ is a list of "KEY=VALUE" entries (as from os.Environ); only
 	// GSKILL_-prefixed entries are consulted. When nil, the process environment
 	// is used.
@@ -99,6 +105,12 @@ func Load(s Sources) (*Config, error) {
 	for _, path := range []string{s.UserFile, s.ProjectFile} {
 		if err := loadFile(k, path); err != nil {
 			return nil, err
+		}
+	}
+
+	if len(s.ProjectMap) > 0 {
+		if err := k.Load(confmap.Provider(s.ProjectMap, "."), nil); err != nil {
+			return nil, fmt.Errorf("load project config: %w", err)
 		}
 	}
 

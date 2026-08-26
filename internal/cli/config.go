@@ -8,6 +8,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/manifest"
 )
 
 // configCmd groups configuration subcommands.
@@ -17,9 +18,15 @@ type configCmd struct {
 	Get  configGetCmd  `cmd:"" help:"Print one configuration value."`
 }
 
-// effectiveConfig loads the merged configuration as a key/value map.
-func effectiveConfig() (map[string]string, error) {
-	cfg, err := config.Load(config.Sources{})
+// effectiveConfig loads the merged configuration as a key/value map, including
+// the project layer declared in the manifest's [config] table (spec 023
+// FR-002). Without root the project layer is simply absent.
+func effectiveConfig(root string) (map[string]string, error) {
+	projectMap, err := manifest.ProjectConfig(root)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := config.Load(config.Sources{ProjectMap: projectMap})
 	if err != nil {
 		return nil, err
 	}
@@ -57,8 +64,8 @@ func (configListCmd) Help() string {
 }
 
 // Run prints the effective configuration.
-func (configListCmd) Run(out *Output) error {
-	values, err := effectiveConfig()
+func (configListCmd) Run(out *Output, root projectRoot) error {
+	values, err := effectiveConfig(string(root))
 	if err != nil {
 		return err
 	}
@@ -90,8 +97,8 @@ func (configGetCmd) Help() string {
 }
 
 // Run prints a single configuration value.
-func (c configGetCmd) Run(out *Output) error {
-	values, err := effectiveConfig()
+func (c configGetCmd) Run(out *Output, root projectRoot) error {
+	values, err := effectiveConfig(string(root))
 	if err != nil {
 		return err
 	}

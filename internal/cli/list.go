@@ -61,6 +61,9 @@ func ListJSON(skills []app.ListedSkill) map[string]any {
 			"content_hash": s.ContentHash,
 			"active":       s.Active,
 			"agent_health": agentHealth,
+			// Emitted for every skill, so a consumer branches on the value
+			// rather than on whether the key exists (contract C3).
+			"overridden": s.Overridden,
 		})
 	}
 	return map[string]any{"skills": rows}
@@ -82,8 +85,9 @@ func renderListTable(skills []app.ListedSkill) string {
 	}
 	var b strings.Builder
 	for _, s := range skills {
-		_, _ = fmt.Fprintf(&b, "%-24s %-10s %-14s %-24s %-10s %s\n",
-			s.Name, s.Status, s.Version, s.Source, s.Active, agentHealthCellPlain(s.AgentHealth))
+		_, _ = fmt.Fprintf(&b, "%-24s %-10s %-14s %-24s %-10s %s%s\n",
+			s.Name, s.Status, s.Version, s.Source, s.Active,
+			agentHealthCellPlain(s.AgentHealth), overriddenMarker(s.Overridden))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -96,4 +100,14 @@ func agentHealthCellPlain(agents []app.AgentHealthEntry) string {
 		cells = append(cells, ag.ID+" "+ag.Health)
 	}
 	return strings.Join(cells, ", ")
+}
+
+// overriddenMarker flags a customized skill in the table. A skill with an
+// override is not the upstream artifact its version and source describe, and
+// listing it identically would hide the one difference a reader most needs.
+func overriddenMarker(overridden bool) string {
+	if !overridden {
+		return ""
+	}
+	return "  (overridden)"
 }

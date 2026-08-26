@@ -77,6 +77,11 @@ func verifySkill(root, name string, locked skillslock.Record) SkillVerify {
 type SkillCheck struct {
 	Name   string
 	Status string
+	// OverrideDrift names the override input that changed, when that is what
+	// drifted. A script needs to tell "my override input changed" from
+	// "someone edited the installed skill": the first is fixed by re-running
+	// install, the second by deciding whose edit wins (spec 023, contract C4).
+	OverrideDrift string
 }
 
 // CheckReport aggregates a check run.
@@ -110,7 +115,9 @@ func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckRepo
 	integrityFault := false
 	for _, name := range sortedKeys(lf.Skills) {
 		status := chainStatus(p.root, name, lf, health[name])
-		report.Skills = append(report.Skills, SkillCheck{Name: name, Status: string(status)})
+		report.Skills = append(report.Skills, SkillCheck{
+			Name: name, Status: string(status), OverrideDrift: health[name].OverrideDrift,
+		})
 		if status != integrity.DriftInstalled {
 			report.HasDrift = true
 			report.Problems = append(report.Problems, health[name].Faults()...)
