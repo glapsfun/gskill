@@ -9,6 +9,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/active"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -60,6 +61,10 @@ func (a *App) autoMigrate(ctx context.Context, p *project, lf *skillslock.State,
 	// bookkeeping: a failure warns rather than failing the command.
 	if _, err := unignoreAgentsLayer(p.root); err != nil {
 		a.log.Warn("un-ignore .agents/ in .gitignore", "error", err)
+	}
+
+	if err := a.ensureManifest(p, lf, opts); err != nil {
+		return err
 	}
 
 	var migrated []string
@@ -183,4 +188,45 @@ func (a *App) legacyNoticePath(p *project) string {
 		}
 	}
 	return filepath.Join(p.root, stateDirName, "store")
+}
+
+// ensureManifest generates skills.toml from the gskill-owned lock entries of a
+// project installed before the manifest existed (spec 023 FR-015).
+//
+// Every pre-023 project is in this shape, and without generation overrides are
+// unreachable: a user would have to hand-write a file whose schema they have
+// never seen, for skills they already installed. The declarations come from
+// the lock, so what is written is the intent the lock already recorded — the
+// round-trip test (FR-016) is what holds that honest.
+//
+// Two carve-outs. A frozen run writes no declaration file: --frozen-lockfile
+// means declarations do not change, and creating one is a change. A dry run
+// writes nothing at all. Non-mutating commands never reach here.
+func (a *App) ensureManifest(p *project, lf *skillslock.State, opts migrateRunOptions) error {
+	if opts.frozen || opts.dryRun {
+		return nil
+	}
+	if _, err := os.Stat(manifestPath(p.root)); err == nil {
+		return nil
+	}
+
+	names := make([]string, 0, len(lf.Skills))
+	for _, name := range sortedKeys(lf.Skills) {
+		// Only gskill-owned entries are declared: skills-lock.json is shared
+		// with other tools under spec 012, and their entries are neither ours
+		// to describe nor ours to reinstall (FR-014).
+		if lf.Skills[name].Resolved.ContentHash == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	if err := a.syncManifestSkills(p, lf, names, ""); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(a.notice, "generated %s from %d locked skill(s); edit it to declare overrides\n",
+		manifest.FileName, len(names))
+	return nil
 }
