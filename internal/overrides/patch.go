@@ -113,7 +113,13 @@ func patchErr(patchRel, why string, cause error) error {
 func resolvePatchTarget(staged, skillDir, name string) (string, string, error) {
 	dst, err := resolveInSkill(skillDir, staged, name)
 	if err == nil {
+		// For modification diffs, the file must already exist.
 		if _, statErr := os.Lstat(dst); statErr == nil {
+			return dst, name, nil
+		}
+		// For creation diffs, the target file may not exist yet; treat an
+		// existing parent directory as evidence the declared path is real.
+		if _, dirErr := os.Stat(filepath.Dir(dst)); dirErr == nil {
 			return dst, name, nil
 		}
 	}
