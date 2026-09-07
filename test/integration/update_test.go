@@ -17,13 +17,8 @@ import (
 // publishNewVersion commits a content change to repo's skill dir and tags it.
 func publishNewVersion(t *testing.T, repo, skillName, tag string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(repo, skillName, "SKILL.md"),
-		[]byte("---\nname: "+skillName+"\ndescription: updated\n---\n# "+skillName+" "+tag+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, repo, "add", ".")
-	gitRun(t, repo, "commit", "--quiet", "-m", tag)
-	gitRun(t, repo, "tag", tag)
+	testutil.PublishVersion(t, repo, skillName,
+		"---\nname: "+skillName+"\ndescription: updated\n---\n# "+skillName+" "+tag+"\n", tag)
 }
 
 func TestUpdateList_ReportsCandidatesOnStdout(t *testing.T) {

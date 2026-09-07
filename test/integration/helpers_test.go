@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -154,43 +153,13 @@ func newProject(t *testing.T) string {
 // skillBody, an initial commit, and the given tags. It returns the repo path.
 func gitRepo(t *testing.T, skillBody string, tags ...string) string {
 	t.Helper()
-
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	repo := t.TempDir()
-	gitRun(t, repo, "init", "--quiet", "-b", "main")
-
-	skillDir := filepath.Join(repo, skillFolder(skillBody))
-	if err := os.MkdirAll(skillDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillBody), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	gitRun(t, repo, "add", ".")
-	gitRun(t, repo, "commit", "--quiet", "-m", "initial")
-	for _, tag := range tags {
-		gitRun(t, repo, "tag", tag)
-	}
-	return repo
+	return testutil.InitSkillRepo(t, skillFolder(skillBody), skillBody, tags...)
 }
 
 // gitRun runs a git command in dir, failing the test on error.
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
-
-	cmd := exec.CommandContext(context.Background(), "git", args...)
-	cmd.Dir = dir
-	cmd.Env = testutil.GitEnv(
-		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
-		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, out)
-	}
+	testutil.GitRun(t, dir, args...)
 }
 
 // validSkill returns a valid SKILL.md body for a skill named name.
