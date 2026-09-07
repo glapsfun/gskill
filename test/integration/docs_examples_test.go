@@ -224,3 +224,44 @@ func assertDocumentedSurface(t *testing.T, proj string) {
 		}
 	}
 }
+
+// TestDocsExamples_UpgradeASkill backs docs/how-to/upgrade-a-skill.md: the
+// documented --latest, positional, --to, --dry-run, and refusal flows.
+func TestDocsExamples_UpgradeASkill(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	publishNewVersion(t, repo, "demo", "v2.0.0")
+	publishNewVersion(t, repo, "demo", "v2.1.0")
+
+	if stdout, stderr, code := runGskill(t, proj, "--dry-run", "upgrade", "demo"); code != 0 || !strings.Contains(stdout, "Dry run") {
+		t.Fatalf("dry run: %d %s\n%s", code, stderr, stdout)
+	}
+	if stdout, stderr, code := runGskill(t, proj, "upgrade", "demo", "--latest"); code != 0 || !strings.Contains(stdout, "verified") {
+		t.Fatalf("upgrade --latest: %d %s\n%s", code, stderr, stdout)
+	}
+	if !strings.Contains(string(readFile(t, manifestPath(proj))), `version = "^2.1.0"`) {
+		t.Errorf("manifest not moved:\n%s", readFile(t, manifestPath(proj)))
+	}
+	// A caret range keeps its shape: the target becomes the range's floor,
+	// and the lock resolves to the newest release that range still allows.
+	if stdout, stderr, code := runGskill(t, proj, "upgrade", "demo", "2.0.0"); code != 0 || !strings.Contains(stdout, "redeclared") {
+		t.Fatalf("positional target: %d %s\n%s", code, stderr, stdout)
+	}
+	if !strings.Contains(string(readFile(t, manifestPath(proj))), `version = "^2.0.0"`) {
+		t.Errorf("positional target not written:\n%s", readFile(t, manifestPath(proj)))
+	}
+	if _, stderr, code := runGskill(t, proj, "upgrade", "demo", "--to", "9.9.9"); code != 2 {
+		t.Errorf("unknown target exit = %d, want 2: %s", code, stderr)
+	}
+	if stdout, _, code := runGskill(t, proj, "--json", "upgrade", "demo", "--to", "2.1.0"); code != 0 {
+		t.Errorf("json upgrade exit = %d", code)
+	} else {
+		assertSingleJSON(t, stdout, "upgrade --json")
+	}
+}

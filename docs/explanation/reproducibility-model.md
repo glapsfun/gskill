@@ -1,25 +1,28 @@
 # The reproducibility model
 
 GSKILL's central promise is that a skill environment can be reproduced **byte-for-byte** on any
-machine, agent, or CI runner. This page explains how the single committed file that makes that work —
-`skills-lock.json` — records both what you asked for and what you got.
+machine, agent, or CI runner. This page explains how the two committed files that make that work
+divide the job: `skills.toml` says what you want, `skills-lock.json` records what you got.
 
-## Intent vs reality — one file, two layers
+## Intent vs reality — two files, one contract
 
-Every entry in `skills-lock.json` carries two kinds of facts:
+- **Intent** lives in `skills.toml`, the file you edit: which source, which tracking constraint
+  (a range like `^2.0.0`, an exact version, a tag, a branch, or a commit), which agents, which
+  install mode, which overrides. `install`, `update`, and `upgrade` all read intent from here.
 
-- **Intent** lives in the entry's namespaced `gskill` block, recorded from your add/install flags:
-  which source, which tracking constraint (a range like `^2.0.0`, a branch, a tag), which agents,
-  which install mode. `update` follows this intent.
+- **Reality** is everything resolution produced, recorded in `skills-lock.json`: the shared
+  `computedHash`, and — under the per-entry `gskill` block — the exact commit, resolved version,
+  content hash, per-agent targets, and a projection of the intent it resolved from
+  (`requestedVersion`, `requestedRef`, `requestedCommit`, `declarationKind`). It is
+  machine-generated, deterministic, and never hand-edited. The projection exists so a lock can
+  reproduce without the manifest and so a manifest can be generated for a project written before
+  one existed; it is never read as intent when the manifest is present.
 
-- **Reality** is everything the resolution produced: the shared `computedHash`, and — under
-  `gskill` — the exact commit, resolved version, content hash, and per-agent targets. It is
-  machine-generated, deterministic, and never hand-edited.
-
-You commit the one file. The intent stays flexible (`^2.0.0` lets `update` pick up `2.1.3` later);
-the resolved reality pins the exact outcome so everyone on the team gets the *same* `2.1.3` today.
-Updating is an explicit act (`gskill update`) that re-resolves within the recorded intent and
-rewrites the resolution — never an accident.
+You commit both. The intent stays flexible (`^2.0.0` lets `update` pick up `2.1.3` later); the
+resolved reality pins the exact outcome so everyone on the team gets the *same* `2.1.3` today.
+Moving is always an explicit act: `gskill update` re-resolves within the declared intent and
+rewrites only the resolution, `gskill upgrade` changes the intent and then resolves it. See
+[the package lifecycle](lifecycle.md).
 
 ## Interoperability
 

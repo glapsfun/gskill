@@ -47,6 +47,7 @@ const (
 	UpgradeOutcomeUpgraded   UpgradeOutcome = "upgraded"
 	UpgradeOutcomeDowngraded UpgradeOutcome = "downgraded"
 	UpgradeOutcomeUpdated    UpgradeOutcome = "updated"
+	UpgradeOutcomeRedeclared UpgradeOutcome = "redeclared" // the declaration moved; the resolved revision did not
 	UpgradeOutcomeUnchanged  UpgradeOutcome = "unchanged"
 	UpgradeOutcomeWould      UpgradeOutcome = "would upgrade"
 	UpgradeOutcomeRefused    UpgradeOutcome = "refused"
@@ -459,6 +460,9 @@ func upgradeOutcome(it UpgradePlanItem, before, after string) UpgradeOutcome {
 	if it.Action == UpgradeActionUpdateOnly {
 		return UpgradeOutcomeUpdated
 	}
+	if before == after {
+		return UpgradeOutcomeRedeclared
+	}
 	b, bErr := semver.NewVersion(before)
 	a, aErr := semver.NewVersion(after)
 	if bErr == nil && aErr == nil && a.LessThan(b) {
@@ -514,7 +518,7 @@ func countUpgradeOutcomes(out *UpgradeResult) {
 	out.Upgraded, out.Unchanged, out.Refused, out.Failed = 0, 0, 0, 0
 	for _, s := range out.Skills {
 		switch s.Outcome {
-		case UpgradeOutcomeUpgraded, UpgradeOutcomeDowngraded, UpgradeOutcomeUpdated, UpgradeOutcomeWould:
+		case UpgradeOutcomeUpgraded, UpgradeOutcomeDowngraded, UpgradeOutcomeUpdated, UpgradeOutcomeRedeclared, UpgradeOutcomeWould:
 			out.Upgraded++
 		case UpgradeOutcomeUnchanged:
 			out.Unchanged++

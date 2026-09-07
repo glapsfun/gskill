@@ -1,7 +1,7 @@
 Usage: gskill install [flags]
 
-Install all declared skills (additive, idempotent, auto-initializes the project
-if needed).
+Realize what skills.toml declares (resolve changes, install, record the
+lockfile). Never edits skills.toml.
 
 If the project has no local gskill state yet, install creates it automatically
 (.gskill/, .agents/, .gitignore) before installing from skills-lock.json.

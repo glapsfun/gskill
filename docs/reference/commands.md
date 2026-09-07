@@ -131,7 +131,7 @@ Show details for one skill.
 
 ## `install`
 
-Install all declared skills (additive, idempotent, auto-initializes the project if needed).
+Realize what skills.toml declares (resolve changes, install, record the lockfile). Never edits skills.toml.
 
 | Flag | Type | Description |
 | --- | --- | --- |
@@ -230,7 +230,7 @@ Search for skills in a source, a GitHub owner, or configured repositories.
 
 ## `update`
 
-Advance skills within their version constraints.
+Re-resolve declared skills to the newest revision their skills.toml constraint allows. Never edits skills.toml.
 
 | Argument | Required | Description |
 | --- | --- | --- |

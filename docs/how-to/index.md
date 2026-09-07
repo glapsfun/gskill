@@ -24,7 +24,8 @@ GSKILL? Start with the [tutorial](../tutorials/getting-started.md) first.
 
 ## Lifecycle
 
-- [Update and re-lock](update-and-lock.md).
+- [Update and re-lock](update-and-lock.md) — move within declared constraints; never edits `skills.toml`.
+- [Upgrade a skill](upgrade-a-skill.md) — change the declared version in `skills.toml`, then resolve and install.
 - [Remove a skill and reclaim space](remove-and-gc.md).
 - [Sync and repair](sync-and-repair.md) — reconcile disk with the lock; fix broken installs.
 - [Inspect with list, info, and diff](inspect-list-info-diff.md).

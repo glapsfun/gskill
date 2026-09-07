@@ -23,11 +23,12 @@ CORE
     Guided skill installation without a predefined source.
 
   install [flags]
-    Install all declared skills (additive, idempotent, auto-initializes the
-    project if needed).
+    Realize what skills.toml declares (resolve changes, install, record the
+    lockfile). Never edits skills.toml.
 
   update [<skills> ...] [flags]
-    Advance skills within their version constraints.
+    Re-resolve declared skills to the newest revision their skills.toml
+    constraint allows. Never edits skills.toml.
 
   upgrade [<skill> ...] [flags]
     Move a skill's declared version in skills.toml, then resolve, lock, install,

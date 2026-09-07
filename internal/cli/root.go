@@ -35,8 +35,8 @@ type rootCLI struct {
 
 	Add     addCmd     `cmd:"" group:"core" help:"Add and install a new skill (auto-initializes the project if needed)."`
 	Onboard onboardCmd `cmd:"" group:"core" help:"Guided skill installation without a predefined source."`
-	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent, auto-initializes the project if needed)."`
-	Update  updateCmd  `cmd:"" group:"core" help:"Advance skills within their version constraints."`
+	Install installCmd `cmd:"" group:"core" help:"Realize what skills.toml declares (resolve changes, install, record the lockfile). Never edits skills.toml."`
+	Update  updateCmd  `cmd:"" group:"core" help:"Re-resolve declared skills to the newest revision their skills.toml constraint allows. Never edits skills.toml."`
 	Upgrade upgradeCmd `cmd:"" group:"core" help:"Move a skill's declared version in skills.toml, then resolve, lock, install, and verify it."`
 	Remove  removeCmd  `cmd:"" group:"core" help:"Uninstall skills and clean up."`
 

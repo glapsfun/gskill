@@ -1,6 +1,7 @@
 Usage: gskill update [<skills> ...] [flags]
 
-Advance skills within their version constraints.
+Re-resolve declared skills to the newest revision their skills.toml constraint
+allows. Never edits skills.toml.
 
 Examples:
 

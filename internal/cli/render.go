@@ -602,7 +602,8 @@ func upgradeResultRow(st tui.Theme, styled bool, s app.UpgradeSkillResult) []str
 		switch s.Outcome {
 		case app.UpgradeOutcomeFailed, app.UpgradeOutcomeRefused:
 			result = st.Error.Render(result)
-		case app.UpgradeOutcomeUpgraded, app.UpgradeOutcomeDowngraded, app.UpgradeOutcomeUpdated, app.UpgradeOutcomeWould:
+		case app.UpgradeOutcomeUpgraded, app.UpgradeOutcomeDowngraded, app.UpgradeOutcomeUpdated,
+			app.UpgradeOutcomeRedeclared, app.UpgradeOutcomeWould:
 			result = st.Success.Render(result)
 		case app.UpgradeOutcomeUnchanged:
 			result = st.Subtitle.Render(result)
