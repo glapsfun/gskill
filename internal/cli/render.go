@@ -556,3 +556,59 @@ func renderPlanTextStyled(plan app.InstallPlan) string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// renderUpgradeResult renders an upgrade run: NAME/FROM/TO/DECLARATION/RESULT
+// rows, reasons beneath for refused and failed rows, and a summary that says
+// which files moved (contracts/cli.md).
+func renderUpgradeResult(out *Output, res app.UpgradeResult) string {
+	summary := upgradeSummary(res)
+	if len(res.Skills) == 0 {
+		return out.summary(summary)
+	}
+	st := tui.DefaultTheme()
+	rows := make([][]string, 0, len(res.Skills))
+	var details []string
+	for _, s := range res.Skills {
+		rows = append(rows, upgradeResultRow(st, out.Interactive(), s))
+		if (s.Outcome == app.UpgradeOutcomeFailed || s.Outcome == app.UpgradeOutcomeRefused) && s.Reason != "" {
+			details = append(details, "  "+s.Name+": "+s.Reason)
+		}
+	}
+	table := renderAligned(st, []string{"NAME", "FROM", "TO", "DECLARATION", "RESULT"}, rows)
+	if len(details) > 0 {
+		table += "\n\n" + strings.Join(details, "\n")
+	}
+	if res.Failed > 0 || res.Refused > 0 {
+		summary = out.errSummary(summary)
+	} else {
+		summary = out.summary(summary)
+	}
+	rendered := table + "\n\n" + summary
+	if res.DryRun {
+		rendered += "\nDry run: no changes made."
+	}
+	return rendered
+}
+
+// upgradeResultRow renders one upgrade row, styled for a TTY.
+func upgradeResultRow(st tui.Theme, styled bool, s app.UpgradeSkillResult) []string {
+	name, result := s.Name, string(s.Outcome)
+	decl := s.DeclBefore
+	if s.DeclAfter != "" && s.DeclAfter != s.DeclBefore {
+		decl = s.DeclBefore + " → " + s.DeclAfter
+	}
+	if styled {
+		name = st.Accent.Render(name)
+		switch s.Outcome {
+		case app.UpgradeOutcomeFailed, app.UpgradeOutcomeRefused:
+			result = st.Error.Render(result)
+		case app.UpgradeOutcomeUpgraded, app.UpgradeOutcomeDowngraded, app.UpgradeOutcomeUpdated, app.UpgradeOutcomeWould:
+			result = st.Success.Render(result)
+		case app.UpgradeOutcomeUnchanged:
+			result = st.Subtitle.Render(result)
+		default:
+			result = st.Subtitle.Render(result)
+		}
+	}
+	return []string{name, s.From, s.To, decl, result}
+}

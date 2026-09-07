@@ -37,6 +37,7 @@ type rootCLI struct {
 	Onboard onboardCmd `cmd:"" group:"core" help:"Guided skill installation without a predefined source."`
 	Install installCmd `cmd:"" group:"core" help:"Install all declared skills (additive, idempotent, auto-initializes the project if needed)."`
 	Update  updateCmd  `cmd:"" group:"core" help:"Advance skills within their version constraints."`
+	Upgrade upgradeCmd `cmd:"" group:"core" help:"Move a skill's declared version in skills.toml, then resolve, lock, install, and verify it."`
 	Remove  removeCmd  `cmd:"" group:"core" help:"Uninstall skills and clean up."`
 
 	List     listCmd     `cmd:"" group:"inspect" help:"List installed skills, their status, and per-agent health."`

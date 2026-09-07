@@ -22,6 +22,7 @@ var helpPages = []struct {
 	{"onboard", []string{"onboard"}},
 	{"install", []string{"install"}},
 	{"update", []string{"update"}},
+	{"upgrade", []string{"upgrade"}},
 	{"remove", []string{"remove"}},
 
 	{"list", []string{"list"}},

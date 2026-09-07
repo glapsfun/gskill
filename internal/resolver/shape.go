@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -105,4 +106,57 @@ func classifyConstraint(c string) (DeclarationShape, error) {
 func admitsPrerelease(constraint string) bool {
 	v, err := semver.NewVersion(strings.TrimLeft(strings.TrimSpace(constraint), "^~=v"))
 	return err == nil && v.Prerelease() != ""
+}
+
+// ErrUnrewritable reports a declaration shape an upgrade cannot rewrite
+// mechanically without changing its kind.
+var ErrUnrewritable = errors.New("declaration shape cannot be rewritten")
+
+// RewriteDeclaration returns the manifest key and value that move a
+// declaration of the given shape to candidate while keeping its shape (spec
+// 024 FR-012): a caret range stays a caret range, an exact version stays
+// exact, a tag stays a tag, a commit stays a commit. The current value's
+// spelling — a leading "v" or "=" — is kept.
+func RewriteDeclaration(shape DeclarationShape, current string, c Candidate) (key, value string, err error) {
+	switch shape {
+	case ShapeRangeCaret:
+		return "version", "^" + keepPrefix(strings.TrimPrefix(current, "^"), c.Version), nil
+	case ShapeRangeTilde:
+		return "version", "~" + keepPrefix(strings.TrimPrefix(current, "~"), c.Version), nil
+	case ShapeExactVersion:
+		return "version", keepPrefix(current, c.Version), nil
+	case ShapeTag:
+		if c.Tag == "" {
+			return "", "", fmt.Errorf("%w: no release tag for %s", ErrUnrewritable, c.Version)
+		}
+		return "ref", c.Tag, nil
+	case ShapeCommit:
+		if c.Commit == "" {
+			return "", "", fmt.Errorf("%w: no commit for %s", ErrUnrewritable, c.Version)
+		}
+		return "commit", c.Commit, nil
+	case ShapeRangeOther:
+		return "", "", fmt.Errorf("%w: %q is not a caret, tilde, or exact version; edit skills.toml", ErrUnrewritable, current)
+	case ShapeBranch:
+		return "", "", fmt.Errorf("%w: a branch has no version to move; run `gskill update`", ErrUnrewritable)
+	case ShapeLocal:
+		return "", "", fmt.Errorf("%w: a local source has no releases", ErrUnrewritable)
+	case ShapeUnpinned:
+		return "", "", fmt.Errorf("%w: declare a version, ref, or commit first", ErrUnrewritable)
+	default:
+		return "", "", fmt.Errorf("%w: unknown shape %q", ErrUnrewritable, shape)
+	}
+}
+
+// keepPrefix carries a "v" or "=" spelling from the current value onto the
+// new one.
+func keepPrefix(current, version string) string {
+	switch {
+	case strings.HasPrefix(current, "v"):
+		return "v" + version
+	case strings.HasPrefix(current, "="):
+		return "=" + version
+	default:
+		return version
+	}
 }

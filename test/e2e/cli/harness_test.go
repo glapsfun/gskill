@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -216,4 +217,49 @@ func TestHarness_BuildsAndRunsVersion(t *testing.T) {
 	if res.Code != 0 || strings.TrimSpace(res.Stdout) == "" {
 		t.Fatalf("version: code=%d stdout=%q stderr=%q", res.Code, res.Stdout, res.Stderr)
 	}
+}
+
+// runUntilPaused starts the binary with GSKILL_TEST_PAUSE set, waits for the
+// "paused" marker on stderr, sends SIGINT, and returns the final result. The
+// testseams build honours the pause; the marker makes the interrupt
+// deterministic instead of racing the install.
+func runUntilPaused(t *testing.T, dir string, args ...string) result {
+	t.Helper()
+	record(args)
+	cmd := exec.CommandContext(context.Background(), gskillBin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(scrubbedEnv(t, dir), "GSKILL_TEST_PAUSE=before-activate")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = pw
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = pw.Close()
+	buf := make([]byte, 4096)
+	for {
+		n, rerr := pr.Read(buf)
+		stderr.Write(buf[:n])
+		if strings.Contains(stderr.String(), "paused") {
+			_ = cmd.Process.Signal(os.Interrupt)
+			break
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	rest, _ := io.ReadAll(pr)
+	stderr.Write(rest)
+	werr := cmd.Wait()
+	code := 0
+	var exitErr *exec.ExitError
+	if errors.As(werr, &exitErr) {
+		code = exitErr.ExitCode()
+	}
+	t.Logf("gskill %s (interrupted) -> %d\n%s", strings.Join(args, " "), code, strings.TrimSpace(stderr.String()))
+	return result{Stdout: stdout.String(), Stderr: stderr.String(), Code: code}
 }

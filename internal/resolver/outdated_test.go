@@ -9,6 +9,8 @@ import (
 	"github.com/glapsfun/gskill/internal/resolver"
 )
 
+const v200 = "2.0.0"
+
 func TestOutdated_SemverDetectsNewer(t *testing.T) {
 	t.Parallel()
 
@@ -69,8 +71,8 @@ func TestOutdated_SemverNoCompatibleUpdate(t *testing.T) {
 	if res.Status != resolver.StatusNoCompatibleUpdate {
 		t.Errorf("status = %q, want %q", res.Status, resolver.StatusNoCompatibleUpdate)
 	}
-	if res.Informational != "2.0.0" {
-		t.Errorf("informational = %q, want 2.0.0", res.Informational)
+	if res.Informational != v200 {
+		t.Errorf("informational = %q, want %s", res.Informational, v200)
 	}
 }
 
@@ -212,7 +214,7 @@ func TestOutdated_ExactVersionIsPinned(t *testing.T) {
 
 	runner := fakeRunner{tags: []git.TagRef{
 		{Name: "v1.2.0", Commit: "c1"},
-		{Name: "v2.0.0", Commit: "c2"},
+		{Name: "v" + v200, Commit: "c2"},
 		{Name: "v3.0.0-rc.1", Commit: "c3"},
 	}}
 	current := resolver.Revision{RefKind: resolver.RefKindSemver, Version: "1.2.0"}
@@ -224,7 +226,7 @@ func TestOutdated_ExactVersionIsPinned(t *testing.T) {
 	if res.Status != resolver.StatusPinnedVersion || res.Available() {
 		t.Errorf("got %+v, want pinned-version", res)
 	}
-	if res.Informational != "2.0.0" {
+	if res.Informational != v200 {
 		t.Errorf("informational = %q, want the newest stable release 2.0.0 (pre-releases excluded)", res.Informational)
 	}
 }

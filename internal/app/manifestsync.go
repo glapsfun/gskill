@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/manifest"
@@ -262,20 +263,40 @@ func (a *App) syncManifestAfterAdd(p *project, lf *skillslock.State, res AddResu
 	return a.syncManifestSkills(p, lf, added, explicitMode)
 }
 
+// manifestCacheEntry memoizes a parsed manifest together with the file
+// identity it was read from, so a hand edit between two commands on one
+// long-lived App (the integration harness, the dashboard) is never served
+// stale.
+type manifestCacheEntry struct {
+	m       *manifest.Manifest
+	modTime time.Time
+	size    int64
+	exists  bool
+}
+
+func manifestStat(root string) (time.Time, int64, bool) {
+	fi, err := os.Stat(manifestPath(root))
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+	return fi.ModTime(), fi.Size(), true
+}
+
 // loadManifest reads, validates, and memoizes the project manifest for the
 // current run, surfacing its advisories exactly once.
 //
 // Memoizing matters: overrideFor is consulted per skill and more than once per
 // skill, so an unmemoized read re-parses the whole manifest and re-hashes every
-// override input O(N^2) times for an N-skill project. The cache is per run and
-// per root, and any write invalidates it, so a user's edit between runs is
-// always seen.
+// override input O(N^2) times for an N-skill project. The cache is per root
+// and validated against the file's identity on every read, so a write by
+// gskill or an edit by the user is always seen.
 func (a *App) loadManifest(root string) (*manifest.Manifest, error) {
 	a.manifestMu.Lock()
 	defer a.manifestMu.Unlock()
 
-	if cached, ok := a.manifests[root]; ok {
-		return cached, nil
+	modTime, size, exists := manifestStat(root)
+	if cached, ok := a.manifests[root]; ok && cached.exists == exists && cached.size == size && cached.modTime.Equal(modTime) {
+		return cached.m, nil
 	}
 	m, err := manifest.Load(manifestPath(root))
 	if err != nil {
@@ -287,9 +308,9 @@ func (a *App) loadManifest(root string) (*manifest.Manifest, error) {
 		}
 	}
 	if a.manifests == nil {
-		a.manifests = map[string]*manifest.Manifest{}
+		a.manifests = map[string]manifestCacheEntry{}
 	}
-	a.manifests[root] = m
+	a.manifests[root] = manifestCacheEntry{m: m, modTime: modTime, size: size, exists: exists}
 	return m, nil
 }
 

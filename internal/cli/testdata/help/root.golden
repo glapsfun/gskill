@@ -29,6 +29,10 @@ CORE
   update [<skills> ...] [flags]
     Advance skills within their version constraints.
 
+  upgrade [<skill> ...] [flags]
+    Move a skill's declared version in skills.toml, then resolve, lock, install,
+    and verify it.
+
   remove <skills> ... [flags]
     Uninstall skills and clean up.
 
