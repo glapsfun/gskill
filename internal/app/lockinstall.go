@@ -18,6 +18,7 @@ import (
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/overrides"
 
 	"github.com/glapsfun/gskill/internal/resolver"
@@ -514,9 +515,7 @@ func emitRunPhase(emit func(InstallProgressEvent), p InstallPhase, total int) {
 // mixed results return ErrPartialInstall, total failure returns the first
 // cause, and successes are persisted either way.
 func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslock.Lock, req InstallFromLockRequest, res *InstallFromLockResult) (*skillslock.State, error) {
-	lf, err := a.loadLockMigrated(ctx, p, migrateRunOptions{
-		frozen: req.Frozen, dryRun: req.DryRun, offline: req.Offline,
-	})
+	lf, err := a.prepareLockRun(ctx, p, req)
 	if err != nil {
 		return nil, err
 	}
@@ -568,6 +567,24 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 		}
 	}
 	return lf, lockRunError(notAttempted, len(names), failures, healthy, interrupted, firstErr)
+}
+
+// prepareLockRun loads (and migrates) the lock state for a run and, under
+// --frozen-lockfile, rejects any declaration/lock disagreement before the
+// first entry is touched (spec 024 R8).
+func (a *App) prepareLockRun(ctx context.Context, p *project, req InstallFromLockRequest) (*skillslock.State, error) {
+	lf, err := a.loadLockMigrated(ctx, p, migrateRunOptions{
+		frozen: req.Frozen, dryRun: req.DryRun, offline: req.Offline,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if req.Frozen {
+		if pErr := a.frozenPreflight(p, lf); pErr != nil {
+			return nil, pErr
+		}
+	}
+	return lf, nil
 }
 
 // lockRunError maps a run's tallies onto its aggregate error: interruption
@@ -1103,12 +1120,22 @@ func (a *App) stageAndVerifyLockEntry(ctx context.Context, p *project, lf *skill
 	}
 	em.resolved(rev)
 	skillDir := skillDirOf(e.SkillPath)
-	extMode, extScope := "", ""
+	extMode, extScope, declMode := "", "", ""
 	if e.Ext != nil {
 		extMode, extScope = e.Ext.InstallMode, e.Ext.Scope
 	}
+	if decl, ok := a.declaration(p.root, name); ok {
+		// The declaration names the skill inside the source and how it is
+		// placed; both are intent the lock only projects (spec 024 FR-002).
+		if decl.Skill != "" {
+			skillDir = decl.Skill
+		}
+		if decl.Mode != "" && decl.Mode != manifest.ModeAuto {
+			declMode = decl.Mode
+		}
+	}
 	inst := a.installerForScope(p, extScope)
-	mode := modeOr(req.InstallMode, extMode)
+	mode := modeOr(req.InstallMode, declMode, extMode)
 
 	ireq, compat, err := a.stageLockEntry(ctx, inst, req, name, skillDir, mode, extScope, ref, rev, em)
 	if err != nil {
@@ -1150,7 +1177,7 @@ func (a *App) declarationChanged(p *project, lf *skillslock.State, name string, 
 	if req.Frozen {
 		return false
 	}
-	if _, pinChanged := a.manifestPinChanged(p.root, name, lf); pinChanged {
+	if len(a.declarationDiff(p.root, name, lf)) > 0 {
 		return true
 	}
 	_, digest, err := a.overrideFor(p.root, name)
@@ -1366,8 +1393,8 @@ func (a *App) resolveLockEntry(ctx context.Context, root string, lf *skillslock.
 	// the lock recorded must be resolved afresh (FR-004). Reusing the recorded
 	// commit here is what made an edited `version`/`ref`/`commit` silently do
 	// nothing — one of the four advertised override kinds had no effect at all.
-	if req, changed := a.manifestPinChanged(root, name, lf); changed {
-		ref, rev, err = a.resolveDeclaredPin(ctx, e, req)
+	if keys := a.declarationDiff(root, name, lf); len(keys) > 0 {
+		ref, rev, err = a.resolveDeclaration(ctx, root, name, e)
 		return ref, rev, false, err
 	}
 	if prior, ok := lf.Skills[name]; ok && prior.Resolved.Commit != "" {
@@ -1448,10 +1475,20 @@ func (a *App) manifestPinChanged(root, name string, lf *skillslock.State) (resol
 	return declared, declared != recorded
 }
 
-// resolveDeclaredPin resolves an entry against the manifest's declaration
-// rather than the lock's recorded revision.
-func (a *App) resolveDeclaredPin(ctx context.Context, e skillslock.Entry, req resolver.Requested) (source.Ref, resolver.Revision, error) {
-	srcStr, _ := entrySourceRef(e)
+// resolveDeclaration resolves an entry against the manifest's declaration
+// rather than the lock's recorded revision: the declared source (when set),
+// the declared skill path, and the declared pin (spec 024 FR-002).
+func (a *App) resolveDeclaration(ctx context.Context, root, name string, e skillslock.Entry) (source.Ref, resolver.Revision, error) {
+	srcStr, reqRef := entrySourceRef(e)
+	req := resolver.Requested{Ref: reqRef}
+	if decl, ok := a.declaration(root, name); ok {
+		if decl.Source != "" {
+			srcStr = decl.Source
+		}
+		if declared := (resolver.Requested{Version: decl.Version, Ref: decl.Ref, Commit: decl.Commit}); declared != (resolver.Requested{}) {
+			req = declared
+		}
+	}
 	ref, err := source.Parse(srcStr)
 	if err != nil {
 		return source.Ref{}, resolver.Revision{}, err
@@ -1462,6 +1499,93 @@ func (a *App) resolveDeclaredPin(ctx context.Context, e skillslock.Entry, req re
 		return source.Ref{}, resolver.Revision{}, err
 	}
 	return ref, rev, nil
+}
+
+// declaration returns the manifest entry for name, if the project declares it.
+func (a *App) declaration(root, name string) (manifest.Skill, bool) {
+	m, err := a.loadManifest(root)
+	if err != nil || m == nil {
+		return manifest.Skill{}, false
+	}
+	decl, ok := m.Skills[name]
+	return decl, ok
+}
+
+// declarationDiff names the declaration keys that disagree with what the lock
+// recorded for name (spec 024 FR-002): the pin (version, ref, or commit),
+// source, skill, and mode. Agents are reconciled separately by
+// lockEntryTargets and overrides by overrideMatchesLock. An empty result
+// means the lock entry can be reused as is.
+func (a *App) declarationDiff(root, name string, lf *skillslock.State) []string {
+	decl, ok := a.declaration(root, name)
+	if !ok {
+		return nil
+	}
+	prior, ok := lf.Skills[name]
+	if !ok {
+		return []string{"declaration"}
+	}
+	var keys []string
+	if declared := declaredRequested(decl); declared != (resolver.Requested{}) && !intentAgrees(decl, prior) {
+		keys = append(keys, pinKey(decl))
+	}
+	return append(keys, placementDiff(name, decl, prior)...)
+}
+
+// placementDiff names the non-pin keys — source, skill, mode — whose declared
+// value disagrees with the lock entry.
+func placementDiff(name string, decl manifest.Skill, prior skillslock.Record) []string {
+	var keys []string
+	if decl.Source != "" && decl.Source != prior.Source.Original && decl.Source != prior.Source.URL {
+		keys = append(keys, "source")
+	}
+	if decl.Skill != "" && decl.Skill != prior.Source.Path && decl.Skill != name {
+		keys = append(keys, "skill")
+	}
+	if decl.Mode != "" && decl.Mode != manifest.ModeAuto && decl.Mode != prior.Installation.Mode {
+		keys = append(keys, "mode")
+	}
+	return keys
+}
+
+func pinKey(decl manifest.Skill) string {
+	switch {
+	case decl.Commit != "":
+		return "commit"
+	case decl.Version != "":
+		return "version"
+	default:
+		return "ref"
+	}
+}
+
+// frozenPreflight is spec 024 R8: under --frozen-lockfile every declaration
+// is compared to its lock entry before any resolution, and the first
+// disagreement fails closed with the lock-mismatch code — no network, no
+// staging, nothing written.
+func (a *App) frozenPreflight(p *project, lf *skillslock.State) error {
+	m, err := a.loadManifest(p.root)
+	if err != nil || m == nil {
+		return err
+	}
+	for _, name := range sortedKeys(m.Skills) {
+		prior, ok := lf.Skills[name]
+		if !ok {
+			return errs.WithHint(
+				fmt.Errorf("%w: %s declares %s but %s does not record it", errs.ErrLockMismatch, manifest.FileName, name, skillslock.FileName),
+				"run 'gskill install' without --frozen-lockfile to resolve and lock it")
+		}
+		keys := a.declarationDiff(p.root, name, lf)
+		if _, digest, oErr := a.overrideFor(p.root, name); oErr == nil && !overrideMatchesLock(prior, digest) {
+			keys = append(keys, "override")
+		}
+		if len(keys) > 0 {
+			return errs.WithHint(
+				fmt.Errorf("%w: %s changed %s for %s since the lock was written", errs.ErrLockMismatch, manifest.FileName, strings.Join(keys, ", "), name),
+				"run 'gskill install' without --frozen-lockfile to re-resolve it, or revert the edit")
+		}
+	}
+	return nil
 }
 
 // declarationMatchesLock reports whether the manifest still agrees with what
@@ -1476,8 +1600,7 @@ func (a *App) declarationMatchesLock(p *project, lf *skillslock.State, name stri
 	if err != nil || !overrideMatchesLock(prior, digest) {
 		return false
 	}
-	_, pinChanged := a.manifestPinChanged(p.root, name, lf)
-	return !pinChanged
+	return len(a.declarationDiff(p.root, name, lf)) == 0
 }
 
 // declaredAgents returns the agent set the manifest declares for name, if any.

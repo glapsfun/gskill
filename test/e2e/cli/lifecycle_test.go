@@ -1,6 +1,9 @@
 package cli_test
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -197,4 +200,126 @@ func TestLifecycle_UpgradeRollbackOnFailure(t *testing.T) {
 	if res := run(t, dir, "check"); res.Code != 0 {
 		t.Fatalf("check after rollback: %s", res.Stderr)
 	}
+}
+
+func editManifestVersion(t *testing.T, dir, from, to string) {
+	t.Helper()
+	m := manifestBytes(t, dir)
+	out := strings.Replace(string(m), `version = "`+from+`"`, `version = "`+to+`"`, 1)
+	if out == string(m) {
+		t.Fatalf("manifest has no version %q:\n%s", from, m)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "skills.toml"), []byte(out), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLifecycle_ManualEditThenInstall is spec 024 US4: a hand edit to the
+// declared version is realized by one plain install.
+func TestLifecycle_ManualEditThenInstall(t *testing.T) {
+	t.Parallel()
+	repo := skillRepo(t, "demo", "v1.0.0", "v1.0.0")
+	dir := newProject(t)
+	if res := run(t, dir, "add", repo, "--skill", "demo", "--agent", agentClaude, "--version", "1.0.0"); res.Code != 0 {
+		t.Fatalf("add: %s", res.Stderr)
+	}
+	testutil.PublishVersion(t, repo, "demo", testutil.SkillBody("demo", "v1.3.0"), "v1.3.0")
+	editManifestVersion(t, dir, "1.0.0", "1.3.0")
+
+	if res := run(t, dir, "install"); res.Code != 0 {
+		t.Fatalf("install: %s", res.Stderr)
+	}
+	if e := lockEntry(t, dir, "demo"); e.Version != "1.3.0" || e.RequestedVersion != "1.3.0" {
+		t.Fatalf("lock entry = %+v, want 1.3.0", e)
+	}
+	assertContains(t, "installed content", installed(t, dir, agentClaude, "demo"), "# demo v1.3.0")
+	if res := run(t, dir, "verify"); res.Code != 0 {
+		t.Fatalf("verify: %s", res.Stderr)
+	}
+}
+
+// TestLifecycle_FrozenRejectsEditedManifest: under --frozen-lockfile a
+// declaration that disagrees with the lock exits 4 and writes nothing.
+func TestLifecycle_FrozenRejectsEditedManifest(t *testing.T) {
+	t.Parallel()
+	repo := skillRepo(t, "demo", "v1.0.0", "v1.0.0")
+	dir := newProject(t)
+	if res := run(t, dir, "add", repo, "--skill", "demo", "--agent", agentClaude); res.Code != 0 {
+		t.Fatalf("add: %s", res.Stderr)
+	}
+	editManifestVersion(t, dir, "^1.0.0", "^2.0.0")
+	manifestBefore, lockBefore := manifestBytes(t, dir), lockBytes(t, dir)
+
+	res := run(t, dir, "install", "--frozen-lockfile")
+	if res.Code != 4 {
+		t.Fatalf("frozen install exit = %d, want 4: %s", res.Code, res.Stderr)
+	}
+	assertContains(t, "frozen stderr", res.Stderr, "demo", "version")
+	assertUnchanged(t, "skills.toml", manifestBefore, manifestBytes(t, dir))
+	assertUnchanged(t, "skills-lock.json", lockBefore, lockBytes(t, dir))
+}
+
+// TestLifecycle_PreManifestProjectMigrates is spec 024 FR-019: a project
+// with a lock but no manifest classifies identically before and after the
+// manifest is generated, including an entry whose lock carries no requested
+// intent at all.
+func TestLifecycle_PreManifestProjectMigrates(t *testing.T) {
+	t.Parallel()
+	repo := skillRepo(t, "demo", "v1.0.0", "v1.0.0")
+	dir := newProject(t)
+	if res := run(t, dir, "add", repo, "--skill", "demo", "--agent", agentClaude, "--ref", "v1.0.0"); res.Code != 0 {
+		t.Fatalf("add: %s", res.Stderr)
+	}
+	// Strip the recorded intent so only the resolved tag remains, the shape of
+	// a lock written before intent was projected into it.
+	lockPath := filepath.Join(dir, "skills-lock.json")
+	var doc map[string]any
+	if err := json.Unmarshal(lockBytes(t, dir), &doc); err != nil {
+		t.Fatal(err)
+	}
+	skills, _ := doc["skills"].(map[string]any)
+	entry, _ := skills["demo"].(map[string]any)
+	g, _ := entry["gskill"].(map[string]any)
+	st, _ := g["state"].(map[string]any)
+	delete(st, "requestedRef")
+	delete(st, "requestedVersion")
+	delete(st, "declarationKind")
+	raw, _ := json.MarshalIndent(doc, "", "  ")
+	if err := os.WriteFile(lockPath, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "skills.toml")); err != nil {
+		t.Fatal(err)
+	}
+
+	before := run(t, dir, "--json", "update", "--list", "--all")
+	if before.Code != 0 {
+		t.Fatalf("list before: %s", before.Stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "skills.toml")); err == nil {
+		t.Fatal("a read-only command created skills.toml")
+	}
+	if res := run(t, dir, "--no-interactive", "update"); res.Code != 0 {
+		t.Fatalf("update: %s", res.Stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "skills.toml")); err != nil {
+		t.Fatal("update did not generate skills.toml")
+	}
+	after := run(t, dir, "--json", "update", "--list", "--all")
+	if after.Code != 0 {
+		t.Fatalf("list after: %s", after.Stderr)
+	}
+	var b, a map[string]any
+	if err := json.Unmarshal([]byte(before.Stdout), &b); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(after.Stdout), &a); err != nil {
+		t.Fatal(err)
+	}
+	bs, _ := json.Marshal(b["skills"])
+	as, _ := json.Marshal(a["skills"])
+	if string(bs) != string(as) {
+		t.Fatalf("classification changed across manifest generation:\n--- before ---\n%s\n--- after ---\n%s", bs, as)
+	}
+	assertContains(t, "classification", string(as), `"status":"pinned-tag"`)
 }

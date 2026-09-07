@@ -207,7 +207,7 @@ func finishPlanItem(item UpdatePlanItem, name string, decl manifest.Skill, decla
 	case item.Status == StatusNoCompatibleUpdate:
 		item.NextAction = "gskill upgrade " + name
 	}
-	if !declared || declaredRequested(decl) == recordedRequested(rec) {
+	if !declared || intentAgrees(decl, rec) {
 		return item
 	}
 	note := "declaration changed in skills.toml; install or update will apply it"
@@ -246,6 +246,19 @@ func pinnedReason(decl manifest.Skill, rec skillslock.Record) string {
 	default:
 		return "pinned"
 	}
+}
+
+// intentAgrees reports whether a declaration and a lock entry describe the
+// same intent: the projections are equal, or the lock carries no projection
+// at all (an entry written before intent was recorded, or a manifest just
+// generated from it) and the resolved revision already is what the
+// declaration selects (spec 024 FR-019).
+func intentAgrees(decl manifest.Skill, rec skillslock.Record) bool {
+	declared, recorded := declaredRequested(decl), recordedRequested(rec)
+	if declared == recorded {
+		return true
+	}
+	return recorded == (resolver.Requested{}) && pinSatisfied(decl, rec)
 }
 
 // pinSatisfied reports whether the locked revision already is what the

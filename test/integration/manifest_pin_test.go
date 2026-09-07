@@ -116,3 +116,98 @@ func TestPin_EditConverges(t *testing.T) {
 		t.Errorf("lock still records the replaced constraint:\n%s", settled)
 	}
 }
+
+// TestPin_RangeWidenReResolves is spec 024 FR-002: widening a range in
+// skills.toml re-resolves on the next install.
+func TestPin_RangeWidenReResolves(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	publishNewVersion(t, repo, "demo", "v2.0.0")
+	setManifestKey(t, proj, "demo", "version", "^2.0.0")
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("install: %s", stderr)
+	}
+	lock := readLock(t, proj)
+	if !strings.Contains(lock, `"version": "2.0.0"`) || !strings.Contains(lock, `"requestedVersion": "^2.0.0"`) {
+		t.Errorf("widened range not re-resolved:\n%s", lock)
+	}
+}
+
+// TestPin_SourceEditReResolves: editing `source` re-resolves from the new
+// source and the lock records it.
+func TestPin_SourceEditReResolves(t *testing.T) {
+	t.Parallel()
+
+	repoA := gitRepo(t, validSkill("demo"), "v1.0.0")
+	repoB := gitRepo(t, "---\nname: demo\ndescription: from B\n---\n# demo from-B\n", "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repoA, "--version", "^1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	setManifestKey(t, proj, "demo", "source", repoB)
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("install: %s", stderr)
+	}
+	content := readFile(t, filepath.Join(proj, ".agents", "skills", "demo", "SKILL.md"))
+	if !strings.Contains(string(content), "from-B") {
+		t.Errorf("source edit ignored:\n%s", content)
+	}
+	if lock := readLock(t, proj); !strings.Contains(lock, repoB) {
+		t.Errorf("lock does not record the new source:\n%s", lock)
+	}
+}
+
+// TestPin_SkillPathEditReResolves: editing `skill` is read on install — a
+// path the source does not have fails the run instead of being ignored.
+func TestPin_SkillPathEditReResolves(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	lock := readLock(t, proj)
+	setManifestKey(t, proj, "demo", "skill", "missing/path")
+	if _, stderr, code := runGskill(t, proj, "install"); code == 0 || !strings.Contains(stderr, "missing/path") {
+		t.Errorf("edited skill path silently ignored: exit %d, stderr %s", code, stderr)
+	}
+	if readLock(t, proj) != lock {
+		t.Error("a failed re-resolution rewrote the lock")
+	}
+}
+
+// TestPin_ModeEditRematerializes: switching mode to copy re-materializes the
+// agent target as a real directory.
+func TestPin_ModeEditRematerializes(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	target := filepath.Join(proj, ".claude", "skills", "demo")
+	if fi, err := os.Lstat(target); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected a symlink before the edit (err %v)", err)
+	}
+	setManifestKey(t, proj, "demo", "mode", "copy")
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("install: %s", stderr)
+	}
+	if fi, err := os.Lstat(target); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("mode edit ignored: target still a symlink (err %v)", err)
+	}
+	if !strings.Contains(readLock(t, proj), `"installMode": "copy"`) {
+		t.Errorf("lock does not record the copy mode:\n%s", readLock(t, proj))
+	}
+}
