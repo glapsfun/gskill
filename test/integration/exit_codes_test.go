@@ -202,8 +202,8 @@ func TestOutdated_PinOnlyOutageStaysExitZero(t *testing.T) {
 	if code != 0 {
 		t.Errorf("pin-only outage: update --list exit = %d, want 0", code)
 	}
-	if !strings.Contains(stdout, "All skills are up to date") {
-		t.Errorf("pin-only list summary changed:\n%s", stdout)
+	if !strings.Contains(stdout, "1 pinned") {
+		t.Errorf("pin-only list summary must count the pin:\n%s", stdout)
 	}
 	if _, _, ecode := runGskill(t, proj, "outdated", "--exit-code"); ecode != 0 {
 		t.Errorf("pin-only outage: outdated --exit-code = %d, want 0", ecode)

@@ -198,7 +198,13 @@ func (a *App) planOne(ctx context.Context, name string, rec skillslock.Record, r
 func finishPlanItem(item UpdatePlanItem, name string, decl manifest.Skill, declared bool, rec skillslock.Record) UpdatePlanItem {
 	item.Pinned = item.Status.Pinned()
 	switch {
-	case item.Pinned, item.Status == StatusNoCompatibleUpdate:
+	case item.Pinned:
+		item.NextAction = "gskill upgrade " + name
+		item.Reason = pinnedReason(decl, rec)
+		if item.DiscoveryErr != "" {
+			item.Reason += " (newest-tag lookup failed: " + item.DiscoveryErr + ")"
+		}
+	case item.Status == StatusNoCompatibleUpdate:
 		item.NextAction = "gskill upgrade " + name
 	}
 	if !declared || declaredRequested(decl) == recordedRequested(rec) {
@@ -223,6 +229,23 @@ func finishPlanItem(item UpdatePlanItem, name string, decl manifest.Skill, decla
 		item.Reason += "; " + note
 	}
 	return item
+}
+
+// pinnedReason names the declaration that pins a skill, so the user sees
+// which line of skills.toml holds it in place (spec 024 FR-008).
+func pinnedReason(decl manifest.Skill, rec skillslock.Record) string {
+	switch {
+	case decl.Commit != "":
+		return `pinned by skills.toml (commit = "` + shortCommit(decl.Commit) + `")`
+	case decl.Version != "":
+		return `pinned by skills.toml (version = "` + decl.Version + `")`
+	case decl.Ref != "":
+		return `pinned by skills.toml (ref = "` + decl.Ref + `")`
+	case rec.Resolved.Commit != "":
+		return `pinned to commit ` + shortCommit(rec.Resolved.Commit)
+	default:
+		return "pinned"
+	}
 }
 
 // pinSatisfied reports whether the locked revision already is what the

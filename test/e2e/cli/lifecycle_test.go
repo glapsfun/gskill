@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/testutil"
@@ -78,5 +79,46 @@ func TestLifecycle_CompatibleUpdate(t *testing.T) {
 	assertContains(t, "installed content", installed(t, dir, agentClaude, "demo"), "# demo v1.1.0")
 	if res := run(t, dir, "verify"); res.Code != 0 {
 		t.Fatalf("verify: %s", res.Stderr)
+	}
+}
+
+// TestLifecycle_ExactPinsReportPinned is spec 024 US2 through the binary: an
+// exact version and an exact commit are reported as pinned with guidance,
+// nothing changes on any layer, and the exit code is 0.
+func TestLifecycle_ExactPinsReportPinned(t *testing.T) {
+	t.Parallel()
+	dir := newProject(t)
+	verRepo := skillRepo(t, "demo", "v1.0.0", "v1.0.0")
+	commitRepo := skillRepo(t, "other", "v1.0.0", "v1.0.0")
+	sha := testutil.GitOutput(t, commitRepo, "rev-parse", "HEAD")
+	if res := run(t, dir, "add", verRepo, "--skill", "demo", "--agent", agentClaude, "--version", "1.0.0"); res.Code != 0 {
+		t.Fatalf("add demo: %s", res.Stderr)
+	}
+	if res := run(t, dir, "add", commitRepo, "--skill", "other", "--agent", agentClaude, "--commit", sha); res.Code != 0 {
+		t.Fatalf("add other: %s", res.Stderr)
+	}
+	manifestBefore, lockBefore := manifestBytes(t, dir), lockBytes(t, dir)
+	contentBefore := installed(t, dir, agentClaude, "demo") + installed(t, dir, agentClaude, "other")
+
+	testutil.PublishVersion(t, verRepo, "demo", testutil.SkillBody("demo", "v1.1.0"), "v1.1.0")
+	testutil.PublishVersion(t, commitRepo, "other", testutil.SkillBody("other", "v1.1.0"), "v1.1.0")
+
+	list := run(t, dir, "update", "--list", "--all")
+	if list.Code != 0 {
+		t.Fatalf("update --list --all: code %d %s", list.Code, list.Stderr)
+	}
+	assertContains(t, "update --list --all", list.Stdout, "pinned version", "pinned commit", "gskill upgrade demo", "gskill upgrade other")
+
+	apply := run(t, dir, "--no-interactive", "update")
+	if apply.Code != 0 {
+		t.Fatalf("update: code %d %s", apply.Code, apply.Stderr)
+	}
+	assertContains(t, "update", apply.Stdout, "pinned version", "pinned commit", "2 pinned")
+	assertNotContains(t, "update", strings.ToLower(apply.Stdout), "error", "failed")
+
+	assertUnchanged(t, "skills.toml", manifestBefore, manifestBytes(t, dir))
+	assertUnchanged(t, "skills-lock.json", lockBefore, lockBytes(t, dir))
+	if got := installed(t, dir, agentClaude, "demo") + installed(t, dir, agentClaude, "other"); got != contentBefore {
+		t.Fatalf("installed content changed under pinned update")
 	}
 }

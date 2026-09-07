@@ -40,16 +40,18 @@ func TestSyncMissingLockFailsClosed(t *testing.T) {
 	}
 }
 
-// Update and Remove outside a project fail with the missing-lock error
-// instead of silently succeeding.
+// Update outside a project is an honest empty result (spec 024: nothing
+// declared is not an error), while Remove still fails with the missing-lock
+// error instead of silently succeeding.
 func TestUpdateRemoveMissingLockFail(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	a := lockOnlyApp()
 	ctx := context.Background()
-	if _, err := a.Update(ctx, app.UpdateRequest{Root: root}); err == nil {
-		t.Error("update without a lock succeeded, want error")
+	res, err := a.Update(ctx, app.UpdateRequest{Root: root})
+	if err != nil || len(res.Skills) != 0 {
+		t.Errorf("update with nothing declared = (%+v, %v), want empty result and nil", res, err)
 	}
 	if _, err := a.Remove(ctx, root, []string{"x"}); err == nil {
 		t.Error("remove without a lock succeeded, want error")

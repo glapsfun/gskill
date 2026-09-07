@@ -1,14 +1,18 @@
 {
   "any_available": true,
   "not_checked": 0,
+  "pinned": 0,
   "skills": [
     {
       "available": false,
       "current": "eeeeeeeeeeee",
       "latest": "eeeeeeeeeeee",
       "name": "cdep",
+      "next_action": "",
+      "pinned": false,
       "policy": "commit:eeeeeeeeeeee",
       "reason": "pinned to an exact commit; not changed by a normal update",
+      "shape": "",
       "status": "pinned-commit"
     },
     {
@@ -16,8 +20,11 @@
       "current": "v1.0.0",
       "latest": "v1.0.0",
       "name": "deploy",
+      "next_action": "",
+      "pinned": false,
       "policy": "tag:v1.0.0",
       "reason": "pinned to an exact tag; not changed by a normal update",
+      "shape": "",
       "status": "pinned-tag"
     },
     {
@@ -25,8 +32,11 @@
       "current": "1.2.0",
       "latest": "1.4.1",
       "name": "kubernetes",
+      "next_action": "",
+      "pinned": false,
       "policy": "^1.2.0",
       "reason": "",
+      "shape": "",
       "status": "update-available"
     },
     {
@@ -34,8 +44,11 @@
       "current": "1.3.0",
       "latest": "1.3.0",
       "name": "legacy",
+      "next_action": "",
+      "pinned": false,
       "policy": "^1.0.0",
       "reason": "newer releases exist outside the version constraint",
+      "shape": "",
       "status": "no-compatible-update"
     },
     {
@@ -43,8 +56,11 @@
       "current": "local",
       "latest": "local",
       "name": "local-tools",
+      "next_action": "",
+      "pinned": false,
       "policy": "local",
       "reason": "local source has no remote update candidate",
+      "shape": "",
       "status": "local-source"
     },
     {
@@ -52,8 +68,11 @@
       "current": "2.3.2",
       "latest": "2.3.2",
       "name": "security",
+      "next_action": "",
+      "pinned": false,
       "policy": "^2.0.0",
       "reason": "already the newest revision the policy allows",
+      "shape": "",
       "status": "up-to-date"
     }
   ]

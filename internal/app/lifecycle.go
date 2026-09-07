@@ -50,6 +50,10 @@ type UpdateSkillResult struct {
 	Reason      string
 	ContentHash string
 	Err         error
+	// Informational and NextAction carry the plan's hint for a skill the run
+	// could not move, so the result can say how to move it (spec 024 FR-008).
+	Informational string
+	NextAction    string
 }
 
 // UpdateResult aggregates an update run, name-sorted.
@@ -58,6 +62,11 @@ type UpdateResult struct {
 	Updated  int
 	Failed   int
 	NoChange int
+	// Pinned, UpToDate, and Local break NoChange down by why nothing moved
+	// (spec 024 FR-009).
+	Pinned   int
+	UpToDate int
+	Local    int
 	Changed  bool
 	DryRun   bool
 }
@@ -78,6 +87,10 @@ func (a *App) Update(ctx context.Context, req UpdateRequest) (UpdateResult, erro
 		return UpdateResult{}, err
 	}
 	if !fileExists(p.lockPath) {
+		if !fileExists(manifestPath(p.root)) {
+			// Nothing declared anywhere: an honest empty result, not an error.
+			return UpdateResult{DryRun: req.DryRun}, nil
+		}
 		return UpdateResult{}, errNoLock()
 	}
 	out := UpdateResult{DryRun: req.DryRun}
@@ -149,6 +162,14 @@ func countUpdateOutcomes(out *UpdateResult) {
 			out.Failed++
 		case UpdateOutcomeNoChange:
 			out.NoChange++
+			switch {
+			case s.Status.Pinned():
+				out.Pinned++
+			case s.Status == StatusLocalSource:
+				out.Local++
+			case s.Status == StatusUpToDate, s.Status == StatusNoCompatibleUpdate:
+				out.UpToDate++
+			}
 		}
 	}
 	out.Changed = !out.DryRun && out.Updated > 0
@@ -184,8 +205,10 @@ func (a *App) updateOne(ctx context.Context, p *project, lf *skillslock.State, n
 	})
 	res := UpdateSkillResult{
 		Name: name, From: item.Current, To: item.Current,
-		Status:      item.Status,
-		ContentHash: rec.Resolved.ContentHash,
+		Status:        item.Status,
+		ContentHash:   rec.Resolved.ContentHash,
+		Informational: item.Informational,
+		NextAction:    item.NextAction,
 	}
 	switch {
 	case item.Status == StatusLookupFailed && item.DiscoveryErr != "":

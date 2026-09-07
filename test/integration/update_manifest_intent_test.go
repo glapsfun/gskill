@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -176,5 +177,144 @@ func TestUpdate_ForeignEntriesIgnoredAndPreserved(t *testing.T) {
 	lock := readLock(t, proj)
 	if !strings.Contains(lock, `"itsOwnField": "must survive"`) || !strings.Contains(lock, `"version": "1.1.0"`) {
 		t.Errorf("foreign entry damaged or update missed:\n%s", lock)
+	}
+}
+
+func exactPinProject(t *testing.T) (proj, repo string) {
+	t.Helper()
+	repo = gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj = newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	publishNewVersion(t, repo, "demo", "v1.1.0")
+	return proj, repo
+}
+
+// TestUpdateList_PinnedVersionRowAndHint is spec 024 US2: an exact version
+// is reported as pinned, with the declaration that pins it and the way to
+// move it.
+func TestUpdateList_PinnedVersionRowAndHint(t *testing.T) {
+	t.Parallel()
+
+	proj, _ := exactPinProject(t)
+	stdout, stderr, code := runGskill(t, proj, "update", "--list", "--all")
+	if code != 0 {
+		t.Fatalf("update --list --all exit %d: %s", code, stderr)
+	}
+	for _, want := range []string{"pinned version", `pinned by skills.toml (version = "1.0.0")`, "newest 1.1.0", "gskill upgrade demo"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	items := listItems(t, proj)
+	for _, it := range items {
+		if it["status"] == "unknown" {
+			t.Errorf("retired status appeared: %v", it)
+		}
+	}
+}
+
+// TestUpdateList_AllPinnedSummaryCountsByStatus: an all-pinned project never
+// claims to be "up to date"; the summary counts what was hidden.
+func TestUpdateList_AllPinnedSummaryCountsByStatus(t *testing.T) {
+	t.Parallel()
+
+	proj, _ := exactPinProject(t)
+	stdout, stderr, code := runGskill(t, proj, "update", "--list")
+	if code != 0 {
+		t.Fatalf("update --list exit %d: %s", code, stderr)
+	}
+	if strings.Contains(stdout, "All skills are up to date") {
+		t.Errorf("all-pinned project claims up to date:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "1 pinned") || !strings.Contains(stdout, "--all") {
+		t.Errorf("summary does not count the hidden pinned skill:\n%s", stdout)
+	}
+}
+
+// TestUpdate_ApplyPinnedGuidanceLineAndExitZero: applying an update to a
+// pinned skill is an honest no-op with guidance, never a failure.
+func TestUpdate_ApplyPinnedGuidanceLineAndExitZero(t *testing.T) {
+	t.Parallel()
+
+	proj, _ := exactPinProject(t)
+	lockBefore := readLock(t, proj)
+	stdout, stderr, code := runGskill(t, proj, "--no-interactive", "update")
+	if code != 0 {
+		t.Fatalf("update exit %d: %s", code, stderr)
+	}
+	for _, want := range []string{"pinned version", "pinned by skills.toml", "gskill upgrade demo", "1 pinned"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	for _, never := range []string{"error", "failed"} {
+		if strings.Contains(strings.ToLower(stdout), never) {
+			t.Errorf("stdout reads as a failure (%q):\n%s", never, stdout)
+		}
+	}
+	if readLock(t, proj) != lockBefore {
+		t.Error("update rewrote the lock of a pinned skill")
+	}
+}
+
+// TestUpdateList_LookupFailedStatusExit5: an unreachable source is a distinct
+// status, and the report exits 5 after rendering.
+func TestUpdateList_LookupFailedStatusExit5(t *testing.T) {
+	t.Parallel()
+
+	proj := jsonUpdateProject(t)
+	m := readFile(t, manifestPath(proj))
+	src := regexp.MustCompile(`source\s*=\s*"([^"]+)"`).FindSubmatch(m)
+	if src == nil {
+		t.Fatalf("no source in manifest:\n%s", m)
+	}
+	if err := os.RemoveAll(string(src[1])); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, code := runGskill(t, proj, "update", "--list", "--all")
+	if code != 5 {
+		t.Errorf("exit = %d, want 5", code)
+	}
+	if !strings.Contains(stdout, "lookup failed") || !strings.Contains(stdout, "could not be checked") {
+		t.Errorf("stdout hides the failed lookup:\n%s", stdout)
+	}
+	if demo := listItems(t, proj)["demo"]; demo["status"] != "lookup-failed" {
+		t.Errorf("status = %v, want lookup-failed", demo["status"])
+	}
+}
+
+// TestUpdateList_OfflineLookupFailedExit0: offline, a floating skill is
+// "lookup failed (offline)" and the report still exits 0.
+func TestUpdateList_OfflineLookupFailedExit0(t *testing.T) {
+	t.Parallel()
+
+	proj := jsonUpdateProject(t)
+	stdout, _, code := runGskill(t, proj, "--offline", "--json", "update", "--list", "--all")
+	if code != 0 {
+		t.Fatalf("offline list exit %d:\n%s", code, stdout)
+	}
+	obj := assertSingleJSON(t, stdout, "offline list")
+	skills, _ := obj["skills"].([]any)
+	demo, _ := skills[0].(map[string]any)
+	reason, _ := demo["reason"].(string)
+	if demo["status"] != "lookup-failed" || !strings.Contains(reason, "offline") {
+		t.Errorf("offline item = %v", demo)
+	}
+}
+
+// TestUpdate_NoProjectFilesExitsZero: nothing declared is not an error.
+func TestUpdate_NoProjectFilesExitsZero(t *testing.T) {
+	t.Parallel()
+
+	proj := newProject(t)
+	stdout, stderr, code := runGskill(t, proj, "--no-interactive", "update")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "No skills declared.") {
+		t.Errorf("stdout = %q", stdout)
 	}
 }
