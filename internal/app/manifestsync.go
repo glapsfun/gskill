@@ -8,6 +8,7 @@ import (
 	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/overrides"
+	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -59,6 +60,62 @@ func manifestSkillFrom(name string, r skillslock.Record) manifest.Skill {
 	// for one explicitly (see syncManifestSkills).
 	sort.Strings(s.Agents)
 	return s
+}
+
+// declarationFor returns the skill's tracking intent as the user declared it:
+// the manifest entry when one exists, otherwise the projection a manifest
+// would be generated from — the same one ensureManifest writes — so a project
+// classifies identically before and after gaining its manifest (spec 024
+// FR-019). The bool reports whether a manifest declaration was found.
+func (a *App) declarationFor(root, name string, rec skillslock.Record) (manifest.Skill, bool) {
+	if m, err := a.loadManifest(root); err == nil && m != nil {
+		if decl, ok := m.Skills[name]; ok {
+			return decl, true
+		}
+	}
+	return manifestSkillFrom(name, rec), false
+}
+
+// resolverDeclaration maps a manifest declaration onto the resolver's view of
+// intent.
+func resolverDeclaration(decl manifest.Skill, rec skillslock.Record) resolver.Declaration {
+	return resolver.Declaration{
+		Version: decl.Version,
+		Ref:     decl.Ref,
+		Commit:  decl.Commit,
+		Local:   rec.Resolved.RefKind == string(resolver.RefKindLocal),
+	}
+}
+
+// intentFromDeclaration builds one skill's install intent from its manifest
+// declaration, falling back to the lock record only for facts a declaration
+// never carries (scope) or may omit (skill path, mode, agents). It is the
+// counterpart of intentFromRecord for projects that have a manifest, and the
+// only way `update` and `upgrade` derive what to resolve (spec 024 FR-004).
+func intentFromDeclaration(decl manifest.Skill, rec skillslock.Record) skillIntent {
+	in := skillIntent{
+		Source:  decl.Source,
+		Path:    decl.Skill,
+		Version: decl.Version,
+		Ref:     decl.Ref,
+		Commit:  decl.Commit,
+		Mode:    decl.Mode,
+		Scope:   rec.Installation.Scope,
+		Agents:  append([]string(nil), decl.Agents...),
+	}
+	if in.Source == "" {
+		in.Source = rec.Source.Original
+	}
+	if in.Path == "" {
+		in.Path = rec.Source.Path
+	}
+	if in.Mode == "" {
+		in.Mode = rec.Installation.Mode
+	}
+	if len(in.Agents) == 0 {
+		in.Agents = append([]string(nil), rec.Installation.Agents...)
+	}
+	return in
 }
 
 // syncManifestSkills writes the declarations for names into the project's

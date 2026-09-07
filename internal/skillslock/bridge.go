@@ -26,6 +26,7 @@ type ExtState struct {
 	RequestedVersion string `json:"requestedVersion,omitempty"`
 	RequestedRef     string `json:"requestedRef,omitempty"`
 	RequestedCommit  string `json:"requestedCommit,omitempty"`
+	DeclarationKind  string `json:"declarationKind,omitempty"`
 
 	RefKind       string `json:"refKind,omitempty"`
 	Tag           string `json:"tag,omitempty"`
@@ -99,6 +100,7 @@ func FromRecord(ls Record) Entry {
 			RequestedVersion:    ls.Requested.Version,
 			RequestedRef:        ls.Requested.Ref,
 			RequestedCommit:     ls.Requested.Commit,
+			DeclarationKind:     ls.Requested.Kind,
 			RefKind:             ls.Resolved.RefKind,
 			Tag:                 ls.Resolved.Tag,
 			Branch:              ls.Resolved.Branch,
@@ -179,6 +181,7 @@ func ToRecord(name string, e Entry) Record {
 		},
 		Requested: Requested{
 			Version: st.RequestedVersion, Ref: st.RequestedRef, Commit: st.RequestedCommit,
+			Kind: st.DeclarationKind,
 		},
 		Resolved: Resolved{
 			Version:        ext.Version,

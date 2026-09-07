@@ -668,8 +668,8 @@ func stampSkill(ctx context.Context, name string, index, count int) context.Cont
 }
 
 // skillIntent is the desired-state input to one skill's install: what the
-// user asked for (add flags) or what the lock's gskill block declares
-// (update/restore). It replaces the manifest declaration.
+// user asked for (add flags) or what skills.toml declares (update, upgrade,
+// install); see intentFromDeclaration.
 type skillIntent struct {
 	Source  string
 	Path    string
@@ -679,20 +679,6 @@ type skillIntent struct {
 	Mode    string
 	Scope   string
 	Agents  []string
-}
-
-// intentFromRecord derives the declared intent from a managed lock record.
-func intentFromRecord(r skillslock.Record) skillIntent {
-	return skillIntent{
-		Source:  r.Source.Original,
-		Path:    r.Source.Path,
-		Version: r.Requested.Version,
-		Ref:     r.Requested.Ref,
-		Commit:  r.Requested.Commit,
-		Mode:    r.Installation.Mode,
-		Scope:   r.Installation.Scope,
-		Agents:  r.Installation.Agents,
-	}
 }
 
 // installOne installs a single declared skill and updates lf in place.
@@ -715,9 +701,9 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 
 	// Backfill the tracking intent before building the lock entry, so the
 	// record's `requested` stays satisfied on the next run.
-	rq := backfillRequested(
+	rq := stampDeclarationKind(backfillRequested(
 		skillslock.Requested{Version: in.Version, Ref: in.Ref, Commit: in.Commit}, rev,
-	)
+	), rev)
 
 	ireq := a.installRequest(p.root, ref, rev, agents, cmp.Or(in.Scope, req.Scope), modeOr(req.Mode, in.Mode))
 	ireq.Name = name
@@ -874,6 +860,20 @@ func backfillRequested(rq skillslock.Requested, rev resolver.Revision) skillsloc
 	case resolver.RefKindLocal:
 		// No resolvable version; leave the intent unpinned.
 	}
+	return rq
+}
+
+// stampDeclarationKind records the shape the intent had when it was resolved
+// (spec 024 data-model.md §3), so the lock stays self-describing about what
+// kind of declaration produced an entry.
+func stampDeclarationKind(rq skillslock.Requested, rev resolver.Revision) skillslock.Requested {
+	shape, err := resolver.ClassifyDeclaration(resolver.Declaration{
+		Version: rq.Version, Ref: rq.Ref, Commit: rq.Commit, Local: rev.RefKind == resolver.RefKindLocal,
+	}, rev.RefKind)
+	if err != nil {
+		return rq
+	}
+	rq.Kind = string(shape)
 	return rq
 }
 

@@ -161,7 +161,7 @@ func discoveryFailureErr(plan app.UpdatePlan) error {
 func uncheckedNames(plan app.UpdatePlan) []string {
 	var names []string
 	for _, it := range plan.Items {
-		if it.Status == app.StatusUnknown && it.DiscoveryErr != "" {
+		if it.Status == app.StatusLookupFailed && it.DiscoveryErr != "" {
 			names = append(names, it.Name)
 		}
 	}
@@ -208,16 +208,31 @@ func UpdateListJSON(plan app.UpdatePlan, all bool) map[string]any {
 			"status":        string(it.Status),
 			"reason":        it.Reason,
 			"informational": it.Informational,
+			"shape":         string(it.Shape),
+			"pinned":        it.Pinned,
+			"next_action":   it.NextAction,
 		})
 	}
 	return map[string]any{
 		"skills":            skills,
 		"updates_available": len(plan.Actionable()),
+		"pinned":            countPinned(plan),
 		// not_checked distinguishes "verified current" from "could not be
 		// determined" for machine consumers — without it, a total discovery
 		// outage is byte-identical to a healthy project.
 		"not_checked": countUnknown(plan),
 	}
+}
+
+// countPinned counts the items only a change of declared intent can move.
+func countPinned(plan app.UpdatePlan) int {
+	n := 0
+	for _, it := range plan.Items {
+		if it.Pinned {
+			n++
+		}
+	}
+	return n
 }
 
 // UpdateResultJSON builds the --json object for an update execution. The

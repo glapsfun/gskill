@@ -1,13 +1,17 @@
 {
   "not_checked": 0,
+  "pinned": 0,
   "skills": [
     {
       "candidate": "1.4.1",
       "current": "1.2.0",
       "informational": "",
       "name": "kubernetes",
+      "next_action": "",
+      "pinned": false,
       "policy": "^1.2.0",
       "reason": "",
+      "shape": "",
       "source": "github.com/acme/k8s",
       "status": "update-available"
     }

@@ -158,19 +158,19 @@ func TestOutdated_TagPinNeverActionable(t *testing.T) {
 	}
 }
 
-func TestOutdated_TagPinLookupErrorPropagates(t *testing.T) {
+func TestOutdated_TagPinLookupFailureStaysPinned(t *testing.T) {
 	t.Parallel()
 
-	// A dead remote must not be reported as a healthy pin: the error
-	// propagates and the caller decides how to classify (the app layer keeps
-	// the pin classification and records the lookup failure).
 	wantErr := errors.New("network down")
 	runner := fakeRunner{tagsErr: wantErr}
-	current := resolver.Revision{RefKind: resolver.RefKindTag, Tag: "v2.0.0"}
+	current := resolver.Revision{RefKind: resolver.RefKindTag, Tag: "v1.0.0", Commit: "c1"}
 
-	_, err := resolver.Outdated(context.Background(), runner, gitRef(), resolver.Requested{Ref: "v2.0.0"}, current)
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("err = %v, want the lookup error propagated", err)
+	res, err := resolver.Outdated(context.Background(), runner, gitRef(), resolver.Requested{Ref: "v1.0.0"}, current)
+	if err != nil {
+		t.Fatalf("Outdated: %v", err)
+	}
+	if res.Status != resolver.StatusPinnedTag || !errors.Is(res.LookupErr, wantErr) {
+		t.Errorf("got %+v, want pinned-tag carrying the failed informational lookup", res)
 	}
 }
 
@@ -204,5 +204,76 @@ func TestOutdated_BranchUpToDate(t *testing.T) {
 	}
 	if res.Available() || res.Status != resolver.StatusUpToDate {
 		t.Errorf("got %+v, want up to date", res)
+	}
+}
+
+func TestOutdated_ExactVersionIsPinned(t *testing.T) {
+	t.Parallel()
+
+	runner := fakeRunner{tags: []git.TagRef{
+		{Name: "v1.2.0", Commit: "c1"},
+		{Name: "v2.0.0", Commit: "c2"},
+		{Name: "v3.0.0-rc.1", Commit: "c3"},
+	}}
+	current := resolver.Revision{RefKind: resolver.RefKindSemver, Version: "1.2.0"}
+
+	res, err := resolver.Outdated(context.Background(), runner, gitRef(), resolver.Requested{Version: "1.2.0"}, current)
+	if err != nil {
+		t.Fatalf("Outdated: %v", err)
+	}
+	if res.Status != resolver.StatusPinnedVersion || res.Available() {
+		t.Errorf("got %+v, want pinned-version", res)
+	}
+	if res.Informational != "2.0.0" {
+		t.Errorf("informational = %q, want the newest stable release 2.0.0 (pre-releases excluded)", res.Informational)
+	}
+}
+
+func TestOutdated_RangeLookupFailureIsLookupFailed(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("network down")
+	runner := fakeRunner{tagsErr: wantErr}
+	current := resolver.Revision{RefKind: resolver.RefKindSemver, Version: "1.0.0"}
+
+	res, err := resolver.Outdated(context.Background(), runner, gitRef(), resolver.Requested{Version: "^1.0.0"}, current)
+	if err != nil {
+		t.Fatalf("a lookup failure is a result, not an error: %v", err)
+	}
+	if res.Status != resolver.StatusLookupFailed || !errors.Is(res.LookupErr, wantErr) {
+		t.Errorf("got %+v, want lookup-failed carrying the error", res)
+	}
+}
+
+func TestOutdated_BranchLookupFailureIsLookupFailed(t *testing.T) {
+	t.Parallel()
+
+	runner := fakeRunner{}
+	current := resolver.Revision{RefKind: resolver.RefKindBranch, Branch: "main", Commit: "c1"}
+
+	res, err := resolver.Outdated(context.Background(), runner, gitRef(), resolver.Requested{Ref: "main"}, current)
+	if err != nil {
+		t.Fatalf("Outdated: %v", err)
+	}
+	if res.Status != resolver.StatusLookupFailed || res.LookupErr == nil {
+		t.Errorf("got %+v, want lookup-failed", res)
+	}
+}
+
+func TestOutdated_PrereleaseNeverInformationalForStable(t *testing.T) {
+	t.Parallel()
+
+	runner := fakeRunner{tags: []git.TagRef{
+		{Name: "v1.3.0", Commit: "c2"},
+		{Name: "v2.0.0-beta.1", Commit: "c3"},
+	}}
+	current := resolver.Revision{RefKind: resolver.RefKindSemver, Version: "1.3.0"}
+
+	res, err := resolver.Outdated(context.Background(), runner, gitRef(), resolver.Requested{Version: "^1.0.0"}, current)
+	if err != nil {
+		t.Fatalf("Outdated: %v", err)
+	}
+	if res.Status != resolver.StatusUpToDate || res.Informational != "" {
+		t.Errorf("got %+v, want plain up-to-date with no pre-release hint", res)
 	}
 }

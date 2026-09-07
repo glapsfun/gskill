@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"strings"
 
 	"github.com/glapsfun/gskill/internal/git"
+	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
@@ -12,19 +14,26 @@ import (
 // (spec 018 FR-003). Values are stable: they appear in JSON output.
 type UpdateStatus string
 
-// Plan item statuses. Only StatusUpdateAvailable is actionable by a normal
-// update. StatusUnknown records a skill whose eligibility could not be
-// determined (per-skill discovery failure, or offline mode for a mutable
-// tracking policy) without failing the whole plan.
+// Plan item statuses (spec 024 FR-006). Only StatusUpdateAvailable is
+// actionable by a normal update. StatusLookupFailed records a skill whose
+// eligibility could not be determined — a per-skill discovery failure, or an
+// offline run for a floating declaration — without failing the whole plan.
 const (
 	StatusUpdateAvailable    UpdateStatus = UpdateStatus(resolver.StatusUpdateAvailable)
 	StatusUpToDate           UpdateStatus = UpdateStatus(resolver.StatusUpToDate)
+	StatusPinnedVersion      UpdateStatus = UpdateStatus(resolver.StatusPinnedVersion)
 	StatusPinnedTag          UpdateStatus = UpdateStatus(resolver.StatusPinnedTag)
 	StatusPinnedCommit       UpdateStatus = UpdateStatus(resolver.StatusPinnedCommit)
 	StatusLocalSource        UpdateStatus = UpdateStatus(resolver.StatusLocalSource)
 	StatusNoCompatibleUpdate UpdateStatus = UpdateStatus(resolver.StatusNoCompatibleUpdate)
-	StatusUnknown            UpdateStatus = "unknown"
+	StatusLookupFailed       UpdateStatus = UpdateStatus(resolver.StatusLookupFailed)
 )
+
+// Pinned reports whether the status means only a change of declared intent
+// can move the skill.
+func (s UpdateStatus) Pinned() bool {
+	return s == StatusPinnedVersion || s == StatusPinnedTag || s == StatusPinnedCommit
+}
 
 // UpdatePlanItem is one skill's update assessment (spec 018 FR-001): the
 // single source every update surface renders from. Candidate is set exactly
@@ -39,9 +48,15 @@ type UpdatePlanItem struct {
 	Status        UpdateStatus
 	Reason        string
 	Informational string
-	// DiscoveryErr carries a per-skill discovery failure (Status is then
-	// StatusUnknown). It distinguishes a real error from an offline skip:
-	// execution reports the former as a failure and the latter as a no-op.
+	// Shape is the declaration's tracking kind; Pinned mirrors Status.Pinned
+	// for consumers; NextAction names the command that moves a skill a
+	// normal update cannot, empty when nothing needs doing (spec 024 FR-008).
+	Shape      resolver.DeclarationShape
+	Pinned     bool
+	NextAction string
+	// DiscoveryErr carries a per-skill discovery failure. It distinguishes a
+	// real error (Status is StatusLookupFailed) from an offline skip, and a
+	// pin whose informational lookup failed keeps its pinned status.
 	DiscoveryErr string
 }
 
@@ -116,56 +131,153 @@ func (a *App) PlanUpdate(ctx context.Context, req UpdatePlanRequest) (UpdatePlan
 	return plan, nil
 }
 
-// planOne classifies a single locked skill.
+// planOne classifies a single skill from its declaration (spec 024 FR-004):
+// the manifest entry when the project has one, else the projection a manifest
+// would be generated from.
 func (a *App) planOne(ctx context.Context, name string, rec skillslock.Record, req UpdatePlanRequest) UpdatePlanItem {
+	decl, declared := a.declarationFor(req.Root, name, rec)
 	item := UpdatePlanItem{
 		Name:   name,
 		Source: rec.Source.Original,
-		Policy: policyLabel(rec),
+		Policy: policyLabel(declaredRequested(decl), rec),
 	}
 	rev := revFromLock(rec.Resolved)
-
-	if req.Offline {
-		return planOffline(item, rev)
-	}
-
-	res, err := resolver.Outdated(ctx, a.git, refFromLock(rec.Source),
-		resolver.Requested{
-			Version: rec.Requested.Version,
-			Ref:     rec.Requested.Ref,
-			Commit:  rec.Requested.Commit,
-		}, rev)
+	shape, err := resolver.ClassifyDeclaration(resolverDeclaration(decl, rec), rev.RefKind)
 	if err != nil {
 		item.Current = RevisionLabel(rev)
-		// An exact pin's eligibility is fully determined by the lock; the
-		// remote lookup only enriches it with an informational newest tag.
-		// Keep the pin classification and record the failed lookup instead
-		// of degrading a healthy pin to "unknown".
-		if rev.RefKind == resolver.RefKindTag {
-			item.Status = StatusPinnedTag
-			item.Reason = notActionableReason(StatusPinnedTag) +
-				" (newest-tag lookup failed: " + err.Error() + ")"
-			item.DiscoveryErr = err.Error()
-			return item
-		}
-		item.Status = StatusUnknown
-		item.Reason = "discovery failed: " + err.Error()
+		item.Status = StatusLookupFailed
+		item.Reason = "invalid declaration: " + err.Error()
 		item.DiscoveryErr = err.Error()
 		return item
+	}
+	if shape == resolver.ShapeUnpinned {
+		shape = shapeFromRecord(rec)
+	}
+	item.Shape = shape
+
+	if req.Offline {
+		return finishPlanItem(planOffline(item, shape, rev), name, decl, declared, rec)
+	}
+
+	res, err := resolver.OutdatedShaped(ctx, a.git, refFromLock(rec.Source), shape, declaredRequested(decl), rev)
+	if err != nil {
+		item.Current = RevisionLabel(rev)
+		item.Status = StatusLookupFailed
+		item.Reason = "discovery failed: " + err.Error()
+		item.DiscoveryErr = err.Error()
+		return finishPlanItem(item, name, decl, declared, rec)
 	}
 
 	item.Status = UpdateStatus(res.Status)
 	item.Current = res.Current
 	item.Informational = res.Informational
-	if res.Available() {
+	switch {
+	case res.Available():
 		item.Candidate = res.Latest
-	} else {
+	case item.Status == StatusLookupFailed:
+		item.Reason = "discovery failed: " + res.LookupErr.Error()
+		item.DiscoveryErr = res.LookupErr.Error()
+	default:
 		item.Reason = notActionableReason(item.Status)
+		if res.LookupErr != nil {
+			// A pin's eligibility never depended on the lookup; only its
+			// newest-release hint is missing.
+			item.Reason += " (newest-tag lookup failed: " + res.LookupErr.Error() + ")"
+			item.DiscoveryErr = res.LookupErr.Error()
+		}
 	}
 	if item.Status == StatusPinnedCommit {
 		item.Current = shortCommit(rev.Commit)
 	}
+	return finishPlanItem(item, name, decl, declared, rec)
+}
+
+// finishPlanItem fills the derived fields every consumer reads: Pinned,
+// NextAction, and the declaration-changed reason for a manifest edit that no
+// install has applied yet.
+func finishPlanItem(item UpdatePlanItem, name string, decl manifest.Skill, declared bool, rec skillslock.Record) UpdatePlanItem {
+	item.Pinned = item.Status.Pinned()
+	switch {
+	case item.Pinned, item.Status == StatusNoCompatibleUpdate:
+		item.NextAction = "gskill upgrade " + name
+	}
+	if !declared || declaredRequested(decl) == recordedRequested(rec) {
+		return item
+	}
+	note := "declaration changed in skills.toml; install or update will apply it"
+	if item.Pinned && !pinSatisfied(decl, rec) {
+		// The lock holds a revision the new pin no longer selects: the move
+		// is exactly what the user asked for, so it is actionable now.
+		item.Status = StatusUpdateAvailable
+		item.Pinned = false
+		item.Candidate = declaredPinLabel(decl)
+		item.Informational = ""
+		item.Reason = note
+		item.NextAction = ""
+		return item
+	}
+	item.NextAction = "gskill install"
+	if item.Reason == "" {
+		item.Reason = note
+	} else {
+		item.Reason += "; " + note
+	}
 	return item
+}
+
+// pinSatisfied reports whether the locked revision already is what the
+// declared pin selects, so only the lock's intent projection is stale.
+func pinSatisfied(decl manifest.Skill, rec skillslock.Record) bool {
+	switch {
+	case decl.Commit != "":
+		return strings.HasPrefix(rec.Resolved.Commit, decl.Commit)
+	case decl.Version != "":
+		return strings.TrimLeft(decl.Version, "=v") == rec.Resolved.Version
+	case decl.Ref != "":
+		return decl.Ref == rec.Resolved.Tag || decl.Ref == rec.Resolved.Branch
+	default:
+		return true
+	}
+}
+
+// declaredPinLabel names the revision a pinned declaration selects.
+func declaredPinLabel(decl manifest.Skill) string {
+	switch {
+	case decl.Commit != "":
+		return shortCommit(decl.Commit)
+	case decl.Version != "":
+		return strings.TrimLeft(decl.Version, "=v")
+	default:
+		return decl.Ref
+	}
+}
+
+// declaredRequested maps a declaration onto the resolver's request.
+func declaredRequested(decl manifest.Skill) resolver.Requested {
+	return resolver.Requested{Version: decl.Version, Ref: decl.Ref, Commit: decl.Commit}
+}
+
+// recordedRequested is the intent projection the lock carries.
+func recordedRequested(rec skillslock.Record) resolver.Requested {
+	return resolver.Requested{Version: rec.Requested.Version, Ref: rec.Requested.Ref, Commit: rec.Requested.Commit}
+}
+
+// shapeFromRecord infers a shape from what an intent-less entry resolved to.
+func shapeFromRecord(rec skillslock.Record) resolver.DeclarationShape {
+	switch resolver.RefKind(rec.Resolved.RefKind) {
+	case resolver.RefKindCommit:
+		return resolver.ShapeCommit
+	case resolver.RefKindTag:
+		return resolver.ShapeTag
+	case resolver.RefKindBranch:
+		return resolver.ShapeBranch
+	case resolver.RefKindLocal:
+		return resolver.ShapeLocal
+	case resolver.RefKindSemver:
+		return resolver.ShapeUnpinned
+	default:
+		return resolver.ShapeUnpinned
+	}
 }
 
 // labelLocal is the display label for local sources (current revision and
@@ -173,29 +285,32 @@ func (a *App) planOne(ctx context.Context, name string, rec skillslock.Record, r
 const labelLocal = "local"
 
 // planOffline classifies without any remote lookup: pins and local sources
-// are fully determined by the lock; mutable tracking policies honestly report
-// that they were not checked instead of guessing (FR-014).
-func planOffline(item UpdatePlanItem, rev resolver.Revision) UpdatePlanItem {
-	// Mutable kinds (semver, branch) and anything unrecognized default to
-	// "not checked" — offline mode never guesses.
+// are fully determined by the declaration; floating declarations honestly
+// report that they were not checked instead of guessing (FR-014).
+func planOffline(item UpdatePlanItem, shape resolver.DeclarationShape, rev resolver.Revision) UpdatePlanItem {
 	item.Current = RevisionLabel(rev)
-	item.Status = StatusUnknown
-	item.Reason = "offline mode: remote lookup skipped"
-	switch rev.RefKind {
-	case resolver.RefKindCommit:
+	switch shape {
+	case resolver.ShapeCommit:
 		item.Status = StatusPinnedCommit
 		item.Current = shortCommit(rev.Commit)
-		item.Reason = notActionableReason(StatusPinnedCommit)
-	case resolver.RefKindTag:
+	case resolver.ShapeTag:
 		item.Status = StatusPinnedTag
-		item.Reason = notActionableReason(StatusPinnedTag)
-	case resolver.RefKindLocal:
+	case resolver.ShapeExactVersion:
+		item.Status = StatusPinnedVersion
+	case resolver.ShapeLocal:
 		item.Status = StatusLocalSource
 		item.Current = labelLocal
-		item.Reason = notActionableReason(StatusLocalSource)
-	case resolver.RefKindSemver, resolver.RefKindBranch:
-		// keep the not-checked default
+	case resolver.ShapeRangeCaret, resolver.ShapeRangeTilde, resolver.ShapeRangeOther,
+		resolver.ShapeBranch, resolver.ShapeUnpinned:
+		item.Status = StatusLookupFailed
+		item.Reason = "offline mode: remote lookup skipped"
+		return item
+	default:
+		item.Status = StatusLookupFailed
+		item.Reason = "offline mode: remote lookup skipped"
+		return item
 	}
+	item.Reason = notActionableReason(item.Status)
 	return item
 }
 
@@ -205,6 +320,8 @@ func notActionableReason(s UpdateStatus) string {
 	switch s {
 	case StatusUpToDate:
 		return "already the newest revision the policy allows"
+	case StatusPinnedVersion:
+		return "pinned to an exact version; not changed by a normal update"
 	case StatusPinnedTag:
 		return "pinned to an exact tag; not changed by a normal update"
 	case StatusPinnedCommit:
@@ -213,30 +330,30 @@ func notActionableReason(s UpdateStatus) string {
 		return "local source has no remote update candidate"
 	case StatusNoCompatibleUpdate:
 		return "newer releases exist outside the version constraint"
-	case StatusUpdateAvailable, StatusUnknown:
+	case StatusUpdateAvailable, StatusLookupFailed:
 		return "" // actionable items and discovery failures carry their own text
 	default:
 		return ""
 	}
 }
 
-// policyLabel renders the requested tracking policy for display.
-func policyLabel(rec skillslock.Record) string {
+// policyLabel renders the declared tracking policy for display.
+func policyLabel(req resolver.Requested, rec skillslock.Record) string {
 	switch {
-	case rec.Requested.Version != "":
-		return rec.Requested.Version
-	case rec.Requested.Commit != "" || rec.Resolved.RefKind == string(resolver.RefKindCommit):
+	case req.Version != "":
+		return req.Version
+	case req.Commit != "" || rec.Resolved.RefKind == string(resolver.RefKindCommit):
 		return "commit:" + shortCommit(rec.Resolved.Commit)
 	case rec.Resolved.RefKind == string(resolver.RefKindLocal):
 		return labelLocal
 	case rec.Resolved.RefKind == string(resolver.RefKindTag):
-		if rec.Requested.Ref != "" {
-			return "tag:" + rec.Requested.Ref
+		if req.Ref != "" {
+			return "tag:" + req.Ref
 		}
 		return "tag:" + rec.Resolved.Tag
 	case rec.Resolved.RefKind == string(resolver.RefKindBranch):
-		if rec.Requested.Ref != "" {
-			return "branch:" + rec.Requested.Ref
+		if req.Ref != "" {
+			return "branch:" + req.Ref
 		}
 		return "branch:" + rec.Resolved.Branch
 	default:

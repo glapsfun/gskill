@@ -236,7 +236,9 @@ func updateStatusText(s app.UpdateStatus) string {
 		return "local source"
 	case app.StatusNoCompatibleUpdate:
 		return "no compatible update"
-	case app.StatusUnknown:
+	case app.StatusPinnedVersion:
+		return "pinned version"
+	case app.StatusLookupFailed:
 		return "not checked"
 	default:
 		return "unknown"
@@ -248,7 +250,7 @@ func updateStatusText(s app.UpdateStatus) string {
 func countUnknown(plan app.UpdatePlan) int {
 	n := 0
 	for _, it := range plan.Items {
-		if it.Status == app.StatusUnknown {
+		if it.Status == app.StatusLookupFailed {
 			n++
 		}
 	}
@@ -331,7 +333,7 @@ func updateListRow(out *Output, it app.UpdatePlanItem, all bool) []string {
 	switch {
 	case it.Informational != "":
 		status += " (newer: " + it.Informational + ")"
-	case it.DiscoveryErr != "" && it.Status != app.StatusUnknown:
+	case it.DiscoveryErr != "" && it.Status != app.StatusLookupFailed:
 		status += " (lookup failed)"
 	}
 	if out.Interactive() {
