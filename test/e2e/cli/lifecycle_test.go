@@ -323,3 +323,141 @@ func TestLifecycle_PreManifestProjectMigrates(t *testing.T) {
 	}
 	assertContains(t, "classification", string(as), `"status":"pinned-tag"`)
 }
+
+// TestLifecycle_CheckSyncRemove closes the lifecycle: a missing agent link is
+// drift that sync repairs; tampered committed content is drift that check and
+// verify report and only repair restores (the repository owns it); remove
+// retires the manifest and lock entries together.
+func TestLifecycle_CheckSyncRemove(t *testing.T) {
+	t.Parallel()
+	repo := skillRepo(t, "demo", "v1.0.0", "v1.0.0")
+	dir := newProject(t)
+	if res := run(t, dir, "add", repo, "--skill", "demo", "--agent", agentClaude); res.Code != 0 {
+		t.Fatalf("add: %s", res.Stderr)
+	}
+	if res := run(t, dir, "check", "--fail-on-drift"); res.Code != 0 {
+		t.Fatalf("check on a clean project: code %d %s", res.Code, res.Stderr)
+	}
+	assertSyncRepairsMissingLink(t, dir)
+	assertTamperFailsClosedUntilRepair(t, dir)
+
+	if res := run(t, dir, "--yes", "remove", "demo"); res.Code != 0 {
+		t.Fatalf("remove: code %d %s", res.Code, res.Stderr)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, ".claude", "skills", "demo")); err == nil {
+		t.Fatal("agent link survived remove")
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "skills.toml")); err == nil && strings.Contains(string(b), "[skills.demo]") { //nolint:gosec // test path
+		t.Fatalf("manifest still declares demo:\n%s", b)
+	}
+	if strings.Contains(string(lockBytes(t, dir)), `"demo"`) {
+		t.Fatal("lock still records demo")
+	}
+}
+
+func assertSyncRepairsMissingLink(t *testing.T, dir string) {
+	t.Helper()
+	link := filepath.Join(dir, ".claude", "skills", "demo")
+	if err := os.RemoveAll(link); err != nil {
+		t.Fatal(err)
+	}
+	if res := run(t, dir, "check", "--fail-on-drift"); res.Code != 7 {
+		t.Fatalf("check with a missing link: code %d, want 7\n%s%s", res.Code, res.Stdout, res.Stderr)
+	}
+	if res := run(t, dir, "sync"); res.Code != 0 {
+		t.Fatalf("sync: code %d %s", res.Code, res.Stderr)
+	}
+	assertContains(t, "content after sync", installed(t, dir, agentClaude, "demo"), "# demo v1.0.0")
+	if res := run(t, dir, "verify"); res.Code != 0 {
+		t.Fatalf("verify after sync: %s", res.Stderr)
+	}
+}
+
+func assertTamperFailsClosedUntilRepair(t *testing.T, dir string) {
+	t.Helper()
+	committed := filepath.Join(dir, ".agents", "skills", "demo", "SKILL.md")
+	if err := os.WriteFile(committed, []byte("tampered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res := run(t, dir, "check", "--fail-on-drift"); res.Code != 7 {
+		t.Fatalf("check after tamper: code %d, want 7", res.Code)
+	}
+	if res := run(t, dir, "verify"); res.Code != 6 {
+		t.Fatalf("verify after tamper: code %d, want 6", res.Code)
+	}
+	if res := run(t, dir, "sync"); res.Code == 0 {
+		t.Fatal("sync must fail closed on tampered committed content")
+	}
+	if res := run(t, dir, "repair"); res.Code != 0 {
+		t.Fatalf("repair: code %d %s", res.Code, res.Stderr)
+	}
+	if res := run(t, dir, "verify"); res.Code != 0 {
+		t.Fatalf("verify after repair: %s", res.Stderr)
+	}
+}
+
+// localSkillDir creates a plain directory holding one skill, for the local
+// source kind.
+func localSkillDir(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(testutil.SkillBody(name, "local")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestRegression_UpdateNeverWritesManifest is the SC-007 guard: for every
+// declaration kind, update leaves skills.toml byte-identical — with and
+// without something newer upstream.
+func TestRegression_UpdateNeverWritesManifest(t *testing.T) {
+	t.Parallel()
+	dir := newProject(t)
+	rangeRepo := skillRepo(t, "ranged", "v1.0.0", "v1.0.0")
+	exactRepo := skillRepo(t, "exact", "v1.0.0", "v1.0.0")
+	tagRepo := skillRepo(t, "tagged", "v1.0.0", "v1.0.0")
+	branchRepo := skillRepo(t, "branched", "v1.0.0")
+	commitRepo := skillRepo(t, "committed", "v1.0.0")
+	sha := testutil.GitOutput(t, commitRepo, "rev-parse", "HEAD")
+	local := localSkillDir(t, "local")
+
+	adds := [][]string{
+		{"add", rangeRepo, "--skill", "ranged", "--agent", agentClaude},
+		{"add", exactRepo, "--skill", "exact", "--agent", agentClaude, "--version", "1.0.0"},
+		{"add", tagRepo, "--skill", "tagged", "--agent", agentClaude, "--ref", "v1.0.0"},
+		{"add", branchRepo, "--skill", "branched", "--agent", agentClaude, "--ref", "main"},
+		{"add", commitRepo, "--skill", "committed", "--agent", agentClaude, "--commit", sha},
+		{"add", local, "--agent", agentClaude},
+	}
+	for _, args := range adds {
+		if res := run(t, dir, args...); res.Code != 0 {
+			t.Fatalf("%v: %s", args, res.Stderr)
+		}
+	}
+	before := manifestBytes(t, dir)
+	for _, kind := range []string{"ranged", "exact", "tagged"} {
+		testutil.PublishVersion(t, map[string]string{"ranged": rangeRepo, "exact": exactRepo, "tagged": tagRepo}[kind], kind, testutil.SkillBody(kind, "v1.1.0"), "v1.1.0")
+	}
+	testutil.PublishCommit(t, branchRepo, "branched", testutil.SkillBody("branched", "head2"))
+	testutil.PublishCommit(t, commitRepo, "committed", testutil.SkillBody("committed", "head2"))
+
+	if res := run(t, dir, "--no-interactive", "update"); res.Code != 0 {
+		t.Fatalf("update: code %d\n%s%s", res.Code, res.Stdout, res.Stderr)
+	}
+	assertUnchanged(t, "skills.toml after update across every kind", before, manifestBytes(t, dir))
+	if e := lockEntry(t, dir, "ranged"); e.Version != "1.1.0" {
+		t.Errorf("ranged did not move: %+v", e)
+	}
+	if e := lockEntry(t, dir, "exact"); e.Version != "1.0.0" {
+		t.Errorf("exact moved: %+v", e)
+	}
+	assertContains(t, "update output", res2(t, dir).Stdout, "pinned version", "pinned tag", "pinned commit", "local source")
+}
+
+func res2(t *testing.T, dir string) result {
+	t.Helper()
+	return run(t, dir, "--no-interactive", "update")
+}

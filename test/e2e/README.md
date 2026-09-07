@@ -1,5 +1,10 @@
 # Real-source end-to-end tests
 
+Two suites live under `test/e2e`:
+
+- **`test/e2e/cli/`** — hermetic, binary-driven lifecycle tests with no build tag. They run in the default gate on every platform; see `test/e2e/cli/README.md`.
+- **this directory** — opt-in tests against the live `cnative-skills` repository, described below.
+
 These tests drive the `gskill` CLI against the live
 [`glapsfun/cnative-skills`](https://github.com/glapsfun/cnative-skills) repository to validate the
 full install lifecycle against a real, multi-skill source — not just synthetic fixtures.

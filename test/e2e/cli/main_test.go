@@ -35,7 +35,30 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)
+	if code == 0 {
+		if missing := uncoveredCommands(); len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "e2e/cli: lifecycle commands never exercised: %v\n", missing)
+			code = 1
+		}
+	}
 	os.Exit(code)
+}
+
+// requiredCommands is the coverage contract (spec 024 FR-022): every one of
+// these must be driven through the binary at least once per run.
+var requiredCommands = []string{
+	"add", "install", "install --frozen-lockfile", "update --list", "update",
+	"upgrade", "verify", "check", "sync", "remove",
+}
+
+func uncoveredCommands() []string {
+	var missing []string
+	for _, c := range requiredCommands {
+		if _, ok := invocations.Load(c); !ok {
+			missing = append(missing, c)
+		}
+	}
+	return missing
 }
 
 func moduleRoot() (string, error) {
