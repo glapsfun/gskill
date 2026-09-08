@@ -81,7 +81,7 @@ The lockfile records the hash of the upstream content (`baseHash`), the hash of 
 references** (`overrideDigest`).
 
 That last point is what makes editing `house-rules.md` detectable: its content feeds the identity,
-so the digest changes and `gskill check` reports drift naming the input responsible. Run
+so the digest changes and `gskill project check` reports drift naming the input responsible. Run
 `gskill install` to re-apply, or revert the file.
 
 ## Precedence

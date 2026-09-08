@@ -17,7 +17,9 @@ func TestUnknownCommand_Suggestions(t *testing.T) {
 		{"transposed canonical", "serach", "search"},
 		{"typo of rename alias resolves to canonical", "fnd", "search"},
 		{"typo of tui alias resolves to canonical", "tuii", "dashboard"},
-		{"typo of regrouped alias resolves to project form", "sinc", "project sync"},
+		{"retired flat alias resolves to its project form", "check", "project check"},
+		{"typo of a retired flat alias resolves to its project form", "sinc", "project sync"},
+		{"group leaf that collides with a top-level command keeps the top-level meaning", "lst", "list"},
 		{"garbage gets no suggestion", "zzzzqqq", ""},
 	}
 	for _, tt := range tests {
@@ -119,6 +121,30 @@ func TestUnknownCommand_SuggestionsAreDeterministic(t *testing.T) {
 		}
 		if stderr != first {
 			t.Fatalf("suggestion output changed between runs:\nfirst: %q\nrun %d: %q", first, i+1, stderr)
+		}
+	}
+}
+
+// TestSuggestions_NeverProposeRetiredCommands is spec 025 FR-004: the
+// alias-aware suggester draws its candidates from the live grammar plus
+// aliasTable, so a retired name can only reappear through a regression. A
+// suggestion is still allowed here — it just must never name a retired form.
+func TestSuggestions_NeverProposeRetiredCommands(t *testing.T) {
+	t.Parallel()
+
+	retired := []string{"sync", "repair", "verify", "check", "diff", "status", "init", "source", "unlink", "store"}
+	for _, arg := range []string{"snyc", "sinc", "chekc", "dif", "verfy", "repiar", "stauts", "iniit", "sorce", "unlnk"} {
+		stdout, stderr, code := runCLI(t, nil, arg)
+		if code != 2 {
+			t.Errorf("gskill %s: exit code = %d, want 2 (usage)", arg, code)
+		}
+		if stdout != "" {
+			t.Errorf("gskill %s: stdout = %q, want empty", arg, stdout)
+		}
+		for _, name := range retired {
+			if strings.Contains(stderr, `did you mean "`+name+`"`) {
+				t.Errorf("gskill %s: suggested retired command %q: %s", arg, name, stderr)
+			}
 		}
 	}
 }

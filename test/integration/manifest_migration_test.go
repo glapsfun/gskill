@@ -37,7 +37,7 @@ func TestMigration_GeneratesManifest(t *testing.T) {
 		t.Fatal("fixture still has a manifest")
 	}
 
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync"); code != 0 {
 		t.Fatalf("sync: %s", stderr)
 	}
 
@@ -60,7 +60,7 @@ func TestMigration_RoundTripIsByteIdentical(t *testing.T) {
 	proj, _ := pre023Project(t)
 	before := readLock(t, proj)
 
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync"); code != 0 {
 		t.Fatalf("sync: %s", stderr)
 	}
 	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
@@ -104,7 +104,7 @@ func TestMigration_ForeignEntriesUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync"); code != 0 {
 		t.Fatalf("sync: %s", stderr)
 	}
 
@@ -128,7 +128,7 @@ func TestMigration_FrozenAndReadOnlyCreateNothing(t *testing.T) {
 	}{
 		{"frozen install", []string{"install", "--frozen-lockfile"}},
 		{"list", []string{"list"}},
-		{"check", []string{"check"}},
+		{"check", []string{"project", "check"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -153,7 +153,7 @@ func TestMigration_CheckTreatsAbsentManifestAsDerivable(t *testing.T) {
 
 	proj, _ := pre023Project(t)
 
-	stdout, stderr, code := runGskill(t, proj, "check")
+	stdout, stderr, code := runGskill(t, proj, "project", "check")
 	if code != 0 {
 		t.Errorf("check on a healthy pre-023 project = exit %d, want 0\n%s\n%s", code, stdout, stderr)
 	}

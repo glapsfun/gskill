@@ -10,13 +10,14 @@ config file.
 ## Subcommands
 
 ```bash
-gskill config list       # print the effective configuration
+gskill config list       # print the config file path and the effective configuration
 gskill config get <key>  # print one value
-gskill config path       # print the config file path
 ```
 
-To change a value, edit the `config.toml` that `gskill config path` prints (or set the matching
-`GSKILL_*` environment variable).
+To change a value, edit the `config.toml` whose path `gskill config list` labels on its first line
+(or set the matching `GSKILL_*` environment variable). In JSON the payload is
+`{"path": …, "values": {…}}`, so `gskill config list --json | jq -r .path` gives the file and
+`jq -r .values.log_level` gives one setting.
 
 ## Configuration precedence
 

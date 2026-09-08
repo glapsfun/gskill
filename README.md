@@ -28,7 +28,7 @@ byte-for-byte from a single committed file.
 - **Reproducible installs** — `skills-lock.json` records intent and resolved
   reality together; `--frozen-lockfile` restores exactly, or fails closed.
 - **Verified integrity** — every install is checked against a recorded content
-  hash; `gskill verify` re-checks on demand; skill content is never executed.
+  hash; `gskill project verify` re-checks on demand; skill content is never executed.
 - **Multi-agent, one store** — a skill is resolved and stored once and shared by
   every agent that targets it, via symlinks (or copies where unsupported).
 - **Cross-project reuse** — a user-level global store (`~/.gskill`) holds each
@@ -79,7 +79,7 @@ Verify the install with `gskill version`.
 ```bash
 gskill add github.com/owner/repo --skill example --agent claude  # resolve, install, lock (auto-initializes the project)
 gskill install --frozen-lockfile                                 # reproduce exactly elsewhere
-gskill verify                                                    # re-hash installed content vs the lock
+gskill project verify                                            # re-hash installed content vs the lock
 ```
 
 Commit `skills-lock.json` — it's the only project state file GSKILL writes; it
@@ -124,7 +124,7 @@ gskill install --frozen-lockfile
 Re-hash installed content against the lock:
 
 ```bash
-gskill verify
+gskill project verify
 ```
 
 ### 6. Update
@@ -186,7 +186,7 @@ gskill install --dry-run
 
 ```bash
 gskill list
-gskill verify
+gskill project verify
 ```
 
 **Update skills:**

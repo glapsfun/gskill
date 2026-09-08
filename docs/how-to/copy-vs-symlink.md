@@ -30,7 +30,7 @@ gskill add ./skill --copy        # write a real copy into the agent dir
 - Either way, `skills-lock.json` records the install mode so restores are reproducible.
 
 > GSKILL requires working symlinks (macOS and Linux; Windows is unsupported). A checkout made with
-> `core.symlinks=false` leaves plain files where agent links should be — `gskill check` and
+> `core.symlinks=false` leaves plain files where agent links should be — `gskill project check` and
 > `gskill doctor` report it; re-clone on a symlink-capable filesystem.
 
 ## See also

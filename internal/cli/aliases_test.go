@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -129,63 +128,5 @@ func TestAliasTable_KongAliasesShareHelpByteIdentically(t *testing.T) {
 					m.Old, m.Canonical, oldOut, canonOut)
 			}
 		})
-	}
-}
-
-func TestAliasTable_HiddenCommandsBehaveIdentically(t *testing.T) {
-	t.Parallel()
-
-	for _, m := range aliasTable {
-		if m.Kind != aliasKindCommand || m.Mechanism != aliasMechHidden {
-			continue
-		}
-		t.Run(m.Old, func(t *testing.T) {
-			t.Parallel()
-
-			// Two identical fresh projects, one per side, so a state-mutating
-			// first run cannot skew the comparison.
-			oldDir := initedProject(t)
-			canonDir := initedProject(t)
-
-			oldArgs := []string{"-C", oldDir, m.Old}
-			canonArgs := append([]string{"-C", canonDir}, strings.Fields(m.Canonical)...)
-
-			oldOut, oldErr, oldCode := runCLI(t, newTestApp(), oldArgs...)
-			canonOut, canonErr, canonCode := runCLI(t, newTestApp(), canonArgs...)
-
-			if oldCode != canonCode {
-				t.Errorf("exit codes differ: `gskill %s`=%d `gskill %s`=%d",
-					m.Old, oldCode, m.Canonical, canonCode)
-			}
-			if oldOut != canonOut {
-				t.Errorf("stdout differs between `gskill %s` and `gskill %s`:\nold:  %q\ncanon: %q",
-					m.Old, m.Canonical, oldOut, canonOut)
-			}
-			if oldErr != canonErr {
-				t.Errorf("stderr differs between `gskill %s` and `gskill %s`:\nold:  %q\ncanon: %q",
-					m.Old, m.Canonical, oldErr, canonErr)
-			}
-			if strings.Contains(strings.ToLower(oldOut+oldErr), "deprecat") {
-				t.Errorf("`gskill %s` mentions deprecation; aliases must be silent", m.Old)
-			}
-		})
-	}
-}
-
-func TestAliasTable_HiddenAliasesAbsentFromRootHelp(t *testing.T) {
-	t.Parallel()
-
-	stdout, _, code := runCLI(t, nil, "--help")
-	if code != 0 {
-		t.Fatalf("--help: exit code = %d", code)
-	}
-	for _, m := range aliasTable {
-		if m.Mechanism != aliasMechHidden {
-			continue
-		}
-		re := regexp.MustCompile(`(?m)^\s{2,4}` + m.Old + `\b`)
-		if re.MatchString(stdout) {
-			t.Errorf("hidden alias %q appears as a top-level entry in root help", m.Old)
-		}
 	}
 }

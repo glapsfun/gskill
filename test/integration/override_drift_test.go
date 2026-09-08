@@ -41,7 +41,7 @@ func TestOverrideDrift_ReportedByCheck(t *testing.T) {
 	proj := newProject(t)
 	rules := installWithOverride(t, proj)
 
-	if _, _, code := runGskill(t, proj, "check"); code != 0 {
+	if _, _, code := runGskill(t, proj, "project", "check"); code != 0 {
 		t.Fatalf("check reported drift before anything was edited (exit %d)", code)
 	}
 
@@ -49,7 +49,7 @@ func TestOverrideDrift_ReportedByCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, stderr, _ := runGskill(t, proj, "check")
+	stdout, stderr, _ := runGskill(t, proj, "project", "check")
 	combined := stdout + stderr
 	if !strings.Contains(combined, "demo") {
 		t.Errorf("check did not name the drifted skill:\n%s", combined)
@@ -71,7 +71,7 @@ func TestOverrideDrift_DistinctFromContentDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, _, _ := runGskill(t, proj, "check", "--json")
+	stdout, _, _ := runGskill(t, proj, "project", "check", "--json")
 	if !strings.Contains(stdout, "override") {
 		t.Errorf("--json output does not distinguish override drift:\n%s", stdout)
 	}
@@ -127,7 +127,7 @@ func TestOverrideDrift_InstallReMaterializes(t *testing.T) {
 	if !strings.Contains(string(content), "never guess") {
 		t.Errorf("install did not re-materialize against the edited input:\n%s", content)
 	}
-	if _, _, code := runGskill(t, proj, "check"); code != 0 {
+	if _, _, code := runGskill(t, proj, "project", "check"); code != 0 {
 		t.Errorf("check still reports drift after a re-install (exit %d)", code)
 	}
 }

@@ -1,9 +1,10 @@
 Usage: gskill config list
 
-Print the effective configuration.
+Print the config file path and the effective configuration.
 
 Examples:
 
+    gskill config list
     gskill config list --json
 
 Flags:

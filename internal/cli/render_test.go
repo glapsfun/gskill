@@ -161,25 +161,17 @@ func TestRenderFindStyled_Table(t *testing.T) {
 	}
 }
 
-func TestRenderDiffStyled_Table(t *testing.T) {
-	t.Parallel()
-	got := renderDiffStyled([]app.DiffEntry{
-		{Name: "a", Status: "installed"},
-		{Name: "b", Status: "missing"},
-	})
-	for _, want := range []string{"NAME", "STATUS", "●", "✗"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("styled diff missing %q:\n%s", want, got)
-		}
-	}
-}
-
 func TestRenderConfigListStyled_Table(t *testing.T) {
 	t.Parallel()
-	got := renderConfigListStyled(map[string]string{"cache.dir": "/x", "agents": "claude"})
+	got := renderConfigListStyled("/etc/gskill/config.toml", map[string]string{"cache.dir": "/x", "agents": "claude"})
 	lines := strings.Split(got, "\n")
-	if len(lines) != 3 || !strings.Contains(lines[0], "KEY") || !strings.Contains(lines[1], "agents") {
-		t.Errorf("styled config list wrong shape (sorted keys, header):\n%s", got)
+	// Path header (folded in from the retired `config path`), then the table
+	// header, then the sorted keys.
+	if len(lines) != 4 ||
+		!strings.Contains(lines[0], "user config: /etc/gskill/config.toml") ||
+		!strings.Contains(lines[1], "KEY") ||
+		!strings.Contains(lines[2], "agents") {
+		t.Errorf("styled config list wrong shape (path header, table header, sorted keys):\n%s", got)
 	}
 }
 

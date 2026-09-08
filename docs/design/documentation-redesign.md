@@ -115,7 +115,7 @@ docs/
 | `docs/contributing/development.md` | New — TDD/harness content moved from old README | 1 |
 | `docs/design/documentation-redesign.md` | New — this file | 1 |
 | `docs/README.md` | `gskill.toml` line fixed only | 1 (full landing-page rewrite: Phase 4) |
-| `docs/how-to/remove-and-gc.md`, `reproduce-with-frozen-lockfile.md`, `gate-ci-on-drift.md`, `install-a-local-skill.md`, `inspect-list-info-diff.md`, `update-and-lock.md`, `index.md` | Targeted `gskill.toml`/`search`-listing fixes only | 1 |
+| `docs/how-to/remove-and-gc.md`, `reproduce-with-frozen-lockfile.md`, `gate-ci-on-drift.md`, `install-a-local-skill.md`, `inspect-list-info-check.md`, `update-and-lock.md`, `index.md` | Targeted `gskill.toml`/`search`-listing fixes only | 1 |
 | `docs/tutorials/getting-started.md` | `gskill.toml` narrative rewritten | 1 |
 | `docs/reference/*`, `docs/explanation/*` | Retained as-is (already accurate) | — |
 | `docs/user-guide/index.md`, `concepts.md`, `project-lifecycle.md`, `skill-sources.md`, `agent-targeting.md`, `lockfile-workflow.md`, `installation-modes.md`, `updates.md`, `integrity-and-verification.md`, `offline-and-cache.md`, `tui.md`, `automation-and-ci.md` | New | 2 |

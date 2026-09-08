@@ -361,7 +361,7 @@ func TestUpdate_NarrowedAgentsRemovesTarget(t *testing.T) {
 	if _, err := os.Stat(codexTarget); err == nil {
 		t.Error("update left the dropped agent's target behind as an untracked orphan")
 	}
-	if _, stderr, code := runGskill(t, proj, "verify"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "verify"); code != 0 {
 		t.Errorf("verify after update: %s", stderr)
 	}
 }

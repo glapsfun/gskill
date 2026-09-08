@@ -206,7 +206,7 @@ func (i *Installer) installFromCommitted(ctx context.Context, req Request) (Resu
 		return Result{}, true, errs.WithHint(
 			fmt.Errorf("%w: committed content for skill %q at %s no longer matches skills-lock.json",
 				errs.ErrInvalidLock, req.Name, active.Rel(req.Name)),
-			"run 'gskill repair' (or 'gskill install --force') to restore lock-true content, or re-add the skill to adopt the edited content as a new version")
+			"run 'gskill project repair' (or 'gskill install --force') to restore lock-true content, or re-add the skill to adopt the edited content as a new version")
 	}
 
 	skill, err := discovery.Discover(dest, "")

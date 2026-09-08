@@ -14,36 +14,22 @@ import (
 // cleaning it affects all projects, but it is purely a performance cache —
 // anything removed is re-fetched on demand.
 type cacheCmd struct {
-	Path  cachePathCmd  `cmd:"" help:"Print the cache directory."`
-	Stats cacheStatsCmd `cmd:"" help:"Show cache size and entry count."`
+	Stats cacheStatsCmd `cmd:"" help:"Show the cache directory, entry count, and size."`
 	List  cacheListCmd  `cmd:"" help:"List cached entries."`
 	Clean cacheCleanCmd `cmd:"" help:"Remove all cached material."`
-}
-
-type cachePathCmd struct{}
-
-// Help returns the detailed help shown by `gskill cache path --help`.
-func (cachePathCmd) Help() string {
-	return examplesHelp("gskill cache path")
-}
-
-// Run prints the cache directory.
-func (cachePathCmd) Run(out *Output, a *app.App) error {
-	dir, err := a.CacheDir()
-	if err != nil {
-		return err
-	}
-	return out.Result(dir, map[string]any{"path": dir})
 }
 
 type cacheStatsCmd struct{}
 
 // Help returns the detailed help shown by `gskill cache stats --help`.
 func (cacheStatsCmd) Help() string {
-	return examplesHelp("gskill cache stats --json")
+	return examplesHelp("gskill cache stats", "gskill cache stats --json")
 }
 
-// Run reports cache file count and total size.
+// Run reports the cache directory, its file count, and its total size. The
+// directory is part of the payload because spec 025 folded the former
+// `cache path` command in here: stats already resolves it, and a script that
+// needs only the location reads the "path" field.
 func (cacheStatsCmd) Run(out *Output, a *app.App) error {
 	dir, dirErr := a.CacheDir()
 	if dirErr != nil {
@@ -69,9 +55,8 @@ func (cacheStatsCmd) Run(out *Output, a *app.App) error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("scan cache: %w", err)
 	}
-	human := fmt.Sprintf("%d file(s), %d bytes", files, bytes)
-	human = out.summary(human)
-	return out.Result(human, map[string]any{"files": files, "bytes": bytes})
+	human := dir + "\n" + out.summary(fmt.Sprintf("%d file(s), %d bytes", files, bytes))
+	return out.Result(human, map[string]any{"path": dir, "files": files, "bytes": bytes})
 }
 
 type cacheListCmd struct{}

@@ -22,7 +22,7 @@ func (checkCmd) Help() string {
 	)
 }
 
-// Run executes `gskill project check` (alias: `gskill check`).
+// Run executes `gskill project check`.
 func (c checkCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	report, err := a.Check(ctx, string(root), c.FailOnDrift)
 	skills := make([]map[string]any, 0, len(report.Skills))

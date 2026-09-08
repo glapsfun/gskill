@@ -48,7 +48,7 @@ func TestMain(m *testing.M) {
 // these must be driven through the binary at least once per run.
 var requiredCommands = []string{
 	"add", "install", "install --frozen-lockfile", "update --list", "update",
-	"upgrade", "verify", "check", "sync", "remove",
+	"upgrade", "project verify", "project check", "project sync", "remove",
 }
 
 func uncoveredCommands() []string {

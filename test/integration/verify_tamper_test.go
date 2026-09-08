@@ -18,7 +18,7 @@ func TestVerify_SingleByteTamperIsExit6(t *testing.T) {
 	}
 
 	// Clean verify passes.
-	if _, stderr, code := runGskill(t, proj, "verify"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "verify"); code != 0 {
 		t.Fatalf("clean verify failed: %s", stderr)
 	}
 
@@ -29,7 +29,7 @@ func TestVerify_SingleByteTamperIsExit6(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, code := runGskill(t, proj, "verify")
+	_, _, code := runGskill(t, proj, "project", "verify")
 	if code != 6 {
 		t.Errorf("exit code = %d, want 6 (integrity failure)", code)
 	}

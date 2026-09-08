@@ -28,7 +28,7 @@ func TestCheckChain_HealthyThenDrift(t *testing.T) {
 	t.Parallel()
 	proj, _ := addShared(t)
 
-	if _, stderr, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "check", "--fail-on-drift"); code != 0 {
 		t.Fatalf("healthy check --fail-on-drift exit %d: %s", code, stderr)
 	}
 
@@ -36,7 +36,7 @@ func TestCheckChain_HealthyThenDrift(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(proj, ".codex", "skills", "demo")); err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, code := runGskill(t, proj, "--json", "check", "--fail-on-drift")
+	stdout, _, code := runGskill(t, proj, "--json", "project", "check", "--fail-on-drift")
 	if code != 7 {
 		t.Errorf("drift check exit = %d, want 7", code)
 	}
@@ -55,7 +55,7 @@ func TestCheckChain_BrokenActiveLinkDetected(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(proj, ".agents")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 7 {
+	if _, _, code := runGskill(t, proj, "project", "check", "--fail-on-drift"); code != 7 {
 		t.Errorf("broken active link not detected as drift (exit %d, want 7)", code)
 	}
 }
@@ -74,7 +74,7 @@ func TestCheckChain_CorruptStoreFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(storePath, "SKILL.md"), []byte("# tampered\n"), 0o600); err != nil {
 		t.Fatalf("tamper: %v", err)
 	}
-	if _, _, code := runGskill(t, proj, "verify"); code != 6 {
+	if _, _, code := runGskill(t, proj, "project", "verify"); code != 6 {
 		t.Errorf("verify on corrupt content exit = %d, want 6", code)
 	}
 }
@@ -89,11 +89,11 @@ func TestRepairChain_RecreatesTargetThroughActive(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(proj, ".codex", "skills", "demo")); err != nil {
 		t.Fatal(err)
 	}
-	if _, stderr, code := runGskill(t, proj, "repair"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "repair"); code != 0 {
 		t.Fatalf("repair: %s", stderr)
 	}
 	requireResolvesActive(t, proj, ".codex", "demo")
-	if _, stderr, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "check", "--fail-on-drift"); code != 0 {
 		t.Errorf("check after repair exit %d: %s", code, stderr)
 	}
 }
@@ -107,7 +107,7 @@ func TestRepairChain_RepointsBrokenActive(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(proj, ".agents")); err != nil {
 		t.Fatal(err)
 	}
-	if _, stderr, code := runGskill(t, proj, "repair"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "repair"); code != 0 {
 		t.Fatalf("repair: %s", stderr)
 	}
 	if n := countActiveEntries(t, proj); n != 1 {

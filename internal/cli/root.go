@@ -45,21 +45,6 @@ type rootCLI struct {
 	Search   searchCmd   `cmd:"" group:"inspect" aliases:"find" help:"Search for skills in a source, a GitHub owner, or configured repositories."`
 	Outdated outdatedCmd `cmd:"" group:"inspect" help:"Show skills with newer versions available."`
 
-	// Hidden aliases of the regrouped maintenance commands (see aliasTable).
-	// Each reuses the same command struct as its canonical form, so behavior
-	// is identical by construction; the group tag keeps them out of kong's
-	// ungrouped "Commands:" bucket, hidden keeps them out of every help
-	// listing, and declaring them here — before Project, all tagged
-	// group:"project" regardless of their canonical command's own group —
-	// keeps the section's spacing clean (kong emits an entry separator only
-	// after visible nodes, and a hidden node's own group tag still affects
-	// that spacing).
-	Sync   syncCmd   `cmd:"" hidden:"" group:"project" help:"Reconcile disk to the lock's declared state (--prune removes managed orphans)."`
-	Repair repairCmd `cmd:"" hidden:"" group:"project" help:"Re-materialize broken installs and clean up staging."`
-	Verify verifyCmd `cmd:"" hidden:"" group:"project" help:"Re-hash installed content against the lockfile."`
-	Check  checkCmd  `cmd:"" hidden:"" group:"project" help:"Report fast drift status."`
-	Diff   diffCmd   `cmd:"" hidden:"" group:"project" help:"Show lock/disk differences."`
-
 	Project projectCmd `cmd:"" group:"project" help:"Manage this project's lockfile and installed state."`
 
 	Cache      cacheCmd      `cmd:"" group:"more" help:"Manage the content cache."`
@@ -314,20 +299,7 @@ func suggestAlternative(err error, model *kong.Application) string {
 		return msg
 	}
 
-	candidates := make([]string, 0, len(model.Children)+len(aliasTable))
-	for _, node := range model.Children {
-		if node.Type == kong.CommandNode && !node.Hidden {
-			candidates = append(candidates, node.Name)
-		}
-	}
-	canonicalOf := make(map[string]string, len(aliasTable))
-	for _, a := range aliasTable {
-		if a.Kind != aliasKindCommand {
-			continue
-		}
-		candidates = append(candidates, a.Old)
-		canonicalOf[a.Old] = a.Canonical
-	}
+	candidates, canonicalOf := suggestionCandidates(model)
 	hits := selection.Closest(strings.Trim(m[1], `"`), candidates, 1)
 	if len(hits) == 0 {
 		return msg
@@ -337,4 +309,45 @@ func suggestAlternative(err error, model *kong.Application) string {
 		hit = canonical
 	}
 	return fmt.Sprintf("unexpected argument %s, did you mean %q?", m[1], hit)
+}
+
+// suggestionCandidates returns every name a typo may resolve to, together
+// with the canonical form each non-canonical name maps to. Three sources, in
+// precedence order: visible top-level commands, alias-table old names, and
+// each group's visible leaves.
+//
+// The leaves are included so the flat spellings retired by spec 025 are
+// answered with a pointer rather than with silence — a bare `check` reports
+// `did you mean "project check"?`. A leaf whose name collides with a
+// top-level command (`list`) is skipped, so the top-level meaning wins.
+func suggestionCandidates(model *kong.Application) (candidates []string, canonicalOf map[string]string) {
+	candidates = make([]string, 0, len(model.Children)+len(aliasTable))
+	canonicalOf = make(map[string]string, len(aliasTable))
+
+	topLevel := make(map[string]bool, len(model.Children))
+	for _, node := range model.Children {
+		if node.Type == kong.CommandNode && !node.Hidden {
+			candidates = append(candidates, node.Name)
+			topLevel[node.Name] = true
+		}
+	}
+	for _, a := range aliasTable {
+		if a.Kind == aliasKindCommand {
+			candidates = append(candidates, a.Old)
+			canonicalOf[a.Old] = a.Canonical
+		}
+	}
+	for _, node := range model.Children {
+		if node.Type != kong.CommandNode || node.Hidden {
+			continue
+		}
+		for _, sub := range node.Children {
+			if sub.Type != kong.CommandNode || sub.Hidden || topLevel[sub.Name] {
+				continue
+			}
+			candidates = append(candidates, sub.Name)
+			canonicalOf[sub.Name] = node.Name + " " + sub.Name
+		}
+	}
+	return candidates, canonicalOf
 }

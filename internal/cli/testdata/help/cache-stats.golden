@@ -1,9 +1,10 @@
 Usage: gskill cache stats
 
-Show cache size and entry count.
+Show the cache directory, entry count, and size.
 
 Examples:
 
+    gskill cache stats
     gskill cache stats --json
 
 Flags:

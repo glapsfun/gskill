@@ -63,10 +63,10 @@ func TestAdversarial_TamperedCommittedContentFailsClosed(t *testing.T) {
 		t.Fatalf("tamper: %v", err)
 	}
 
-	if _, _, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 7 {
+	if _, _, code := runGskill(t, proj, "project", "check", "--fail-on-drift"); code != 7 {
 		t.Errorf("check --fail-on-drift on tampered committed content exit = %d, want 7", code)
 	}
-	if _, _, code := runGskill(t, proj, "verify"); code != 6 {
+	if _, _, code := runGskill(t, proj, "project", "verify"); code != 6 {
 		t.Errorf("verify on tampered committed content exit = %d, want 6 (fail closed)", code)
 	}
 }
@@ -87,16 +87,16 @@ func TestAdversarial_CorruptCopyDetectedAndRepaired(t *testing.T) {
 		t.Fatalf("tamper copy: %v", err)
 	}
 
-	if _, _, code := runGskill(t, proj, "check"); code != 6 {
+	if _, _, code := runGskill(t, proj, "project", "check"); code != 6 {
 		t.Errorf("check on corrupt copy exit = %d, want 6", code)
 	}
-	if _, stderr, code := runGskill(t, proj, "repair"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "repair"); code != 0 {
 		t.Fatalf("repair: %s", stderr)
 	}
 	if got := string(readFile(t, target)); strings.Contains(got, "tampered") {
 		t.Errorf("repair did not restore the corrupt copy:\n%s", got)
 	}
-	if _, stderr, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "check", "--fail-on-drift"); code != 0 {
 		t.Errorf("check after repair exit %d: %s", code, stderr)
 	}
 }
@@ -126,7 +126,7 @@ func TestAdversarial_ForeignActiveEntryFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, code := runGskill(t, proj, "sync"); code != 3 {
+	if _, _, code := runGskill(t, proj, "project", "sync"); code != 3 {
 		t.Errorf("sync over foreign active entry exit = %d, want 3 (fail closed)", code)
 	}
 	if _, err := os.Stat(foreignFile); err != nil {

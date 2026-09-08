@@ -10,9 +10,8 @@ and fast re-installs possible.
 ## Subcommands
 
 ```bash
-gskill cache stats       # cache size and entry count
+gskill cache stats       # cache directory, entry count, and size
 gskill cache list        # list commit-keyed entries
-gskill cache path        # print the cache directory
 gskill cache clean       # remove all cached material
 ```
 
@@ -29,8 +28,8 @@ gskill cache clean       # remove all cached material
 ## Where the cache lives
 
 The cache lives in your home directory at `$HOME/.gskill/cache/<commit>/` (relocatable only via
-`GSKILL_HOME`), one entry per resolved commit. Use `gskill cache path` to see the exact location on
-your machine.
+`GSKILL_HOME`), one entry per resolved commit. Run `gskill cache stats` to see the exact location on
+your machine; `gskill cache stats --json` exposes it as the `path` field.
 
 ## See also
 

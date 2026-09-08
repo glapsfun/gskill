@@ -21,7 +21,7 @@ func (syncCmd) Help() string {
 	)
 }
 
-// Run executes `gskill project sync` (alias: `gskill sync`).
+// Run executes `gskill project sync`.
 func (c syncCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
 	if c.Prune && !out.Confirm("Prune managed skills and targets the lock no longer declares?", g.Yes) {
 		return errs.New(errs.CodeGeneric, "aborted")

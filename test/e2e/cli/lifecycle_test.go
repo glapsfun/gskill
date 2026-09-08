@@ -34,7 +34,7 @@ func TestLifecycle_AddCreatesManifestLockAndInstall(t *testing.T) {
 	}
 	assertContains(t, "installed content", installed(t, dir, agentClaude, "demo"), "# demo v1.0.0")
 
-	if res := run(t, dir, "verify"); res.Code != 0 {
+	if res := run(t, dir, "project", "verify"); res.Code != 0 {
 		t.Fatalf("verify: code=%d stderr=%s", res.Code, res.Stderr)
 	}
 
@@ -80,7 +80,7 @@ func TestLifecycle_CompatibleUpdate(t *testing.T) {
 		t.Fatalf("lock entry after update = %+v, want 1.1.0 within ^1.0.0", entry)
 	}
 	assertContains(t, "installed content", installed(t, dir, agentClaude, "demo"), "# demo v1.1.0")
-	if res := run(t, dir, "verify"); res.Code != 0 {
+	if res := run(t, dir, "project", "verify"); res.Code != 0 {
 		t.Fatalf("verify: %s", res.Stderr)
 	}
 }
@@ -162,7 +162,7 @@ func TestLifecycle_MajorUpgrade(t *testing.T) {
 		t.Fatalf("lock entry after upgrade = %+v", e)
 	}
 	assertContains(t, "installed content", installed(t, dir, agentClaude, "demo"), "# demo v2.0.0")
-	if res := run(t, dir, "verify"); res.Code != 0 {
+	if res := run(t, dir, "project", "verify"); res.Code != 0 {
 		t.Fatalf("verify: %s", res.Stderr)
 	}
 }
@@ -199,7 +199,7 @@ func TestLifecycle_UpgradeRollbackOnFailure(t *testing.T) {
 	}
 	// --fail-on-drift is what makes this load-bearing: a plain check exits 0
 	// even with upgraded content sitting under a reverted lock.
-	if res := run(t, dir, "check", "--fail-on-drift"); res.Code != 0 {
+	if res := run(t, dir, "project", "check", "--fail-on-drift"); res.Code != 0 {
 		t.Fatalf("check --fail-on-drift after rollback: %s", res.Stderr)
 	}
 }
@@ -235,7 +235,7 @@ func TestLifecycle_ManualEditThenInstall(t *testing.T) {
 		t.Fatalf("lock entry = %+v, want 1.3.0", e)
 	}
 	assertContains(t, "installed content", installed(t, dir, agentClaude, "demo"), "# demo v1.3.0")
-	if res := run(t, dir, "verify"); res.Code != 0 {
+	if res := run(t, dir, "project", "verify"); res.Code != 0 {
 		t.Fatalf("verify: %s", res.Stderr)
 	}
 }
@@ -337,7 +337,7 @@ func TestLifecycle_CheckSyncRemove(t *testing.T) {
 	if res := run(t, dir, "add", repo, "--skill", "demo", "--agent", agentClaude); res.Code != 0 {
 		t.Fatalf("add: %s", res.Stderr)
 	}
-	if res := run(t, dir, "check", "--fail-on-drift"); res.Code != 0 {
+	if res := run(t, dir, "project", "check", "--fail-on-drift"); res.Code != 0 {
 		t.Fatalf("check on a clean project: code %d %s", res.Code, res.Stderr)
 	}
 	assertSyncRepairsMissingLink(t, dir)
@@ -363,14 +363,14 @@ func assertSyncRepairsMissingLink(t *testing.T, dir string) {
 	if err := os.RemoveAll(link); err != nil {
 		t.Fatal(err)
 	}
-	if res := run(t, dir, "check", "--fail-on-drift"); res.Code != 7 {
+	if res := run(t, dir, "project", "check", "--fail-on-drift"); res.Code != 7 {
 		t.Fatalf("check with a missing link: code %d, want 7\n%s%s", res.Code, res.Stdout, res.Stderr)
 	}
-	if res := run(t, dir, "sync"); res.Code != 0 {
+	if res := run(t, dir, "project", "sync"); res.Code != 0 {
 		t.Fatalf("sync: code %d %s", res.Code, res.Stderr)
 	}
 	assertContains(t, "content after sync", installed(t, dir, agentClaude, "demo"), "# demo v1.0.0")
-	if res := run(t, dir, "verify"); res.Code != 0 {
+	if res := run(t, dir, "project", "verify"); res.Code != 0 {
 		t.Fatalf("verify after sync: %s", res.Stderr)
 	}
 }
@@ -381,19 +381,19 @@ func assertTamperFailsClosedUntilRepair(t *testing.T, dir string) {
 	if err := os.WriteFile(committed, []byte("tampered\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if res := run(t, dir, "check", "--fail-on-drift"); res.Code != 7 {
+	if res := run(t, dir, "project", "check", "--fail-on-drift"); res.Code != 7 {
 		t.Fatalf("check after tamper: code %d, want 7", res.Code)
 	}
-	if res := run(t, dir, "verify"); res.Code != 6 {
+	if res := run(t, dir, "project", "verify"); res.Code != 6 {
 		t.Fatalf("verify after tamper: code %d, want 6", res.Code)
 	}
-	if res := run(t, dir, "sync"); res.Code == 0 {
+	if res := run(t, dir, "project", "sync"); res.Code == 0 {
 		t.Fatal("sync must fail closed on tampered committed content")
 	}
-	if res := run(t, dir, "repair"); res.Code != 0 {
+	if res := run(t, dir, "project", "repair"); res.Code != 0 {
 		t.Fatalf("repair: code %d %s", res.Code, res.Stderr)
 	}
-	if res := run(t, dir, "verify"); res.Code != 0 {
+	if res := run(t, dir, "project", "verify"); res.Code != 0 {
 		t.Fatalf("verify after repair: %s", res.Stderr)
 	}
 }
@@ -499,7 +499,7 @@ func TestLifecycle_UpgradeRollbackAfterActivation(t *testing.T) {
 	if got := installed(t, dir, agentClaude, "alpha"); got != alphaBefore {
 		t.Errorf("alpha's installed content was not restored:\n%s", got)
 	}
-	if res := run(t, dir, "check"); res.Code != 0 {
+	if res := run(t, dir, "project", "check"); res.Code != 0 {
 		t.Fatalf("check after rollback: %s", res.Stderr)
 	}
 }
