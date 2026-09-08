@@ -71,15 +71,6 @@ func (s Skill) Pin() string {
 	return s.Ref
 }
 
-// SkillName is the name to look for inside the source, which defaults to the
-// installed name.
-func (s Skill) SkillName() string {
-	if s.Skill != "" {
-		return s.Skill
-	}
-	return s.Name
-}
-
 // Override is one `[skills.<name>.override]` declaration (data-model.md §2).
 // Pinning is deliberately absent: it selects the input at resolve time rather
 // than transforming bytes (FR-004).

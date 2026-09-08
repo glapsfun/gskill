@@ -269,7 +269,7 @@ func TestUpdateRun_NothingActionableSkipsSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !strings.Contains(out.String(), "up to date") {
-		t.Errorf("stdout missing up-to-date terminal state:\n%s", out.String())
+	if !strings.Contains(out.String(), "1 local") {
+		t.Errorf("stdout missing the local-source terminal state:\n%s", out.String())
 	}
 }

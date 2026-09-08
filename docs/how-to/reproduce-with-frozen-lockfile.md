@@ -28,6 +28,10 @@ gskill install --frozen-lockfile
 - If an entry lacks its gskill metadata (or a resolved artifact no longer matches its recorded
   checksum), the command **fails closed**: it exits **`4`** (lockfile mismatch) and modifies **zero**
   agent directories.
+- A declaration edited in `skills.toml` since the lock was written fails the same way, before any
+  resolution: the pre-flight compares `version`/`ref`/`commit`, `source`, `skill`, `mode`, `agents`,
+  and the override against the lock entry. Narrowing `agents` counts — outside frozen mode that
+  removes the dropped agent's target, which a frozen restore must never do.
 
 ### Verifying the fail-closed behaviour
 

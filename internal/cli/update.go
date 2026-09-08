@@ -161,7 +161,7 @@ func discoveryFailureErr(plan app.UpdatePlan) error {
 func uncheckedNames(plan app.UpdatePlan) []string {
 	var names []string
 	for _, it := range plan.Items {
-		if it.Status == app.StatusUnknown && it.DiscoveryErr != "" {
+		if it.Status == app.StatusLookupFailed && it.DiscoveryErr != "" {
 			names = append(names, it.Name)
 		}
 	}
@@ -208,16 +208,31 @@ func UpdateListJSON(plan app.UpdatePlan, all bool) map[string]any {
 			"status":        string(it.Status),
 			"reason":        it.Reason,
 			"informational": it.Informational,
+			"shape":         string(it.Shape),
+			"pinned":        it.Pinned,
+			"next_action":   it.NextAction,
 		})
 	}
 	return map[string]any{
 		"skills":            skills,
 		"updates_available": len(plan.Actionable()),
+		"pinned":            countPinned(plan),
 		// not_checked distinguishes "verified current" from "could not be
 		// determined" for machine consumers — without it, a total discovery
 		// outage is byte-identical to a healthy project.
 		"not_checked": countUnknown(plan),
 	}
+}
+
+// countPinned counts the items only a change of declared intent can move.
+func countPinned(plan app.UpdatePlan) int {
+	n := 0
+	for _, it := range plan.Items {
+		if it.Pinned {
+			n++
+		}
+	}
+	return n
 }
 
 // UpdateResultJSON builds the --json object for an update execution. The
@@ -235,43 +250,55 @@ func UpdateResultJSON(res app.UpdateResult) map[string]any {
 			"status":       string(s.Status),
 			"outcome":      string(s.Outcome),
 			"reason":       s.Reason,
+			"pinned":       s.Status.Pinned(),
+			"next_action":  s.NextAction,
 		})
 	}
 	return map[string]any{
-		"changed":   res.Changed,
-		"skills":    skills,
-		"updated":   res.Updated,
-		"failed":    res.Failed,
-		"no_change": res.NoChange,
-		"dry_run":   res.DryRun,
+		"changed":    res.Changed,
+		"skills":     skills,
+		"updated":    res.Updated,
+		"failed":     res.Failed,
+		"no_change":  res.NoChange,
+		"pinned":     res.Pinned,
+		"up_to_date": res.UpToDate,
+		"local":      res.Local,
+		"dry_run":    res.DryRun,
 	}
 }
 
-// updateSummary composes the one-line human run summary. It never asserts
-// freshness that was not verified — a run without applied updates says what
-// happened ("no changes"), not what state the project is in.
+// updateSummary composes the one-line human run summary (spec 024 FR-009).
+// It counts every outcome — updated, pinned, up to date, local, failed — so a
+// run that moved nothing says why, and never reads as an error.
 func updateSummary(res app.UpdateResult) string {
 	if len(res.Skills) == 0 {
-		return "No skills installed."
-	}
-	if res.Updated == 0 && res.Failed == 0 {
-		return "No changes made; " + pluralSkills(res.NoChange) + " unchanged"
+		return noSkillsDeclared
 	}
 	var parts []string
-	if res.Updated > 0 {
-		verb := "Updated"
-		if res.DryRun {
-			verb = "Would update"
-		}
-		parts = append(parts, verb+" "+pluralSkills(res.Updated))
+	switch {
+	case res.Updated > 0 && res.DryRun:
+		parts = append(parts, "Would update "+pluralSkills(res.Updated))
+	case res.Updated > 0:
+		parts = append(parts, "Updated "+pluralSkills(res.Updated))
+	case res.Failed == 0:
+		parts = append(parts, "No changes made")
+	}
+	if res.Pinned > 0 {
+		parts = append(parts, strconv.Itoa(res.Pinned)+" pinned")
+	}
+	if res.UpToDate > 0 {
+		parts = append(parts, strconv.Itoa(res.UpToDate)+" up to date")
+	}
+	if res.Local > 0 {
+		parts = append(parts, strconv.Itoa(res.Local)+" local")
+	}
+	if other := res.NoChange - res.Pinned - res.UpToDate - res.Local; other > 0 {
+		parts = append(parts, strconv.Itoa(other)+" not checked")
 	}
 	if res.Failed > 0 {
 		parts = append(parts, pluralSkills(res.Failed)+" failed")
 	}
-	if res.NoChange > 0 {
-		parts = append(parts, pluralSkills(res.NoChange)+" unchanged")
-	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, " · ")
 }
 
 // pluralSkills renders "1 skill" / "N skills".

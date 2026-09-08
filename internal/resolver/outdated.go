@@ -23,6 +23,8 @@ const (
 	StatusPinnedCommit       OutdatedStatus = "pinned-commit"
 	StatusLocalSource        OutdatedStatus = "local-source"
 	StatusNoCompatibleUpdate OutdatedStatus = "no-compatible-update"
+	StatusPinnedVersion      OutdatedStatus = "pinned-version"
+	StatusLookupFailed       OutdatedStatus = "lookup-failed"
 )
 
 // OutdatedResult reports a skill's update eligibility. Status is the single
@@ -35,54 +37,122 @@ type OutdatedResult struct {
 	Latest        string
 	Status        OutdatedStatus
 	Informational string
+	// LookupErr records a failed remote lookup. With StatusLookupFailed the
+	// skill's eligibility is unknown; with a pinned status only the
+	// informational newest-release hint is missing.
+	LookupErr error
 }
 
 // Available reports whether a normal update can act on this result.
 func (r OutdatedResult) Available() bool { return r.Status == StatusUpdateAvailable }
 
 // Outdated reports update eligibility for a skill given its current locked
-// revision and the requested constraint (spec 018 FR-004/FR-005). Semver
-// constraints compare against the highest satisfying tag; branch tracking
-// compares the branch head; exact tag and commit pins and local sources are
-// stable, never-actionable states.
+// revision and the declared intent (spec 018 FR-004/FR-005, spec 024 FR-006).
+// The declaration's shape drives the classification: floating ranges compare
+// against the highest satisfying tag, branch tracking compares the branch
+// head, and exact versions, tags, commits, and local sources are pinned or
+// local states a normal update never moves. A failed remote lookup is a
+// result, not an error, so one dead remote cannot fail a whole plan.
 func Outdated(ctx context.Context, runner git.Runner, ref source.Ref, req Requested, current Revision) (OutdatedResult, error) {
+	decl := Declaration{Version: req.Version, Ref: req.Ref, Commit: req.Commit, Local: current.RefKind == RefKindLocal}
+	shape, err := ClassifyDeclaration(decl, current.RefKind)
+	if err != nil {
+		return OutdatedResult{Current: current.Version, Latest: current.Version, Status: StatusLookupFailed, LookupErr: err}, nil //nolint:nilerr // a lookup failure is a result, not an error
+	}
+	if shape == ShapeUnpinned {
+		shape = shapeFromRevision(current)
+	}
+	return OutdatedShaped(ctx, runner, ref, shape, req, current)
+}
+
+// shapeFromRevision infers a shape from a locked revision when no intent was
+// declared, so a lock written before intent was recorded still classifies by
+// what it resolved to.
+func shapeFromRevision(current Revision) DeclarationShape {
 	switch current.RefKind {
 	case RefKindCommit:
-		return OutdatedResult{Current: current.Commit, Latest: current.Commit, Status: StatusPinnedCommit}, nil
-	case RefKindLocal:
-		return OutdatedResult{Current: "local", Latest: "local", Status: StatusLocalSource}, nil
-	case RefKindBranch:
-		return outdatedBranch(ctx, runner, ref, current)
+		return ShapeCommit
 	case RefKindTag:
-		return outdatedTag(ctx, runner, ref, current)
+		return ShapeTag
+	case RefKindBranch:
+		return ShapeBranch
+	case RefKindLocal:
+		return ShapeLocal
 	case RefKindSemver:
-		return outdatedSemver(ctx, runner, ref, req, current)
+		return ShapeUnpinned
 	default:
-		return OutdatedResult{}, fmt.Errorf("unknown ref kind %q", current.RefKind)
+		return ShapeUnpinned
 	}
+}
+
+// OutdatedShaped is Outdated with the declaration shape already known.
+func OutdatedShaped(ctx context.Context, runner git.Runner, ref source.Ref, shape DeclarationShape, req Requested, current Revision) (OutdatedResult, error) {
+	switch shape {
+	case ShapeCommit:
+		return OutdatedResult{Current: current.Commit, Latest: current.Commit, Status: StatusPinnedCommit}, nil
+	case ShapeLocal:
+		return OutdatedResult{Current: "local", Latest: "local", Status: StatusLocalSource}, nil
+	case ShapeBranch:
+		return outdatedBranch(ctx, runner, ref, req, current)
+	case ShapeTag:
+		return outdatedTag(ctx, runner, ref, current)
+	case ShapeExactVersion:
+		return outdatedExactVersion(ctx, runner, ref, req, current)
+	case ShapeRangeCaret, ShapeRangeTilde, ShapeRangeOther:
+		return outdatedSemver(ctx, runner, ref, req, current)
+	case ShapeUnpinned:
+		return outdatedSemver(ctx, runner, ref, Requested{}, current)
+	default:
+		return OutdatedResult{}, fmt.Errorf("unknown declaration shape %q", shape)
+	}
+}
+
+// outdatedExactVersion reports an exact version pin as stable and never
+// actionable; the newest stable release is fetched only to power the
+// "move it with upgrade" hint.
+func outdatedExactVersion(ctx context.Context, runner git.Runner, ref source.Ref, req Requested, current Revision) (OutdatedResult, error) {
+	res := OutdatedResult{Current: current.Version, Latest: current.Version, Status: StatusPinnedVersion}
+	tags, err := runner.LsRemoteTags(ctx, ref.URL)
+	if err != nil {
+		res.LookupErr = err
+		return res, nil //nolint:nilerr // a lookup failure is a result, not an error
+	}
+	if best, _, ok := highestStable(tags, admitsPrerelease(req.Version)); ok {
+		if cur, curErr := semver.NewVersion(current.Version); curErr == nil && best.GreaterThan(cur) {
+			res.Informational = best.String()
+		}
+	}
+	return res, nil
 }
 
 // outdatedSemver compares the locked version against the highest tag
 // satisfying the constraint, distinguishing "up to date" from "newer exists
 // but the constraint forbids it".
 func outdatedSemver(ctx context.Context, runner git.Runner, ref source.Ref, req Requested, current Revision) (OutdatedResult, error) {
+	upToDate := OutdatedResult{Current: current.Version, Latest: current.Version, Status: StatusUpToDate}
 	tags, err := runner.LsRemoteTags(ctx, ref.URL)
 	if err != nil {
-		return OutdatedResult{}, err
+		upToDate.Status, upToDate.LookupErr = StatusLookupFailed, err
+		return upToDate, nil //nolint:nilerr // a lookup failure is a result, not an error
 	}
 
 	var constraint *semver.Constraints
 	if req.Version != "" {
 		constraint, err = semver.NewConstraint(req.Version)
 		if err != nil {
-			return OutdatedResult{}, fmt.Errorf("parse constraint %q: %w", req.Version, err)
+			upToDate.Status = StatusLookupFailed
+			upToDate.LookupErr = fmt.Errorf("parse constraint %q: %w", req.Version, err)
+			return upToDate, nil
 		}
 	}
 
-	upToDate := OutdatedResult{Current: current.Version, Latest: current.Version, Status: StatusUpToDate}
-	bestAll, _, anyTag := highestTag(tags, nil)
+	allowPre := admitsPrerelease(req.Version)
+	bestAll, _, anyTag := highestStable(tags, allowPre)
 
 	bestSat, _, ok := highestTag(tags, constraint)
+	if constraint == nil && !allowPre {
+		bestSat, _, ok = highestStable(tags, false)
+	}
 	if ok {
 		if res := compareVersions(current.Version, bestSat); res.Available() {
 			return res, nil
@@ -102,16 +172,17 @@ func outdatedSemver(ctx context.Context, runner git.Runner, ref source.Ref, req 
 
 // outdatedTag reports an exact tag pin as stable and never actionable: a
 // normal update preserves the pin, so a newer repository tag is informational
-// only. A newest-tag lookup failure propagates — the caller decides whether a
-// pin stays classifiable without it (the app plan layer does); swallowing it
-// here would fabricate healthy results for dead remotes and eat cancellation.
+// only. A newest-tag lookup failure is recorded on the result — the pin's
+// eligibility never depended on it — so a dead remote costs the hint, not the
+// classification.
 func outdatedTag(ctx context.Context, runner git.Runner, ref source.Ref, current Revision) (OutdatedResult, error) {
 	res := OutdatedResult{Current: current.Tag, Latest: current.Tag, Status: StatusPinnedTag}
 	tags, err := runner.LsRemoteTags(ctx, ref.URL)
 	if err != nil {
-		return OutdatedResult{}, err
+		res.LookupErr = err
+		return res, nil //nolint:nilerr // a lookup failure is a result, not an error
 	}
-	if best, _, ok := highestTag(tags, nil); ok {
+	if best, _, ok := highestStable(tags, false); ok {
 		if cur, curErr := semver.NewVersion(current.Tag); curErr == nil && best.GreaterThan(cur) {
 			res.Informational = best.String()
 		}
@@ -119,15 +190,25 @@ func outdatedTag(ctx context.Context, runner git.Runner, ref source.Ref, current
 	return res, nil
 }
 
-// outdatedBranch compares the locked commit against the current branch head.
-func outdatedBranch(ctx context.Context, runner git.Runner, ref source.Ref, current Revision) (OutdatedResult, error) {
-	branch := current.Branch
+// outdatedBranch compares the locked commit against the head of the branch the
+// declaration names. The declared ref wins over the locked one: the manifest is
+// authoritative for intent, and the install will use it, so discovering against
+// the lock's branch would describe a branch the run is not going to touch.
+func outdatedBranch(ctx context.Context, runner git.Runner, ref source.Ref, req Requested, current Revision) (OutdatedResult, error) {
+	branch := req.Ref
+	if branch == "" {
+		branch = current.Branch
+	}
 	if branch == "" {
 		branch = "HEAD"
 	}
 	head, err := runner.ResolveRef(ctx, ref.URL, branch)
 	if err != nil {
-		return OutdatedResult{}, err
+		failed := OutdatedResult{
+			Current: shortSHA(current.Commit), Latest: shortSHA(current.Commit),
+			Status: StatusLookupFailed, LookupErr: err,
+		}
+		return failed, nil //nolint:nilerr // a lookup failure is a result, not an error
 	}
 	res := OutdatedResult{
 		Current: shortSHA(current.Commit),
@@ -161,4 +242,21 @@ func shortSHA(sha string) string {
 		return sha[:n]
 	}
 	return sha
+}
+
+// highestStable returns the highest semver tag, skipping pre-releases unless
+// the declaration itself admits them: a stable constraint must never be told
+// that a beta is "newer".
+func highestStable(tags []git.TagRef, allowPrerelease bool) (*semver.Version, git.TagRef, bool) {
+	if allowPrerelease {
+		return highestTag(tags, nil)
+	}
+	stable := make([]git.TagRef, 0, len(tags))
+	for _, tag := range tags {
+		if v, err := semver.NewVersion(tag.Name); err == nil && v.Prerelease() != "" {
+			continue
+		}
+		stable = append(stable, tag)
+	}
+	return highestTag(stable, nil)
 }

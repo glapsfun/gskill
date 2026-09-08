@@ -4,10 +4,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/overrides"
+	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -59,6 +61,62 @@ func manifestSkillFrom(name string, r skillslock.Record) manifest.Skill {
 	// for one explicitly (see syncManifestSkills).
 	sort.Strings(s.Agents)
 	return s
+}
+
+// declarationFor returns the skill's tracking intent as the user declared it:
+// the manifest entry when one exists, otherwise the projection a manifest
+// would be generated from — the same one ensureManifest writes — so a project
+// classifies identically before and after gaining its manifest (spec 024
+// FR-019). The bool reports whether a manifest declaration was found.
+func (a *App) declarationFor(root, name string, rec skillslock.Record) (manifest.Skill, bool) {
+	if m, err := a.loadManifest(root); err == nil && m != nil {
+		if decl, ok := m.Skills[name]; ok {
+			return decl, true
+		}
+	}
+	return manifestSkillFrom(name, rec), false
+}
+
+// resolverDeclaration maps a manifest declaration onto the resolver's view of
+// intent.
+func resolverDeclaration(decl manifest.Skill, rec skillslock.Record) resolver.Declaration {
+	return resolver.Declaration{
+		Version: decl.Version,
+		Ref:     decl.Ref,
+		Commit:  decl.Commit,
+		Local:   rec.Resolved.RefKind == string(resolver.RefKindLocal),
+	}
+}
+
+// intentFromDeclaration builds one skill's install intent from its manifest
+// declaration, falling back to the lock record only for facts a declaration
+// never carries (scope) or may omit (skill path, mode, agents). It is the
+// counterpart of intentFromRecord for projects that have a manifest, and the
+// only way `update` and `upgrade` derive what to resolve (spec 024 FR-004).
+func intentFromDeclaration(decl manifest.Skill, rec skillslock.Record) skillIntent {
+	in := skillIntent{
+		Source:  decl.Source,
+		Path:    decl.Skill,
+		Version: decl.Version,
+		Ref:     decl.Ref,
+		Commit:  decl.Commit,
+		Mode:    decl.Mode,
+		Scope:   rec.Installation.Scope,
+		Agents:  append([]string(nil), decl.Agents...),
+	}
+	if in.Source == "" {
+		in.Source = rec.Source.Original
+	}
+	if in.Path == "" {
+		in.Path = rec.Source.Path
+	}
+	if in.Mode == "" {
+		in.Mode = rec.Installation.Mode
+	}
+	if len(in.Agents) == 0 {
+		in.Agents = append([]string(nil), rec.Installation.Agents...)
+	}
+	return in
 }
 
 // syncManifestSkills writes the declarations for names into the project's
@@ -205,20 +263,40 @@ func (a *App) syncManifestAfterAdd(p *project, lf *skillslock.State, res AddResu
 	return a.syncManifestSkills(p, lf, added, explicitMode)
 }
 
+// manifestCacheEntry memoizes a parsed manifest together with the file
+// identity it was read from, so a hand edit between two commands on one
+// long-lived App (the integration harness, the dashboard) is never served
+// stale.
+type manifestCacheEntry struct {
+	m       *manifest.Manifest
+	modTime time.Time
+	size    int64
+	exists  bool
+}
+
+func manifestStat(root string) (time.Time, int64, bool) {
+	fi, err := os.Stat(manifestPath(root))
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+	return fi.ModTime(), fi.Size(), true
+}
+
 // loadManifest reads, validates, and memoizes the project manifest for the
 // current run, surfacing its advisories exactly once.
 //
 // Memoizing matters: overrideFor is consulted per skill and more than once per
 // skill, so an unmemoized read re-parses the whole manifest and re-hashes every
-// override input O(N^2) times for an N-skill project. The cache is per run and
-// per root, and any write invalidates it, so a user's edit between runs is
-// always seen.
+// override input O(N^2) times for an N-skill project. The cache is per root
+// and validated against the file's identity on every read, so a write by
+// gskill or an edit by the user is always seen.
 func (a *App) loadManifest(root string) (*manifest.Manifest, error) {
 	a.manifestMu.Lock()
 	defer a.manifestMu.Unlock()
 
-	if cached, ok := a.manifests[root]; ok {
-		return cached, nil
+	modTime, size, exists := manifestStat(root)
+	if cached, ok := a.manifests[root]; ok && cached.exists == exists && cached.size == size && cached.modTime.Equal(modTime) {
+		return cached.m, nil
 	}
 	m, err := manifest.Load(manifestPath(root))
 	if err != nil {
@@ -230,9 +308,9 @@ func (a *App) loadManifest(root string) (*manifest.Manifest, error) {
 		}
 	}
 	if a.manifests == nil {
-		a.manifests = map[string]*manifest.Manifest{}
+		a.manifests = map[string]manifestCacheEntry{}
 	}
-	a.manifests[root] = m
+	a.manifests[root] = manifestCacheEntry{m: m, modTime: modTime, size: size, exists: exists}
 	return m, nil
 }
 

@@ -189,7 +189,7 @@ func TestPlanUpdate_DiscoveryErrorIsolatedPerSkill(t *testing.T) {
 		t.Fatalf("PlanUpdate must not fail the whole run on one skill: %v", err)
 	}
 	k8s := itemByName(t, plan, "kubernetes")
-	if k8s.Status != StatusUnknown || k8s.Reason == "" || k8s.DiscoveryErr == "" {
+	if k8s.Status != StatusLookupFailed || k8s.Reason == "" || k8s.DiscoveryErr == "" {
 		t.Errorf("kubernetes = %+v, want unknown status carrying the error", k8s)
 	}
 	// An exact tag pin stays classified as a pin even when the informational
@@ -262,7 +262,7 @@ func TestPlanUpdate_OfflineSkipsRemoteLookups(t *testing.T) {
 	if it := itemByName(t, plan, "local-tools"); it.Status != StatusLocalSource {
 		t.Errorf("local-tools offline = %+v, want local-source", it)
 	}
-	if it := itemByName(t, plan, "kubernetes"); it.Status != StatusUnknown || it.Reason == "" {
+	if it := itemByName(t, plan, "kubernetes"); it.Status != StatusLookupFailed || it.Reason == "" {
 		t.Errorf("kubernetes offline = %+v, want unknown with reason", it)
 	}
 	if plan.AnyAvailable() {

@@ -1,0 +1,41 @@
+Usage: gskill upgrade [<skill> ...] [flags]
+
+Move a skill's declared version in skills.toml, then resolve, lock, install,
+and verify it.
+
+upgrade changes what skills.toml declares, then resolves, locks, installs, and
+verifies the result. update never edits skills.toml; upgrade is how a declared
+version moves.
+
+Examples:
+
+    gskill upgrade my-skill
+    gskill upgrade my-skill --latest
+    gskill upgrade my-skill 2.1.0
+    gskill upgrade my-skill --to 2.1.0
+    gskill --no-interactive upgrade --all
+    gskill --dry-run upgrade my-skill
+
+Arguments:
+  [<skill> ...]    Skills to upgrade. With exactly one skill, a second argument
+                   is the target version (same as --to).
+
+Flags:
+  -h, --help              Show context-sensitive help.
+      --json              Emit machine-readable JSON on stdout.
+      --quiet             Suppress diagnostics on stderr.
+      --no-interactive    Disable prompts and colored output.
+      --yes               Assume yes for confirmation prompts.
+      --offline           Operate without network access.
+      --no-cache          Bypass the content cache.
+      --dry-run           Report actions without applying them.
+      --config=STRING     Path to a config file.
+  -v, --verbose           Enable verbose diagnostics.
+  -C, --dir=STRING        Run as if gskill started in this directory.
+
+      --to=STRING         Exact target version or tag; must exist as a release
+                          of the skill's source.
+      --latest            Move to the newest stable release beyond the current
+                          declaration (the default).
+      --all               Without skill names and outside a terminal: upgrade
+                          every upgradable skill.

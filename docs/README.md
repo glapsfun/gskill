@@ -55,6 +55,7 @@ Authoritative, exhaustive lookup.
 Understanding-oriented discussion.
 
 - [The reproducibility model](explanation/reproducibility-model.md)
+- [The package lifecycle](explanation/lifecycle.md)
 - [Integrity and trust](explanation/integrity-and-trust.md)
 - [Repo-owned storage](explanation/repo-owned-storage.md)
 - [Project state vs global state](explanation/project-and-global-state.md)

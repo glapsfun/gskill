@@ -302,3 +302,111 @@ func writeLines(path string, lines []string) error {
 	}
 	return nil
 }
+
+// SetKey rewrites exactly one key of one declaration in place (spec 024
+// data-model.md §5): the value token is replaced and everything else on the
+// line — indentation, spacing around "=", a trailing comment — survives, as
+// does every other line of the file. A key the block lacks is inserted right
+// after its source line. Upsert re-renders a whole block; upgrade must not,
+// because a comment inside the block is the user's and a rewrite that ate it
+// would be a regression dressed as a feature.
+func SetKey(path, skill, key, value string) error {
+	lines, err := readLines(path)
+	if err != nil {
+		return err
+	}
+	start, end := skillBlockBounds(lines, skill)
+	if start < 0 {
+		return errs.New(errs.CodeUsage, FileName+" declares no skill "+skill)
+	}
+	quoted := quote(value)
+	for i := start + 1; i < end; i++ {
+		indent, k, spacing, rest, ok := splitKeyLine(lines[i])
+		if !ok || k != key {
+			continue
+		}
+		_, tail := splitValueToken(rest)
+		lines[i] = indent + key + spacing + quoted + tail
+		return writeLines(path, lines)
+	}
+	at := start + 1
+	for i := start + 1; i < end; i++ {
+		if _, k, _, _, ok := splitKeyLine(lines[i]); ok && k == "source" {
+			at = i + 1
+			break
+		}
+	}
+	inserted := make([]string, 0, len(lines)+1)
+	inserted = append(inserted, lines[:at]...)
+	inserted = append(inserted, key+" = "+quoted)
+	inserted = append(inserted, lines[at:]...)
+	return writeLines(path, inserted)
+}
+
+// skillBlockBounds returns the header index of `[skills.<name>]` and the index
+// of the next table header (or len(lines)), or -1 when the block is absent.
+func skillBlockBounds(lines []string, name string) (int, int) {
+	header := "[skills." + name + "]"
+	start := -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if start < 0 {
+			if trimmed == header {
+				start = i
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") {
+			return start, i
+		}
+	}
+	if start < 0 {
+		return -1, -1
+	}
+	return start, len(lines)
+}
+
+// splitKeyLine splits `  key   = rest` into its parts, reporting false for
+// blank, comment, and header lines.
+func splitKeyLine(line string) (indent, key, spacing, rest string, ok bool) {
+	trimmed := strings.TrimLeft(line, " \t")
+	indent = line[:len(line)-len(trimmed)]
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "[") {
+		return "", "", "", "", false
+	}
+	eq := strings.Index(trimmed, "=")
+	if eq < 0 {
+		return "", "", "", "", false
+	}
+	key = strings.TrimRight(trimmed[:eq], " \t")
+	spacing = trimmed[len(key):eq+1] + leadingSpace(trimmed[eq+1:])
+	rest = strings.TrimLeft(trimmed[eq+1:], " \t")
+	return indent, key, spacing, rest, true
+}
+
+func leadingSpace(s string) string {
+	return s[:len(s)-len(strings.TrimLeft(s, " \t"))]
+}
+
+// splitValueToken separates a TOML value from whatever follows it on the line
+// (whitespace and an inline comment). Quoted strings honour escapes; any other
+// value runs to the first "#" or end of line.
+func splitValueToken(rest string) (value, tail string) {
+	if strings.HasPrefix(rest, `"`) {
+		for i := 1; i < len(rest); i++ {
+			switch rest[i] {
+			case '\\':
+				i++
+			case '"':
+				return rest[:i+1], rest[i+1:]
+			}
+		}
+		return rest, ""
+	}
+	if hash := strings.Index(rest, "#"); hash >= 0 {
+		v := strings.TrimRight(rest[:hash], " \t")
+		return v, rest[len(v):]
+	}
+	v := strings.TrimRight(rest, " \t")
+	return v, rest[len(v):]
+}

@@ -221,25 +221,28 @@ func renderDoctorStyled(report app.DoctorReport) string {
 	return b.String()
 }
 
+// noSkillsDeclared is the terminal state of a project that declares nothing.
+const noSkillsDeclared = "No skills declared."
+
 // updateStatusText maps a plan status to its human table cell.
 func updateStatusText(s app.UpdateStatus) string {
 	switch s {
 	case app.StatusUpdateAvailable:
 		return "update available"
-	case app.StatusUpToDate:
+	case app.StatusUpToDate, app.StatusNoCompatibleUpdate:
 		return "up to date"
+	case app.StatusPinnedVersion:
+		return "pinned version"
 	case app.StatusPinnedTag:
 		return "pinned tag"
 	case app.StatusPinnedCommit:
 		return "pinned commit"
 	case app.StatusLocalSource:
 		return "local source"
-	case app.StatusNoCompatibleUpdate:
-		return "no compatible update"
-	case app.StatusUnknown:
-		return "not checked"
+	case app.StatusLookupFailed:
+		return "lookup failed"
 	default:
-		return "unknown"
+		return string(s)
 	}
 }
 
@@ -248,11 +251,33 @@ func updateStatusText(s app.UpdateStatus) string {
 func countUnknown(plan app.UpdatePlan) int {
 	n := 0
 	for _, it := range plan.Items {
-		if it.Status == app.StatusUnknown {
+		if it.Status == app.StatusLookupFailed {
 			n++
 		}
 	}
 	return n
+}
+
+// planCounts breaks a plan down by the reason each skill did or did not move.
+type planCounts struct{ available, upToDate, pinned, local, failed int }
+
+func countPlan(plan app.UpdatePlan) planCounts {
+	var c planCounts
+	for _, it := range plan.Items {
+		switch {
+		case it.Actionable():
+			c.available++
+		case it.Pinned:
+			c.pinned++
+		case it.Status == app.StatusLocalSource:
+			c.local++
+		case it.Status == app.StatusLookupFailed:
+			c.failed++
+		default:
+			c.upToDate++
+		}
+	}
+	return c
 }
 
 // orDash substitutes the empty-cell placeholder.
@@ -264,18 +289,19 @@ func orDash(s string) string {
 }
 
 // renderUpdateList renders the human update report shared by
-// `gskill update --list` and `gskill outdated` (spec 018 FR-006/FR-007):
-// candidate rows, an optional STATUS column under --all, and a count summary.
-// The rows are primary stdout output in both TTY and piped runs (FR-017).
+// `gskill update --list` and `gskill outdated` (spec 018 FR-006/FR-007,
+// spec 024 FR-008/FR-010): candidate rows, a STATUS column plus a guidance
+// line per non-actionable row under --all, and a summary that counts every
+// status so an empty table is explained.
 func renderUpdateList(out *Output, plan app.UpdatePlan, all bool) string {
 	if len(plan.Items) == 0 {
-		return "No skills installed."
+		return noSkillsDeclared
 	}
 	items := plan.Actionable()
 	if all {
 		items = plan.Items
 	}
-	summary := updateListSummary(out, plan)
+	summary := updateListSummary(out, plan, all)
 	if len(items) == 0 {
 		return summary
 	}
@@ -285,54 +311,112 @@ func renderUpdateList(out *Output, plan app.UpdatePlan, all bool) string {
 		headers = append(headers, "STATUS")
 	}
 	rows := make([][]string, 0, len(items))
+	details := make([]string, 0, len(items))
 	for _, it := range items {
 		rows = append(rows, updateListRow(out, it, all))
+		if all {
+			details = append(details, updateListDetail(it))
+		} else {
+			details = append(details, "")
+		}
 	}
-	return renderAligned(tui.DefaultTheme(), headers, rows) + "\n\n" + summary
+	return interleaveDetails(renderAligned(tui.DefaultTheme(), headers, rows), details) + "\n\n" + summary
 }
 
-// updateListSummary composes the report's count line. It never claims
-// freshness that was not verified: unchecked skills (discovery failures,
-// offline skips) are called out instead of silently folding into
-// "up to date".
-func updateListSummary(out *Output, plan app.UpdatePlan) string {
-	available := len(plan.Actionable())
-	unknown := countUnknown(plan)
+// interleaveDetails places each row's guidance line directly beneath it. The
+// aligned table renders one line per row after a single header line.
+func interleaveDetails(table string, details []string) string {
+	lines := strings.Split(table, "\n")
+	if len(lines) != len(details)+1 {
+		return table
+	}
+	var b strings.Builder
+	b.WriteString(lines[0])
+	for i, d := range details {
+		b.WriteString("\n" + lines[i+1])
+		if d != "" {
+			b.WriteString("\n  " + d)
+		}
+	}
+	return b.String()
+}
 
-	var summary string
-	warn := available > 0
+// updateListDetail is the guidance line for a row a normal update cannot
+// move: why, what newer exists, and the command that moves it.
+func updateListDetail(it app.UpdatePlanItem) string {
 	switch {
-	case available == 0 && unknown > 0:
-		summary = fmt.Sprintf("%d of %d skills could not be checked for updates", unknown, len(plan.Items))
-		warn = true
-	case available == 0:
-		summary = "All skills are up to date"
-	case available == 1:
-		summary = "1 update available"
+	case it.Actionable():
+		if it.NextAction == "" && !strings.Contains(it.Reason, "declaration changed") {
+			return ""
+		}
+		return it.Reason
+	case it.Pinned:
+		line := it.Reason
+		if it.Informational != "" {
+			line += "; newest " + it.Informational
+		}
+		return line + ". Run '" + it.NextAction + "' or edit skills.toml to move it."
+	case it.Status == app.StatusNoCompatibleUpdate:
+		return it.Reason + ". Run '" + it.NextAction + " --latest' to move to " + it.Informational + "."
+	case it.Status == app.StatusLookupFailed:
+		return it.Reason
+	case it.NextAction != "":
+		return it.Reason + ". Run '" + it.NextAction + "'."
 	default:
-		summary = fmt.Sprintf("%d updates available", available)
+		return ""
 	}
-	if available > 0 && unknown > 0 {
-		summary += fmt.Sprintf(" (%d not checked)", unknown)
+}
+
+// updateListSummary composes the report's count line (spec 024 FR-009,
+// FR-010). "All skills are up to date" is claimed only when every skill was
+// verified current; otherwise every status is counted, and skills hidden
+// without --all are pointed at.
+func updateListSummary(out *Output, plan app.UpdatePlan, all bool) string {
+	c := countPlan(plan)
+	if c.available == 0 && c.pinned == 0 && c.local == 0 && c.failed == 0 {
+		return out.summary("All skills are up to date")
 	}
-	if warn {
+	parts := []string{fmt.Sprintf("%d update%s available", c.available, plural(c.available))}
+	if c.upToDate > 0 {
+		parts = append(parts, fmt.Sprintf("%d up to date", c.upToDate))
+	}
+	if c.pinned > 0 {
+		parts = append(parts, fmt.Sprintf("%d pinned", c.pinned))
+	}
+	if c.local > 0 {
+		parts = append(parts, fmt.Sprintf("%d local", c.local))
+	}
+	if c.failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d could not be checked", c.failed))
+	}
+	summary := strings.Join(parts, " · ")
+	if hidden := c.upToDate + c.pinned + c.local + c.failed; !all && hidden > 0 {
+		summary += " (--all shows them)"
+	}
+	if c.available > 0 || c.failed > 0 {
 		return out.warnSummary(summary)
 	}
 	return out.summary(summary)
 }
 
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
 // updateListRow renders one plan item's table cells.
 func updateListRow(out *Output, it app.UpdatePlanItem, all bool) []string {
 	name, policy, status := it.Name, it.Policy, updateStatusText(it.Status)
-	// A newer release the policy forbids is labeled informational right in
-	// the status cell (FR-007) — AVAILABLE stays `--` because it is not
-	// applicable by a normal update. A pin whose informational lookup failed
-	// says so instead of masquerading as a verified pin.
 	switch {
-	case it.Informational != "":
-		status += " (newer: " + it.Informational + ")"
-	case it.DiscoveryErr != "" && it.Status != app.StatusUnknown:
-		status += " (lookup failed)"
+	case it.Status == app.StatusNoCompatibleUpdate && it.Informational != "":
+		// A newer release the policy forbids is named right in the status
+		// cell (FR-007) — AVAILABLE stays `--` because a normal update never
+		// applies it.
+		status += " (newer " + it.Informational + " outside " + it.Policy + ")"
+	case it.Status == app.StatusLookupFailed && it.DiscoveryErr == "":
+		status += " (offline)"
 	}
 	if out.Interactive() {
 		st := tui.DefaultTheme()
@@ -380,43 +464,18 @@ func renderUpdateResult(out *Output, res app.UpdateResult) string {
 	}
 
 	st := tui.DefaultTheme()
-	styled := out.Interactive()
 	rows := make([][]string, 0, len(res.Skills))
 	for _, s := range res.Skills {
-		name, result := s.Name, updateOutcomeText(s)
-		if styled {
-			name = st.Accent.Render(name)
-			switch s.Outcome {
-			case app.UpdateOutcomeFailed:
-				result = st.Error.Render(result)
-			case app.UpdateOutcomeUpdated, app.UpdateOutcomeWould:
-				result = st.Success.Render(result)
-			case app.UpdateOutcomeNoChange:
-				result = st.Subtitle.Render(result)
-			default:
-				result = st.Subtitle.Render(result)
-			}
-		}
-		rows = append(rows, []string{name, s.From, s.To, result})
+		rows = append(rows, updateResultRow(st, out.Interactive(), s))
 	}
 	table := renderAligned(st, []string{"NAME", "FROM", "TO", "RESULT"}, rows)
-
-	// Failed rows carry their reason below the table — a bare "failed" cell
-	// would force the user into --json to learn why.
-	var details []string
-	for _, s := range res.Skills {
-		if s.Outcome == app.UpdateOutcomeFailed && s.Reason != "" {
-			details = append(details, "  "+s.Name+": "+s.Reason)
-		}
-	}
-	if len(details) > 0 {
+	if details := updateResultDetails(res); len(details) > 0 {
 		table += "\n\n" + strings.Join(details, "\n")
 	}
 
-	switch {
-	case res.Failed > 0:
+	if res.Failed > 0 {
 		summary = out.errSummary(summary)
-	default:
+	} else {
 		summary = out.summary(summary)
 	}
 	rendered := table + "\n\n" + summary
@@ -424,6 +483,48 @@ func renderUpdateResult(out *Output, res app.UpdateResult) string {
 		rendered += "\nDry run: no changes made."
 	}
 	return rendered
+}
+
+// updateResultRow renders one execution row, styled for a TTY.
+func updateResultRow(st tui.Theme, styled bool, s app.UpdateSkillResult) []string {
+	name, result := s.Name, updateOutcomeText(s)
+	if styled {
+		name = st.Accent.Render(name)
+		switch s.Outcome {
+		case app.UpdateOutcomeFailed:
+			result = st.Error.Render(result)
+		case app.UpdateOutcomeUpdated, app.UpdateOutcomeWould:
+			result = st.Success.Render(result)
+		case app.UpdateOutcomeNoChange:
+			result = st.Subtitle.Render(result)
+		default:
+			result = st.Subtitle.Render(result)
+		}
+	}
+	return []string{name, s.From, s.To, result}
+}
+
+// updateResultDetails lists the lines beneath the table: a failed row's
+// reason (a bare "failed" cell would force the user into --json to learn
+// why), and for a pinned row the declaration that pins it and the command
+// that moves it (spec 024 FR-008).
+func updateResultDetails(res app.UpdateResult) []string {
+	var details []string
+	for _, s := range res.Skills {
+		switch {
+		case s.Outcome == app.UpdateOutcomeFailed && s.Reason != "":
+			details = append(details, "  "+s.Name+": "+s.Reason)
+		case s.Outcome == app.UpdateOutcomeNoChange && s.Status.Pinned():
+			line := "  " + s.Name + ": " + s.Reason
+			if s.Informational != "" {
+				line += "; newest " + s.Informational
+			}
+			details = append(details, line+". Run '"+s.NextAction+"' or edit skills.toml to move it.")
+		case s.Outcome == app.UpdateOutcomeNoChange && s.Status == app.StatusNoCompatibleUpdate && s.NextAction != "":
+			details = append(details, "  "+s.Name+": "+s.Reason+". Run '"+s.NextAction+" --latest' to move to "+s.Informational+".")
+		}
+	}
+	return details
 }
 
 // renderPlanTextStyled renders the `add --dry-run` plan for a TTY: the exact
@@ -454,4 +555,61 @@ func renderPlanTextStyled(plan app.InstallPlan) string {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// renderUpgradeResult renders an upgrade run: NAME/FROM/TO/DECLARATION/RESULT
+// rows, reasons beneath for refused and failed rows, and a summary that says
+// which files moved (contracts/cli.md).
+func renderUpgradeResult(out *Output, res app.UpgradeResult) string {
+	summary := upgradeSummary(res)
+	if len(res.Skills) == 0 {
+		return out.summary(summary)
+	}
+	st := tui.DefaultTheme()
+	rows := make([][]string, 0, len(res.Skills))
+	var details []string
+	for _, s := range res.Skills {
+		rows = append(rows, upgradeResultRow(st, out.Interactive(), s))
+		if (s.Outcome == app.UpgradeOutcomeFailed || s.Outcome == app.UpgradeOutcomeRefused) && s.Reason != "" {
+			details = append(details, "  "+s.Name+": "+s.Reason)
+		}
+	}
+	table := renderAligned(st, []string{"NAME", "FROM", "TO", "DECLARATION", "RESULT"}, rows)
+	if len(details) > 0 {
+		table += "\n\n" + strings.Join(details, "\n")
+	}
+	if res.Failed > 0 || res.Refused > 0 {
+		summary = out.errSummary(summary)
+	} else {
+		summary = out.summary(summary)
+	}
+	rendered := table + "\n\n" + summary
+	if res.DryRun {
+		rendered += "\nDry run: no changes made."
+	}
+	return rendered
+}
+
+// upgradeResultRow renders one upgrade row, styled for a TTY.
+func upgradeResultRow(st tui.Theme, styled bool, s app.UpgradeSkillResult) []string {
+	name, result := s.Name, string(s.Outcome)
+	decl := s.DeclBefore
+	if s.DeclAfter != "" && s.DeclAfter != s.DeclBefore {
+		decl = s.DeclBefore + " → " + s.DeclAfter
+	}
+	if styled {
+		name = st.Accent.Render(name)
+		switch s.Outcome {
+		case app.UpgradeOutcomeFailed, app.UpgradeOutcomeRefused:
+			result = st.Error.Render(result)
+		case app.UpgradeOutcomeUpgraded, app.UpgradeOutcomeDowngraded, app.UpgradeOutcomeUpdated,
+			app.UpgradeOutcomeRedeclared, app.UpgradeOutcomeWould:
+			result = st.Success.Render(result)
+		case app.UpgradeOutcomeUnchanged:
+			result = st.Subtitle.Render(result)
+		default:
+			result = st.Subtitle.Render(result)
+		}
+	}
+	return []string{name, s.From, s.To, decl, result}
 }

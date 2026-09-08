@@ -20,6 +20,7 @@ import (
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/manifest"
 
 	"github.com/glapsfun/gskill/internal/progress"
 	"github.com/glapsfun/gskill/internal/resolver"
@@ -270,7 +271,7 @@ func (a *App) relinkAgents(ctx context.Context, p *project, lf *skillslock.State
 	if err != nil {
 		return err
 	}
-	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root}, true)
+	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root}, reconcileOpts{preserveForeign: true})
 	if err != nil {
 		return err
 	}
@@ -668,8 +669,8 @@ func stampSkill(ctx context.Context, name string, index, count int) context.Cont
 }
 
 // skillIntent is the desired-state input to one skill's install: what the
-// user asked for (add flags) or what the lock's gskill block declares
-// (update/restore). It replaces the manifest declaration.
+// user asked for (add flags) or what skills.toml declares (update, upgrade,
+// install); see intentFromDeclaration.
 type skillIntent struct {
 	Source  string
 	Path    string
@@ -679,20 +680,6 @@ type skillIntent struct {
 	Mode    string
 	Scope   string
 	Agents  []string
-}
-
-// intentFromRecord derives the declared intent from a managed lock record.
-func intentFromRecord(r skillslock.Record) skillIntent {
-	return skillIntent{
-		Source:  r.Source.Original,
-		Path:    r.Source.Path,
-		Version: r.Requested.Version,
-		Ref:     r.Requested.Ref,
-		Commit:  r.Requested.Commit,
-		Mode:    r.Installation.Mode,
-		Scope:   r.Installation.Scope,
-		Agents:  r.Installation.Agents,
-	}
 }
 
 // installOne installs a single declared skill and updates lf in place.
@@ -715,9 +702,9 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 
 	// Backfill the tracking intent before building the lock entry, so the
 	// record's `requested` stays satisfied on the next run.
-	rq := backfillRequested(
+	rq := stampDeclarationKind(backfillRequested(
 		skillslock.Requested{Version: in.Version, Ref: in.Ref, Commit: in.Commit}, rev,
-	)
+	), rev)
 
 	ireq := a.installRequest(p.root, ref, rev, agents, cmp.Or(in.Scope, req.Scope), modeOr(req.Mode, in.Mode))
 	ireq.Name = name
@@ -753,8 +740,28 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 	if lockErr != nil {
 		return SkillChange{}, lockErr
 	}
+	if err := a.pruneDroppedAgents(p, lf, name, old, existed, agents); err != nil {
+		return SkillChange{}, err
+	}
 	lf.Skills[name] = locked
 	return SkillChange{Name: name, ContentHash: result.ContentHash, Changed: changed}, nil
+}
+
+// pruneDroppedAgents removes the targets of agents the run no longer installs
+// for. The installer only activates the agents it was asked for and never
+// removes the others, so update and upgrade would otherwise leave an untracked
+// symlink pointing at content they had just rewritten. It must run before the
+// new lock record replaces the old one: removeDroppedAgents reads the targets
+// the outgoing entry recorded.
+func (a *App) pruneDroppedAgents(p *project, lf *skillslock.State, name string, old skillslock.Record, existed bool, agents []agent.Agent) error {
+	if !existed {
+		return nil
+	}
+	removed := Subtract(old.Installation.Agents, agentIDs(agents))
+	if len(removed) == 0 {
+		return nil
+	}
+	return a.removeDroppedAgents(p, lf, name, removed)
 }
 
 // agentsByID maps agent IDs to registered agents, failing on unknown IDs.
@@ -874,6 +881,20 @@ func backfillRequested(rq skillslock.Requested, rev resolver.Revision) skillsloc
 	case resolver.RefKindLocal:
 		// No resolvable version; leave the intent unpinned.
 	}
+	return rq
+}
+
+// stampDeclarationKind records the shape the intent had when it was resolved
+// (spec 024 data-model.md §3), so the lock stays self-describing about what
+// kind of declaration produced an entry.
+func stampDeclarationKind(rq skillslock.Requested, rev resolver.Revision) skillslock.Requested {
+	shape, err := resolver.ClassifyDeclaration(resolver.Declaration{
+		Version: rq.Version, Ref: rq.Ref, Commit: rq.Commit, Local: rev.RefKind == resolver.RefKindLocal,
+	}, rev.RefKind)
+	if err != nil {
+		return rq
+	}
+	rq.Kind = string(shape)
 	return rq
 }
 
@@ -1039,6 +1060,36 @@ func refFromLock(src skillslock.Source) source.Ref {
 		ref.LocalPath = src.Original
 	}
 	return ref
+}
+
+// effectiveSourceRef is the source a run will actually install from: the
+// declaration's when it names one, else the lock's. Discovery must use it so
+// candidates are enumerated from the same repository the install resolves
+// against — the manifest is authoritative for intent (Principle II), and
+// resolveDeclaration already applies this precedence on the install path.
+// A declared source that cannot be parsed falls back to the locked one, so a
+// malformed edit surfaces at resolution with its own diagnostic rather than
+// here.
+func effectiveSourceRef(decl manifest.Skill, src skillslock.Source) source.Ref {
+	if decl.Source == "" {
+		return refFromLock(src)
+	}
+	ref, err := source.Parse(decl.Source)
+	if err != nil {
+		return refFromLock(src)
+	}
+	return promoteLocalGit(ref)
+}
+
+// effectiveSourceLabel names the source effectiveSourceRef would use, for
+// diagnostics that tell the user which repository was searched.
+func effectiveSourceLabel(decl manifest.Skill, src skillslock.Source) string {
+	if decl.Source != "" {
+		if _, err := source.Parse(decl.Source); err == nil {
+			return decl.Source
+		}
+	}
+	return src.Original
 }
 
 // revFromLock reconstructs a resolver.Revision from a locked resolution record.

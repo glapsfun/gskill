@@ -50,6 +50,10 @@ type UpdateSkillResult struct {
 	Reason      string
 	ContentHash string
 	Err         error
+	// Informational and NextAction carry the plan's hint for a skill the run
+	// could not move, so the result can say how to move it (spec 024 FR-008).
+	Informational string
+	NextAction    string
 }
 
 // UpdateResult aggregates an update run, name-sorted.
@@ -58,17 +62,24 @@ type UpdateResult struct {
 	Updated  int
 	Failed   int
 	NoChange int
+	// Pinned, UpToDate, and Local break NoChange down by why nothing moved
+	// (spec 024 FR-009).
+	Pinned   int
+	UpToDate int
+	Local    int
 	Changed  bool
 	DryRun   bool
 }
 
-// Update advances the selected skills to the newest revision their requested
-// tracking policy allows and rewrites only the resolved lock state (FR-019).
+// Update advances the selected skills to the newest revision their declared
+// tracking policy allows and rewrites only the resolved lock state (spec 018
+// FR-019, spec 024 FR-003). Intent comes from skills.toml, never from the
+// lock, so a hand edit is honoured without an intervening install.
 // Each skill applies independently and atomically: one skill's failure never
 // aborts or rolls back the others, and a partial run returns the
 // partial-install sentinel after processing everything (FR-020). Eligibility
-// is re-derived from the lockfile as it exists now, so a stale earlier
-// selection is demoted to a no-op instead of blindly applied (FR-013).
+// is re-derived from the declaration and lock as they exist now, so a stale
+// earlier selection is demoted to a no-op instead of blindly applied (FR-013).
 func (a *App) Update(ctx context.Context, req UpdateRequest) (UpdateResult, error) {
 	ctx = git.WithMemo(ctx)
 	p, err := a.openProjectScoped(req.Root)
@@ -76,6 +87,10 @@ func (a *App) Update(ctx context.Context, req UpdateRequest) (UpdateResult, erro
 		return UpdateResult{}, err
 	}
 	if !fileExists(p.lockPath) {
+		if !fileExists(manifestPath(p.root)) {
+			// Nothing declared anywhere: an honest empty result, not an error.
+			return UpdateResult{DryRun: req.DryRun}, nil
+		}
 		return UpdateResult{}, errNoLock()
 	}
 	out := UpdateResult{DryRun: req.DryRun}
@@ -147,6 +162,14 @@ func countUpdateOutcomes(out *UpdateResult) {
 			out.Failed++
 		case UpdateOutcomeNoChange:
 			out.NoChange++
+			switch {
+			case s.Status.Pinned():
+				out.Pinned++
+			case s.Status == StatusLocalSource:
+				out.Local++
+			case s.Status == StatusUpToDate, s.Status == StatusNoCompatibleUpdate:
+				out.UpToDate++
+			}
 		}
 	}
 	out.Changed = !out.DryRun && out.Updated > 0
@@ -182,11 +205,13 @@ func (a *App) updateOne(ctx context.Context, p *project, lf *skillslock.State, n
 	})
 	res := UpdateSkillResult{
 		Name: name, From: item.Current, To: item.Current,
-		Status:      item.Status,
-		ContentHash: rec.Resolved.ContentHash,
+		Status:        item.Status,
+		ContentHash:   rec.Resolved.ContentHash,
+		Informational: item.Informational,
+		NextAction:    item.NextAction,
 	}
 	switch {
-	case item.Status == StatusUnknown && item.DiscoveryErr != "":
+	case item.Status == StatusLookupFailed && item.DiscoveryErr != "":
 		// A real discovery failure on a skill that might have been actionable
 		// is a failure in every mode: the run must not report success while a
 		// remote was unreachable. (A pin's failed informational lookup is not
@@ -205,7 +230,8 @@ func (a *App) updateOne(ctx context.Context, p *project, lf *skillslock.State, n
 		return res
 	}
 
-	change, err := a.installOne(ctx, p, lf, name, intentFromRecord(rec), InstallRequest{
+	decl, _ := a.declarationFor(req.Root, name, rec)
+	change, err := a.installOne(ctx, p, lf, name, intentFromDeclaration(decl, rec), InstallRequest{
 		Root: req.Root, Offline: req.Offline, NoCache: req.NoCache,
 	})
 	if err != nil {

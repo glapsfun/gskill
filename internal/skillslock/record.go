@@ -34,11 +34,14 @@ type Source struct {
 	Path     string
 }
 
-// Requested echoes the human's intent (FR-010).
+// Requested echoes the human's intent (FR-010). Kind names the declaration
+// shape the intent had when it was last resolved (spec 024 data-model.md §3);
+// it is informational and empty on entries written before it existed.
 type Requested struct {
 	Version string
 	Ref     string
 	Commit  string
+	Kind    string
 }
 
 // Resolved is the immutable identity gskill pinned to (FR-009, FR-010).

@@ -56,18 +56,22 @@ func OutdatedJSON(plan app.UpdatePlan) map[string]any {
 			latest = it.Current
 		}
 		skills = append(skills, map[string]any{
-			"name":      it.Name,
-			"current":   it.Current,
-			"latest":    latest,
-			"available": it.Actionable(),
-			"policy":    it.Policy,
-			"status":    string(it.Status),
-			"reason":    it.Reason,
+			"name":        it.Name,
+			"current":     it.Current,
+			"latest":      latest,
+			"available":   it.Actionable(),
+			"policy":      it.Policy,
+			"status":      string(it.Status),
+			"reason":      it.Reason,
+			"shape":       string(it.Shape),
+			"pinned":      it.Pinned,
+			"next_action": it.NextAction,
 		})
 	}
 	return map[string]any{
 		"any_available": plan.AnyAvailable(),
 		"skills":        skills,
 		"not_checked":   countUnknown(plan),
+		"pinned":        countPinned(plan),
 	}
 }

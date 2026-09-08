@@ -1,0 +1,172 @@
+package resolver
+
+import (
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/Masterminds/semver/v3"
+)
+
+// DeclarationShape is the kind of tracking intent a manifest declaration
+// expresses (spec 024 data-model.md §1). It decides whether a normal update
+// may move the skill and how an upgrade rewrites the declaration.
+type DeclarationShape string
+
+// Declaration shapes. Values are stable: they appear in JSON output and in
+// the lockfile's gskill extension.
+const (
+	ShapeRangeCaret   DeclarationShape = "range-caret"
+	ShapeRangeTilde   DeclarationShape = "range-tilde"
+	ShapeRangeOther   DeclarationShape = "range-other"
+	ShapeExactVersion DeclarationShape = "exact-version"
+	ShapeTag          DeclarationShape = "tag"
+	ShapeBranch       DeclarationShape = "branch"
+	ShapeCommit       DeclarationShape = "commit"
+	ShapeLocal        DeclarationShape = "local"
+	ShapeUnpinned     DeclarationShape = "unpinned"
+)
+
+// Pinned reports whether the shape fixes one revision, so only a change of
+// intent can move it.
+func (s DeclarationShape) Pinned() bool {
+	return s == ShapeExactVersion || s == ShapeTag || s == ShapeCommit
+}
+
+// Floating reports whether a normal update may move the skill within the
+// declaration.
+func (s DeclarationShape) Floating() bool {
+	switch s {
+	case ShapeRangeCaret, ShapeRangeTilde, ShapeRangeOther, ShapeBranch:
+		return true
+	case ShapeExactVersion, ShapeTag, ShapeCommit, ShapeLocal, ShapeUnpinned:
+		return false
+	default:
+		return false
+	}
+}
+
+// Declaration is a skill's tracking intent as the user declared it: at most
+// one of Version, Ref, and Commit drives resolution, with Commit winning over
+// Version and Version over Ref, matching the resolver's own precedence.
+type Declaration struct {
+	Version string
+	Ref     string
+	Commit  string
+	Local   bool
+}
+
+// bareVersion matches a full MAJOR.MINOR.PATCH with optional pre-release and
+// build metadata; an optional leading "v" or "=" is tolerated because both
+// are common in hand-written manifests and mean the same exact version.
+var bareVersion = regexp.MustCompile(`^[=v]?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+
+// ClassifyDeclaration derives the shape of a declaration. refKindHint is the
+// resolved kind recorded for the skill's ref, when known: whether a ref is a
+// tag or a branch is decided at resolution time, and without a hint a ref is
+// treated as mutable so nothing is ever wrongly reported as pinned.
+func ClassifyDeclaration(d Declaration, refKindHint RefKind) (DeclarationShape, error) {
+	switch {
+	case d.Local:
+		return ShapeLocal, nil
+	case d.Commit != "":
+		return ShapeCommit, nil
+	case d.Version != "":
+		return classifyConstraint(d.Version)
+	case d.Ref != "":
+		if refKindHint == RefKindTag {
+			return ShapeTag, nil
+		}
+		return ShapeBranch, nil
+	default:
+		return ShapeUnpinned, nil
+	}
+}
+
+func classifyConstraint(c string) (DeclarationShape, error) {
+	trimmed := strings.TrimSpace(c)
+	if _, err := semver.NewConstraint(trimmed); err != nil {
+		return "", fmt.Errorf("parse constraint %q: %w", c, err)
+	}
+	switch {
+	case bareVersion.MatchString(trimmed):
+		return ShapeExactVersion, nil
+	case strings.HasPrefix(trimmed, "^") && bareVersion.MatchString(trimmed[1:]):
+		return ShapeRangeCaret, nil
+	case strings.HasPrefix(trimmed, "~") && bareVersion.MatchString(trimmed[1:]):
+		return ShapeRangeTilde, nil
+	default:
+		return ShapeRangeOther, nil
+	}
+}
+
+// admitsPrerelease reports whether a declaration names a pre-release itself,
+// in which case newer pre-releases are fair candidates for it.
+func admitsPrerelease(constraint string) bool {
+	v, err := semver.NewVersion(strings.TrimLeft(strings.TrimSpace(constraint), "^~=v"))
+	return err == nil && v.Prerelease() != ""
+}
+
+// ErrUnrewritable reports a declaration shape an upgrade cannot rewrite
+// mechanically without changing its kind.
+var ErrUnrewritable = errors.New("declaration shape cannot be rewritten")
+
+// rangePrefix is the operator a version-shaped declaration keeps when it is
+// rewritten. An exact version has none.
+var rangePrefix = map[DeclarationShape]string{
+	ShapeRangeCaret: "^",
+	ShapeRangeTilde: "~",
+}
+
+// RewriteDeclaration returns the manifest key and value that move a
+// declaration of the given shape to candidate while keeping its shape (spec
+// 024 FR-012): a caret range stays a caret range, an exact version stays
+// exact, a tag stays a tag, a commit stays a commit. The current value's
+// spelling — a leading "v" or "=" — is kept.
+func RewriteDeclaration(shape DeclarationShape, current string, c Candidate) (key, value string, err error) {
+	switch shape {
+	case ShapeRangeCaret, ShapeRangeTilde, ShapeExactVersion:
+		// A candidate resolved from a tag that is not semver carries no
+		// version. Writing it would leave `version = ""`, which erases the
+		// pin and silently resolves to latest on the next install.
+		if c.Version == "" {
+			return "", "", fmt.Errorf("%w: %q has no version to pin; use a semver release or declare a ref", ErrUnrewritable, c.Tag)
+		}
+		prefix := rangePrefix[shape]
+		return "version", prefix + keepPrefix(strings.TrimPrefix(current, prefix), c.Version), nil
+	case ShapeTag:
+		if c.Tag == "" {
+			return "", "", fmt.Errorf("%w: no release tag for %s", ErrUnrewritable, c.Version)
+		}
+		return "ref", c.Tag, nil
+	case ShapeCommit:
+		if c.Commit == "" {
+			return "", "", fmt.Errorf("%w: no commit for %s", ErrUnrewritable, c.Version)
+		}
+		return "commit", c.Commit, nil
+	case ShapeRangeOther:
+		return "", "", fmt.Errorf("%w: %q is not a caret, tilde, or exact version; edit skills.toml", ErrUnrewritable, current)
+	case ShapeBranch:
+		return "", "", fmt.Errorf("%w: a branch has no version to move; run `gskill update`", ErrUnrewritable)
+	case ShapeLocal:
+		return "", "", fmt.Errorf("%w: a local source has no releases", ErrUnrewritable)
+	case ShapeUnpinned:
+		return "", "", fmt.Errorf("%w: declare a version, ref, or commit first", ErrUnrewritable)
+	default:
+		return "", "", fmt.Errorf("%w: unknown shape %q", ErrUnrewritable, shape)
+	}
+}
+
+// keepPrefix carries a "v" or "=" spelling from the current value onto the
+// new one.
+func keepPrefix(current, version string) string {
+	switch {
+	case strings.HasPrefix(current, "v"):
+		return "v" + version
+	case strings.HasPrefix(current, "="):
+		return "=" + version
+	default:
+		return version
+	}
+}

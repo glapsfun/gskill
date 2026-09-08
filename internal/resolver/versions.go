@@ -65,3 +65,46 @@ func ListVersions(ctx context.Context, runner git.Runner, ref source.Ref) ([]Sou
 	}
 	return out, nil
 }
+
+// Candidate is one release an upgrade may move a declaration to.
+type Candidate struct {
+	Version string
+	Tag     string
+	Commit  string
+}
+
+// NewestBeyond picks the newest release strictly newer than current from tags.
+// Pre-releases are skipped unless the declaration itself names one, so a
+// stable declaration is never offered a beta. current may be empty (a commit
+// pin with no version), in which case the newest release wins.
+func NewestBeyond(tags []git.TagRef, current, constraint string) (Candidate, bool) {
+	best, tag, ok := highestStable(tags, admitsPrerelease(constraint))
+	if !ok {
+		return Candidate{}, false
+	}
+	if cur, err := semver.NewVersion(current); err == nil && !best.GreaterThan(cur) {
+		return Candidate{}, false
+	}
+	return Candidate{Version: best.String(), Tag: tag.Name, Commit: tag.Commit}, true
+}
+
+// FindRelease locates the release named by want among tags: an exact tag name,
+// or a version that parses equal to a tag's version.
+func FindRelease(tags []git.TagRef, want string) (Candidate, bool) {
+	wantV, wantErr := semver.NewVersion(want)
+	for _, tag := range tags {
+		if tag.Name == want {
+			c := Candidate{Tag: tag.Name, Commit: tag.Commit}
+			if v, err := semver.NewVersion(tag.Name); err == nil {
+				c.Version = v.String()
+			}
+			return c, true
+		}
+		if wantErr == nil {
+			if v, err := semver.NewVersion(tag.Name); err == nil && v.Equal(wantV) {
+				return Candidate{Version: v.String(), Tag: tag.Name, Commit: tag.Commit}, true
+			}
+		}
+	}
+	return Candidate{}, false
+}

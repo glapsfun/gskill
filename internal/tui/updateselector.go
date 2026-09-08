@@ -18,6 +18,9 @@ type UpdateItem struct {
 	Current   string
 	Candidate string
 	Policy    string
+	// Declaration, when set, renders a "before → after" column in place of
+	// the policy: the upgrade selector shows what skills.toml will say.
+	Declaration string
 }
 
 // UpdateSelection is the outcome of the update selector. Cancelled (esc/q)
@@ -33,10 +36,22 @@ type UpdateSelection struct {
 // returns the confirmed names. It refuses to start without a TTY: the CLI's
 // interactivity gate decides when a selector may open, never this package.
 func SelectUpdates(items []UpdateItem, isTTY bool) (UpdateSelection, error) {
+	return selectItems(items, isTTY, "Select updates (space toggles, enter confirms):", "update")
+}
+
+// SelectUpgrades runs the same multi-select over upgrade candidates (spec 024
+// US3): each row shows the declaration move instead of the tracking policy.
+func SelectUpgrades(items []UpdateItem, isTTY bool) (UpdateSelection, error) {
+	return selectItems(items, isTTY, "Select upgrades (space toggles, enter confirms):", "upgrade")
+}
+
+func selectItems(items []UpdateItem, isTTY bool, title, verb string) (UpdateSelection, error) {
 	if !isTTY {
-		return UpdateSelection{}, fmt.Errorf("%w: interactive update selection requires a TTY; pass skill names or --no-interactive", errs.ErrUsage)
+		return UpdateSelection{}, fmt.Errorf("%w: interactive %s selection requires a TTY; pass skill names or --no-interactive", errs.ErrUsage, verb)
 	}
-	final, err := tea.NewProgram(newUpdateSelectorModel(items)).Run()
+	m := newUpdateSelectorModel(items)
+	m.title = title
+	final, err := tea.NewProgram(m).Run()
 	if err != nil {
 		return UpdateSelection{}, fmt.Errorf("tui: %w", err)
 	}
@@ -67,10 +82,14 @@ type updateSelectorModel struct {
 	done        bool
 	cancelled   bool
 	interrupted bool
+	title       string
 }
 
 func newUpdateSelectorModel(items []UpdateItem) updateSelectorModel {
-	m := updateSelectorModel{items: items, chosen: make(map[int]bool), st: DefaultTheme()}
+	m := updateSelectorModel{
+		items: items, chosen: make(map[int]bool), st: DefaultTheme(),
+		title: "Select updates (space toggles, enter confirms):",
+	}
 	m.recomputeVisible()
 	return m
 }
@@ -263,7 +282,7 @@ func (m updateSelectorModel) fit(s string) string {
 // View implements tea.Model.
 func (m updateSelectorModel) View() string {
 	var b strings.Builder
-	b.WriteString(m.fit(m.st.Title.Render("Select updates (space toggles, enter confirms):")))
+	b.WriteString(m.fit(m.st.Title.Render(m.title)))
 	b.WriteByte('\n')
 	if m.filtering || m.filter.value != "" {
 		b.WriteString(m.fit(fmt.Sprintf("%s %s", m.st.Accent.Render("Filter:"), m.filter.value)))
@@ -343,7 +362,11 @@ func (m updateSelectorModel) rowString(vi int) string {
 	current := it.Current + strings.Repeat(" ", m.currentW-ansi.StringWidth(it.Current))
 	candidate := it.Candidate + strings.Repeat(" ", m.candidateW-ansi.StringWidth(it.Candidate))
 
-	row := cursor + check + name + "  " + current + " -> " + candidate + "  " + m.st.Subtitle.Render(it.Policy)
+	trailing := it.Policy
+	if it.Declaration != "" {
+		trailing = it.Declaration
+	}
+	row := cursor + check + name + "  " + current + " -> " + candidate + "  " + m.st.Subtitle.Render(trailing)
 	if m.width <= 0 {
 		return row
 	}

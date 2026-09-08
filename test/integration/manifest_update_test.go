@@ -94,3 +94,40 @@ func TestUpdate_AdvancesHashesTogether(t *testing.T) {
 		t.Error("override identity dropped by update")
 	}
 }
+
+// TestUpdate_OverridesReappliedManifestUnchanged: re-applying an override on
+// the newer upstream must not rewrite the declaration that requested it.
+func TestUpdate_OverridesReappliedManifestUnchanged(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	rules := filepath.Join(proj, "gskill", "demo", "rules.md")
+	if err := os.MkdirAll(filepath.Dir(rules), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rules, []byte("## House rules\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	declareOverride(t, proj, "demo", "append = [\"gskill/demo/rules.md\"]\n")
+	if _, stderr, code := runGskill(t, proj, "install"); code != 0 {
+		t.Fatalf("install: %s", stderr)
+	}
+	before := readFile(t, manifestPath(proj))
+
+	publishNewVersion(t, repo, "demo", "v1.1.0")
+	if _, stderr, code := runGskill(t, proj, "update"); code != 0 {
+		t.Fatalf("update: %s", stderr)
+	}
+	if after := readFile(t, manifestPath(proj)); string(after) != string(before) {
+		t.Errorf("update rewrote skills.toml:\n%s", after)
+	}
+	got := readFile(t, filepath.Join(proj, ".agents", "skills", "demo", "SKILL.md"))
+	if !strings.Contains(string(got), "House rules") || !strings.Contains(string(got), "v1.1.0") {
+		t.Errorf("override not re-applied on the new upstream:\n%s", got)
+	}
+}

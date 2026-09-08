@@ -132,7 +132,7 @@ func (a *App) migrateSkill(ctx context.Context, p *project, lf *skillslock.State
 		return err
 	}
 	result, err := a.reconcileFromLock(ctx, p, name, locked, agents,
-		SyncRequest{Root: p.root, Offline: opts.offline}, false)
+		SyncRequest{Root: p.root, Offline: opts.offline}, reconcileOpts{})
 	if err != nil {
 		return err
 	}

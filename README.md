@@ -88,7 +88,7 @@ with `gskill install --frozen-lockfile`.
 
 ## Core workflow
 
-GSKILL's lifecycle is discover → add → lock → install → verify → update.
+GSKILL's lifecycle is discover → add → install → verify → update → upgrade.
 
 ### 1. Discover
 
@@ -129,12 +129,32 @@ gskill verify
 
 ### 6. Update
 
-See what can move, then advance within your version constraints and re-lock:
+Re-resolve within the constraints declared in `skills.toml` and re-lock. `update` never
+edits `skills.toml`; a pinned skill is reported as pinned, with the way to move it:
 
 ```bash
-gskill update --list   # read-only report: current vs available versions
+gskill update --list   # read-only report: current vs available, every status counted
 gskill update          # in a terminal: pick updates interactively
 ```
+
+```text
+NAME          CURRENT   AVAILABLE  POLICY   STATUS
+code-review   1.2.0     --         1.2.0    pinned version
+  pinned by skills.toml (version = "1.2.0"); newest 2.1.0. Run 'gskill upgrade code-review' or edit skills.toml to move it.
+kubernetes    1.2.0     1.4.1      ^1.2.0   update available
+```
+
+### 7. Upgrade
+
+Change what `skills.toml` declares, then resolve, lock, install, and verify in one step:
+
+```bash
+gskill upgrade code-review --latest   # ^1.0.0 → ^2.0.0 in skills.toml, then install
+gskill upgrade code-review 2.1.0      # an exact target
+```
+
+`upgrade = change intent + resolve + install`, `update = re-resolve existing intent`,
+`install = realize declared intent`. See [the package lifecycle](docs/explanation/lifecycle.md).
 
 ## Common examples
 
@@ -175,6 +195,7 @@ gskill verify
 gskill update --list             # what would update, and to which version
 gskill update                    # choose interactively in a terminal
 gskill --no-interactive update   # CI-safe: apply every available update
+gskill upgrade my-skill --latest # move the declared version in skills.toml, then install
 ```
 
 ## Documentation
@@ -202,7 +223,7 @@ targets Claude Code, Codex, Cursor, and Gemini CLI. The lockfile format
 v1.0 and are documented in release notes.
 
 `add`, `onboard`, `install` (incl. `--frozen-lockfile`/`--offline`),
-`verify`, `check`, `outdated`, `update`, `remove`, `sync`, `repair`, `list`,
+`verify`, `check`, `outdated`, `update`, `upgrade`, `remove`, `sync`, `repair`, `list`,
 `info`, `search`, `diff`, `doctor`, `cache`, `config`, `completion`, and `dashboard`
 (`tui`) all work today against Git and local sources.
 

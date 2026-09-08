@@ -131,7 +131,7 @@ Show details for one skill.
 
 ## `install`
 
-Install all declared skills (additive, idempotent, auto-initializes the project if needed).
+Realize what skills.toml declares (resolve changes, install, record the lockfile). Never edits skills.toml.
 
 | Flag | Type | Description |
 | --- | --- | --- |
@@ -230,7 +230,7 @@ Search for skills in a source, a GitHub owner, or configured repositories.
 
 ## `update`
 
-Advance skills within their version constraints.
+Re-resolve declared skills to the newest revision their skills.toml constraint allows. Never edits skills.toml.
 
 | Argument | Required | Description |
 | --- | --- | --- |
@@ -240,6 +240,21 @@ Advance skills within their version constraints.
 | --- | --- | --- |
 | `--all` | bool | With --list: also report up-to-date, pinned, and local skills. |
 | `--list` | bool | List available updates without applying them. |
+
+
+## `upgrade`
+
+Move a skill's declared version in skills.toml, then resolve, lock, install, and verify it.
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `skill` | no | Skills to upgrade. With exactly one skill, a second argument is the target version (same as --to). |
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--all` | bool | Without skill names and outside a terminal: upgrade every upgradable skill. |
+| `--latest` | bool | Move to the newest stable release beyond the current declaration (the default). |
+| `--to` | string | Exact target version or tag; must exist as a release of the skill's source. |
 
 
 ## `version`

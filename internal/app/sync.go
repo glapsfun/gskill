@@ -175,7 +175,7 @@ func (a *App) reconcileSkill(ctx context.Context, p *project, lf *skillslock.Sta
 			return SyncChange{}, false, fmt.Errorf("%w: %s", errs.ErrInvalidLock, symlinklessCheckoutMsg(rel))
 		}
 	}
-	result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req, false)
+	result, rErr := a.reconcileFromLock(ctx, p, name, locked, desiredAgents, req, reconcileOpts{})
 	if rErr != nil {
 		return SyncChange{}, false, rErr
 	}
@@ -234,18 +234,32 @@ func (a *App) frozenRequest(p *project, name string, locked skillslock.Record, r
 	}, nil
 }
 
+// reconcileOpts tunes how a lock-driven re-materialization treats content it
+// finds in place.
+type reconcileOpts struct {
+	// preserveForeign makes the installer fail closed on unowned destinations
+	// — set by the agent-add path (adding an agent must never clobber a
+	// user's content, spec 011 FR-016), left false by sync/repair whose
+	// contract is restoring drift.
+	preserveForeign bool
+	// replaceActive lets the restore overwrite repo-owned active content whose
+	// hash no longer matches the lock. Without it the installer reads content
+	// this very run installed as drift and refuses, which is exactly the
+	// rollback case: the lock is being wound back, so the newer content on
+	// disk is the thing to undo, not to protect (see Repair, repair.go).
+	replaceActive bool
+}
+
 // reconcileFromLock re-materializes a skill for the desired agents using the
-// locked revision and content hash, without re-resolving. preserveForeign
-// makes the installer fail closed on unowned destinations — set by the
-// agent-add path (adding an agent must never clobber a user's content, spec
-// 011 FR-016), left false by sync/repair whose contract is restoring drift.
-func (a *App) reconcileFromLock(ctx context.Context, p *project, name string, locked skillslock.Record, desiredAgents []agent.Agent, req SyncRequest, preserveForeign bool) (installer.Result, error) {
+// locked revision and content hash, without re-resolving.
+func (a *App) reconcileFromLock(ctx context.Context, p *project, name string, locked skillslock.Record, desiredAgents []agent.Agent, req SyncRequest, opts reconcileOpts) (installer.Result, error) {
 	ireq, err := a.frozenRequest(p, name, locked, InstallRequest{Root: p.root, Offline: req.Offline})
 	if err != nil {
 		return installer.Result{}, err
 	}
 	ireq.Agents = desiredAgents
-	ireq.PreserveForeign = preserveForeign
+	ireq.PreserveForeign = opts.preserveForeign
+	ireq.ReplaceActive = opts.replaceActive
 	ireq.PriorContentHash = locked.Resolved.ContentHash
 	return a.installerForScope(p, string(ireq.Scope)).Install(ctx, ireq)
 }

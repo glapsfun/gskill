@@ -17,13 +17,8 @@ import (
 // publishNewVersion commits a content change to repo's skill dir and tags it.
 func publishNewVersion(t *testing.T, repo, skillName, tag string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(repo, skillName, "SKILL.md"),
-		[]byte("---\nname: "+skillName+"\ndescription: updated\n---\n# "+skillName+" "+tag+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, repo, "add", ".")
-	gitRun(t, repo, "commit", "--quiet", "-m", tag)
-	gitRun(t, repo, "tag", tag)
+	testutil.PublishVersion(t, repo, skillName,
+		"---\nname: "+skillName+"\ndescription: updated\n---\n# "+skillName+" "+tag+"\n", tag)
 }
 
 func TestUpdateList_ReportsCandidatesOnStdout(t *testing.T) {
@@ -105,7 +100,7 @@ func TestUpdateList_AllReportsNonActionableStatuses(t *testing.T) {
 		t.Errorf("--all output missing STATUS column:\n%s", stdout)
 	}
 	for skill, status := range map[string]string{
-		"deploy":      "pinned tag (newer: 2.0.0)",
+		"deploy":      "pinned tag",
 		"fresh":       "up to date",
 		"local-tools": "local source",
 	} {
@@ -406,7 +401,7 @@ func TestUpdate_OfflineMakesNoNetworkCalls(t *testing.T) {
 	}
 	// An offline run must never claim freshness it did not verify: the
 	// mutable-policy skill is reported unchecked, not up to date.
-	if !strings.Contains(listOut, "not checked") || !strings.Contains(listOut, "could not be checked") {
+	if !strings.Contains(listOut, "lookup failed (offline)") || !strings.Contains(listOut, "could not be checked") {
 		t.Errorf("offline list hides the unchecked state:\n%s", listOut)
 	}
 	stdout, _, code := runGskillWithApp(t, a, proj, "--offline", "--no-interactive", "update")
@@ -416,7 +411,7 @@ func TestUpdate_OfflineMakesNoNetworkCalls(t *testing.T) {
 	if strings.Contains(stdout, "All skills are up to date") {
 		t.Errorf("offline update claims up-to-date without checking:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "not checked") {
+	if !strings.Contains(stdout, "lookup failed") {
 		t.Errorf("offline update hides the unchecked skill:\n%s", stdout)
 	}
 	if got := counting.ResolutionCalls(); got != before {
