@@ -185,7 +185,7 @@ func renderConfigListStyled(path string, values map[string]string) string {
 	for _, k := range keys {
 		rows = append(rows, []string{st.Accent.Render(k), values[k]})
 	}
-	return st.Hint.Render("# "+path) + "\n" + renderAligned(st, []string{"KEY", "VALUE"}, rows)
+	return st.Hint.Render("# user config: "+path) + "\n" + renderAligned(st, []string{"KEY", "VALUE"}, rows)
 }
 
 // renderDoctorStyled renders `gskill doctor` for a TTY.

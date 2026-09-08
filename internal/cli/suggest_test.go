@@ -17,6 +17,9 @@ func TestUnknownCommand_Suggestions(t *testing.T) {
 		{"transposed canonical", "serach", "search"},
 		{"typo of rename alias resolves to canonical", "fnd", "search"},
 		{"typo of tui alias resolves to canonical", "tuii", "dashboard"},
+		{"retired flat alias resolves to its project form", "check", "project check"},
+		{"typo of a retired flat alias resolves to its project form", "sinc", "project sync"},
+		{"group leaf that collides with a top-level command keeps the top-level meaning", "lst", "list"},
 		{"garbage gets no suggestion", "zzzzqqq", ""},
 	}
 	for _, tt := range tests {

@@ -78,7 +78,7 @@ func (configListCmd) Run(out *Output, root projectRoot) error {
 	}
 	sort.Strings(keys)
 
-	human := "# " + path + "\n"
+	human := "# user config: " + path + "\n"
 	obj := make(map[string]any, len(values))
 	for _, k := range keys {
 		human += fmt.Sprintf("%s = %s\n", k, values[k])

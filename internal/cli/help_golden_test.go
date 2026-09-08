@@ -67,7 +67,7 @@ var visibleTopLevel = []string{
 // topLevelEntryRE matches one command entry in the root help: a name at
 // exactly two spaces of indentation. Descriptions sit at four spaces and the
 // flag block's entries start with a dash, so neither is captured.
-var topLevelEntryRE = regexp.MustCompile(`(?m)^ {2}([a-z][a-z-]*)\b`)
+var topLevelEntryRE = regexp.MustCompile(`(?m)^ {2}([a-z][a-z0-9-]*)\b`)
 
 // rootHelpCommands returns the set of command names the root help advertises.
 func rootHelpCommands(stdout string) map[string]bool {

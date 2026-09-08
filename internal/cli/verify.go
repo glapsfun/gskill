@@ -19,7 +19,7 @@ func (verifyCmd) Help() string {
 	)
 }
 
-// Run executes `gskill project verify` (alias: `gskill verify`).
+// Run executes `gskill project verify`.
 func (verifyCmd) Run(ctx context.Context, out *Output, a *app.App, root projectRoot) error {
 	report, err := a.Verify(ctx, string(root))
 	// Render the report regardless, then propagate the integrity error's code.

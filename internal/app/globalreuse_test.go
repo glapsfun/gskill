@@ -257,7 +257,7 @@ func assertCopyModeState(t *testing.T, root string) {
 
 // assertDriftRepairedFromStore drifts the project copy, runs repair, and
 // checks the copy was restored while the store object stayed byte-identical
-// (FR-013). Content-drift repair is `gskill repair`'s contract (it verifies
+// (FR-013). Content-drift repair is `gskill project repair`'s contract (it verifies
 // hashes); the install fast path only relinks missing targets.
 func assertDriftRepairedFromStore(t *testing.T, a *app.App, root, h, target string) {
 	t.Helper()

@@ -96,7 +96,7 @@ func TestConfigList_CarriesThePath(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("config list: exit %d (stderr: %q)", code, stderr)
 	}
-	if !strings.HasPrefix(human, "# "+want) {
+	if !strings.HasPrefix(human, "# user config: "+want) {
 		t.Errorf("config list human output does not lead with the config path %q:\n%s", want, human)
 	}
 	if !strings.Contains(human, "log_level = ") {

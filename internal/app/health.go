@@ -138,7 +138,7 @@ func isSymlinklessArtifact(path string) bool {
 // IntegrityFault reports whether any fault is a content-integrity failure — a
 // corrupt copy target — which maps to a fail-closed exit code. Drifted
 // committed content is deliberately NOT one: spec 022 reports it as drift
-// (exit 7); `gskill verify` is the fail-closed hash check (exit 6).
+// (exit 7); `gskill project verify` is the fail-closed hash check (exit 6).
 func (h SkillHealth) IntegrityFault() bool {
 	for _, st := range h.Agents {
 		if st == TargetCorrupt {

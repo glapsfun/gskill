@@ -571,7 +571,7 @@ func (a *App) rollbackUpgrade(p *project, snap upgradeSnapshot, touched []string
 	}
 	return errs.WithHint(
 		fmt.Errorf("rollback incomplete: %w", errors.Join(failures...)),
-		"the project may not match its lockfile — run 'gskill repair'")
+		"the project may not match its lockfile — run 'gskill project repair'")
 }
 
 func countUpgradeOutcomes(out *UpgradeResult) {

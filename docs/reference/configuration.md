@@ -21,8 +21,10 @@ A value set at a higher layer overrides the same value from any lower layer.
 | Config file | Edit `config.toml` (find it with `gskill config list`) | `[defaults]` `install_mode = "copy"` |
 | Defaults | Built in | `install_mode` defaults to `symlink` |
 
-Run `gskill config list` to see both: it leads with the active config file path and then prints
-the effective, fully-resolved configuration. Its JSON form is `{"path": …, "values": {…}}` —
+Run `gskill config list` to see both: it leads with the user config file path (labelled
+`# user config:`, because the values below may have been overridden by the project `[config]`
+table, a `GSKILL_*` variable, or a flag) and then prints the effective, fully-resolved
+configuration. Its JSON form is `{"path": …, "values": {…}}` —
 the settings are nested under `values` so that the config-key namespace stays free of `path`,
 which is not a configuration key and is not accepted by `gskill config get`.
 

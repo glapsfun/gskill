@@ -168,7 +168,7 @@ func TestRenderConfigListStyled_Table(t *testing.T) {
 	// Path header (folded in from the retired `config path`), then the table
 	// header, then the sorted keys.
 	if len(lines) != 4 ||
-		!strings.Contains(lines[0], "/etc/gskill/config.toml") ||
+		!strings.Contains(lines[0], "user config: /etc/gskill/config.toml") ||
 		!strings.Contains(lines[1], "KEY") ||
 		!strings.Contains(lines[2], "agents") {
 		t.Errorf("styled config list wrong shape (path header, table header, sorted keys):\n%s", got)

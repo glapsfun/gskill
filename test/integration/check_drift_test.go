@@ -69,38 +69,19 @@ func TestCheck_ReportsEveryFieldProjectDiffDid(t *testing.T) {
 		if code != 0 && code != 7 {
 			t.Fatalf("%s: project check --json exit %d: %s", label, code, stderr)
 		}
-		var report struct {
-			HasDrift bool `json:"has_drift"`
-			Skills   []struct {
-				Name   string `json:"name"`
-				Status string `json:"status"`
-			} `json:"skills"`
-		}
-		if err := json.Unmarshal([]byte(stdout), &report); err != nil {
-			t.Fatalf("%s: project check --json is not valid JSON: %v\n%s", label, err, stdout)
-		}
-		if len(report.Skills) == 0 {
+		skills := parseCheckSkills(t, label, stdout)
+		if len(skills) == 0 {
 			t.Fatalf("%s: project check --json reported no skills:\n%s", label, stdout)
 		}
-		for _, s := range report.Skills {
-			if s.Name == "" {
-				t.Errorf("%s: a skill entry has no name:\n%s", label, stdout)
-			}
-			if s.Status == "" {
-				t.Errorf("%s: skill %q has no status:\n%s", label, s.Name, stdout)
-			}
-		}
+		assertCheckPayload(t, label, skills, stdout)
+
 		// The human-readable half of the replacement: `list` still prints the
 		// per-skill name/status table that `project diff` printed.
 		human, listErr, listCode := runGskill(t, proj, "--no-interactive", "list")
 		if listCode != 0 {
 			t.Fatalf("%s: list exit %d: %s", label, listCode, listErr)
 		}
-		for _, s := range report.Skills {
-			if !strings.Contains(human, s.Name) {
-				t.Errorf("%s: list does not name skill %q:\n%s", label, s.Name, human)
-			}
-		}
+		assertListRows(t, label, skills, human)
 	}
 
 	// Sequential by necessity, not subtests: the second assertion runs against
@@ -111,4 +92,69 @@ func TestCheck_ReportsEveryFieldProjectDiffDid(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNamedStatuses(t, "drifted")
+}
+
+// rowFor returns the line of a `gskill list` table that describes skill name.
+func rowFor(table, name string) (string, bool) {
+	for _, line := range strings.Split(table, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), name) {
+			return line, true
+		}
+	}
+	return "", false
+}
+
+// checkSkill is one entry of `project check --json`'s skills array — exactly
+// the two fields the retired `project diff` reported.
+type checkSkill struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// parseCheckSkills decodes the skills array from a `project check --json` run.
+func parseCheckSkills(t *testing.T, label, stdout string) []checkSkill {
+	t.Helper()
+
+	var report struct {
+		HasDrift bool         `json:"has_drift"`
+		Skills   []checkSkill `json:"skills"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("%s: project check --json is not valid JSON: %v\n%s", label, err, stdout)
+	}
+	return report.Skills
+}
+
+// assertCheckPayload pins the scripted half of the replacement: every entry
+// carries both fields, for every skill, drift or no drift.
+func assertCheckPayload(t *testing.T, label string, skills []checkSkill, stdout string) {
+	t.Helper()
+
+	for _, s := range skills {
+		if s.Name == "" {
+			t.Errorf("%s: a skill entry has no name:\n%s", label, stdout)
+		}
+		if s.Status == "" {
+			t.Errorf("%s: skill %q has no status:\n%s", label, s.Name, stdout)
+		}
+	}
+}
+
+// assertListRows pins the human half: `list` names every skill and carries its
+// status on the same row. Name alone is not the claim — `project diff` printed
+// name AND status, and this test is the evidence for retiring it.
+func assertListRows(t *testing.T, label string, skills []checkSkill, table string) {
+	t.Helper()
+
+	for _, s := range skills {
+		row, ok := rowFor(table, s.Name)
+		if !ok {
+			t.Errorf("%s: list does not name skill %q:\n%s", label, s.Name, table)
+			continue
+		}
+		if !strings.Contains(row, s.Status) {
+			t.Errorf("%s: list row for %q does not carry status %q:\n\t%s",
+				label, s.Name, s.Status, row)
+		}
+	}
 }

@@ -14,7 +14,7 @@ gskill config list       # print the config file path and the effective configur
 gskill config get <key>  # print one value
 ```
 
-To change a value, edit the `config.toml` whose path `gskill config list` prints on its first line
+To change a value, edit the `config.toml` whose path `gskill config list` labels on its first line
 (or set the matching `GSKILL_*` environment variable). In JSON the payload is
 `{"path": …, "values": {…}}`, so `gskill config list --json | jq -r .path` gives the file and
 `jq -r .values.log_level` gives one setting.

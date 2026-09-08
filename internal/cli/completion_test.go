@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -41,11 +40,15 @@ func completionScriptWords(t *testing.T, shell, script string) map[string]bool {
 	case "zsh":
 		const open = "compadd "
 		start := strings.Index(script, open)
-		end := strings.Index(script, " }")
-		if start < 0 || end <= start {
+		if start < 0 {
 			t.Fatalf("zsh completion script has no compadd word list:\n%s", script)
 		}
-		list = script[start+len(open) : end]
+		rest := script[start+len(open):]
+		end := strings.Index(rest, " }")
+		if end < 0 {
+			t.Fatalf("zsh compadd word list is unterminated:\n%s", script)
+		}
+		list = rest[:end]
 	default:
 		first := strings.Index(script, `"`)
 		last := strings.LastIndex(script, `"`)
@@ -94,15 +97,15 @@ func TestCompletion_CoversCanonicalCommandsAndAliases(t *testing.T) {
 
 // retiredCommandNames are words that must never be offered by shell
 // completion, because no command anywhere in the grammar spells them any
-// more: `diff` (spec 025) plus the commands retired by specs 020, 021, and
-// 022. The completion word list is flat and position-independent, so
+// more: `diff` and `path` (spec 025) plus the commands retired by specs 020,
+// 021, and 022. The completion word list is flat and position-independent, so
 // `sync`, `repair`, `verify`, and `check` deliberately remain — they are the
 // leaves of `project`, and spec 025 retired only their top-level aliases.
 // That the *top level* rejects them is locked by
 // TestFlatMaintenanceAliasesRemoved; that the word set is exactly right is
 // locked by TestCompletion_CoversCanonicalCommandsAndAliases.
 var retiredCommandNames = []string{
-	"diff", "status", "init", "source", "unlink", "store",
+	"diff", "path", "status", "init", "source", "unlink", "store",
 }
 
 // TestCompletion_OmitsRetiredCommands is spec 025 FR-003: a retired name may
@@ -120,9 +123,12 @@ func TestCompletion_OmitsRetiredCommands(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("completion %s: exit code = %d, stderr: %q", shell, code, stderr)
 			}
+			// Checked against the extracted word set, not the raw script:
+			// shell scripts legitimately contain words like "source", and a
+			// substring match on the whole text would fail spuriously.
+			offered := completionScriptWords(t, shell, stdout)
 			for _, name := range retiredCommandNames {
-				re := regexp.MustCompile(`\b` + regexp.QuoteMeta(name) + `\b`)
-				if re.MatchString(stdout) {
+				if offered[name] {
 					t.Errorf("completion %s offers retired command %q:\n%s", shell, name, stdout)
 				}
 			}
