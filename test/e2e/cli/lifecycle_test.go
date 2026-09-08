@@ -197,8 +197,10 @@ func TestLifecycle_UpgradeRollbackOnFailure(t *testing.T) {
 	if got := installed(t, dir, agentClaude, "demo"); got != contentBefore {
 		t.Fatalf("installed content changed after interrupt:\n%s", got)
 	}
-	if res := run(t, dir, "check"); res.Code != 0 {
-		t.Fatalf("check after rollback: %s", res.Stderr)
+	// --fail-on-drift is what makes this load-bearing: a plain check exits 0
+	// even with upgraded content sitting under a reverted lock.
+	if res := run(t, dir, "check", "--fail-on-drift"); res.Code != 0 {
+		t.Fatalf("check --fail-on-drift after rollback: %s", res.Stderr)
 	}
 }
 
@@ -460,4 +462,44 @@ func TestRegression_UpdateNeverWritesManifest(t *testing.T) {
 func res2(t *testing.T, dir string) result {
 	t.Helper()
 	return run(t, dir, "--no-interactive", "update")
+}
+
+// TestLifecycle_UpgradeRollbackAfterActivation proves through the real binary
+// what the earlier rollback test cannot reach: a failure on the second skill,
+// once the first has already been installed and activated. The second skill
+// disappears from the repository at v2.0.0, so its upgrade fails naturally.
+// Every layer must go back, including content this run already wrote into the
+// agent's directory.
+func TestLifecycle_UpgradeRollbackAfterActivation(t *testing.T) {
+	t.Parallel()
+	repo := testutil.InitSkillRepo(t, "alpha", testutil.SkillBody("alpha", "v1.0.0"))
+	testutil.PublishCommit(t, repo, "beta", testutil.SkillBody("beta", "v1.0.0"))
+	testutil.GitRun(t, repo, "tag", "v1.0.0")
+
+	dir := newProject(t)
+	if res := run(t, dir, "add", repo, "--all", "--version", "^1.0.0", "--agent", agentClaude); res.Code != 0 {
+		t.Fatalf("add: %s", res.Stderr)
+	}
+
+	// v2.0.0 upgrades alpha and drops beta entirely.
+	testutil.PublishCommit(t, repo, "alpha", testutil.SkillBody("alpha", "v2.0.0"))
+	testutil.GitRun(t, repo, "rm", "-r", "--quiet", "beta")
+	testutil.GitRun(t, repo, "commit", "--quiet", "-m", "drop beta")
+	testutil.GitRun(t, repo, "tag", "v2.0.0")
+
+	manifestBefore, lockBefore := manifestBytes(t, dir), lockBytes(t, dir)
+	alphaBefore := installed(t, dir, agentClaude, "alpha")
+
+	failed := run(t, dir, "--no-interactive", "upgrade", "--all")
+	if failed.Code == 0 {
+		t.Fatalf("upgrade succeeded although beta no longer exists:\n%s", failed.Stdout)
+	}
+	assertUnchanged(t, "skills.toml after the failed upgrade", manifestBefore, manifestBytes(t, dir))
+	assertUnchanged(t, "skills-lock.json after the failed upgrade", lockBefore, lockBytes(t, dir))
+	if got := installed(t, dir, agentClaude, "alpha"); got != alphaBefore {
+		t.Errorf("alpha's installed content was not restored:\n%s", got)
+	}
+	if res := run(t, dir, "check"); res.Code != 0 {
+		t.Fatalf("check after rollback: %s", res.Stderr)
+	}
 }

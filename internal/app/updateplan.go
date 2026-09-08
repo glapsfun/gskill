@@ -138,7 +138,7 @@ func (a *App) planOne(ctx context.Context, name string, rec skillslock.Record, r
 	decl, declared := a.declarationFor(req.Root, name, rec)
 	item := UpdatePlanItem{
 		Name:   name,
-		Source: rec.Source.Original,
+		Source: effectiveSourceLabel(decl, rec.Source),
 		Policy: policyLabel(declaredRequested(decl), rec),
 	}
 	rev := revFromLock(rec.Resolved)
@@ -159,7 +159,7 @@ func (a *App) planOne(ctx context.Context, name string, rec skillslock.Record, r
 		return finishPlanItem(planOffline(item, shape, rev), name, decl, declared, rec)
 	}
 
-	res, err := resolver.OutdatedShaped(ctx, a.git, refFromLock(rec.Source), shape, declaredRequested(decl), rev)
+	res, err := resolver.OutdatedShaped(ctx, a.git, effectiveSourceRef(decl, rec.Source), shape, declaredRequested(decl), rev)
 	if err != nil {
 		item.Current = RevisionLabel(rev)
 		item.Status = StatusLookupFailed

@@ -89,3 +89,48 @@ func TestFrozen_EditedVersionExits4BeforeNetwork(t *testing.T) {
 		t.Error("frozen run wrote a file")
 	}
 }
+
+// TestFrozen_ManifestAgentNarrowingRefused: --frozen-lockfile promises to
+// restore exactly what the lock records and never modify it. A manifest that
+// narrows the agent list is a declaration change, so the pre-flight must fail
+// closed. Before the fix the narrowing slipped past the pre-flight, the run
+// deleted the dropped agent's target, and frozen mode then suppressed the lock
+// write — leaving a lock that still declared a target no longer on disk.
+func TestFrozen_ManifestAgentNarrowingRefused(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude,codex"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	codexTarget := filepath.Join(proj, ".codex", "skills", "demo")
+	if _, err := os.Stat(codexTarget); err != nil {
+		t.Fatalf("codex target missing after add: %v", err)
+	}
+
+	data := readFile(t, manifestPath(proj))
+	narrowed := bytes.Replace(data, []byte(`agents = ["claude", "codex"]`), []byte(`agents = ["claude"]`), 1)
+	if bytes.Equal(data, narrowed) {
+		t.Fatalf("could not narrow the agent list in:\n%s", data)
+	}
+	if err := os.WriteFile(manifestPath(proj), narrowed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lockBefore := readFile(t, filepath.Join(proj, "skills-lock.json"))
+
+	_, stderr, code := runGskill(t, proj, "install", "--frozen-lockfile")
+	if code != 4 {
+		t.Errorf("frozen install with narrowed agents exit = %d, want 4 (lock mismatch); stderr %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "agents") {
+		t.Errorf("refusal does not name the changed key: %s", stderr)
+	}
+	if _, err := os.Stat(codexTarget); err != nil {
+		t.Errorf("frozen install deleted the codex target it was told not to touch: %v", err)
+	}
+	if !bytes.Equal(lockBefore, readFile(t, filepath.Join(proj, "skills-lock.json"))) {
+		t.Error("frozen install rewrote the lockfile")
+	}
+}

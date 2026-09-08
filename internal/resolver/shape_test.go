@@ -1,6 +1,7 @@
 package resolver_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/resolver"
@@ -64,6 +65,30 @@ func TestDeclarationShape_Pinned(t *testing.T) {
 	for shape, want := range pinned {
 		if got := shape.Pinned(); got != want {
 			t.Errorf("%s.Pinned() = %v, want %v", shape, got, want)
+		}
+	}
+}
+
+// TestRewriteDeclaration_EmptyVersionRefused: FindRelease returns a candidate
+// with an empty Version for a tag that is not semver. Rewriting a
+// version-shaped declaration from such a candidate would write `version = ""`,
+// which erases the pin and silently downgrades the next install to "latest".
+// Every version shape must refuse it, as the tag and commit shapes already do.
+func TestRewriteDeclaration_EmptyVersionRefused(t *testing.T) {
+	t.Parallel()
+	shapes := map[resolver.DeclarationShape]string{
+		resolver.ShapeExactVersion: "1.0.0",
+		resolver.ShapeRangeCaret:   "^1.0.0",
+		resolver.ShapeRangeTilde:   "~1.0.0",
+	}
+	for shape, current := range shapes {
+		key, value, err := resolver.RewriteDeclaration(shape, current, resolver.Candidate{Tag: "release-x", Commit: "abc123"})
+		if err == nil {
+			t.Errorf("%s: RewriteDeclaration(%q) = (%q, %q), want an error", shape, current, key, value)
+			continue
+		}
+		if !errors.Is(err, resolver.ErrUnrewritable) {
+			t.Errorf("%s: error = %v, want ErrUnrewritable", shape, err)
 		}
 	}
 }

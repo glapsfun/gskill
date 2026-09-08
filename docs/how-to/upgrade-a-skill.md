@@ -73,6 +73,7 @@ Prints the declaration change and the version it would install; nothing is writt
 | a local path | no releases | edit `skills.toml` |
 | `version = ">=1.0.0 <3.0.0"` | shape cannot be preserved mechanically | edit `skills.toml`, then `gskill install` |
 | `--offline` | releases cannot be listed | drop `--offline` |
+| `--to <tag>` where the tag is not semver, against a `version = ...` declaration | a version key cannot hold a non-semver tag, and writing an empty one would erase the pin | declare `ref = "<tag>"` instead, then `gskill install` |
 
 Each refusal exits `2` with a hint and touches nothing.
 
@@ -82,6 +83,11 @@ Each refusal exits `2` with a hint and touches nothing.
 install, or verification fails, or the run is interrupted, both files are restored and the
 installed content is reconciled back from the restored lock, so the three layers never
 disagree. The exit code is that of the failure (`130` for an interrupt).
+
+The restore replaces only content this run installed. Content you edited by hand is never
+overwritten by a rollback: the restore stops and the run reports `rollback incomplete` with a
+hint to run `gskill repair`, so a project that no longer matches its lockfile always says so
+rather than failing quietly.
 
 ## Machine-readable output
 

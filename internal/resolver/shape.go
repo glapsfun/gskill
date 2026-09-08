@@ -112,6 +112,13 @@ func admitsPrerelease(constraint string) bool {
 // mechanically without changing its kind.
 var ErrUnrewritable = errors.New("declaration shape cannot be rewritten")
 
+// rangePrefix is the operator a version-shaped declaration keeps when it is
+// rewritten. An exact version has none.
+var rangePrefix = map[DeclarationShape]string{
+	ShapeRangeCaret: "^",
+	ShapeRangeTilde: "~",
+}
+
 // RewriteDeclaration returns the manifest key and value that move a
 // declaration of the given shape to candidate while keeping its shape (spec
 // 024 FR-012): a caret range stays a caret range, an exact version stays
@@ -119,12 +126,15 @@ var ErrUnrewritable = errors.New("declaration shape cannot be rewritten")
 // spelling — a leading "v" or "=" — is kept.
 func RewriteDeclaration(shape DeclarationShape, current string, c Candidate) (key, value string, err error) {
 	switch shape {
-	case ShapeRangeCaret:
-		return "version", "^" + keepPrefix(strings.TrimPrefix(current, "^"), c.Version), nil
-	case ShapeRangeTilde:
-		return "version", "~" + keepPrefix(strings.TrimPrefix(current, "~"), c.Version), nil
-	case ShapeExactVersion:
-		return "version", keepPrefix(current, c.Version), nil
+	case ShapeRangeCaret, ShapeRangeTilde, ShapeExactVersion:
+		// A candidate resolved from a tag that is not semver carries no
+		// version. Writing it would leave `version = ""`, which erases the
+		// pin and silently resolves to latest on the next install.
+		if c.Version == "" {
+			return "", "", fmt.Errorf("%w: %q has no version to pin; use a semver release or declare a ref", ErrUnrewritable, c.Tag)
+		}
+		prefix := rangePrefix[shape]
+		return "version", prefix + keepPrefix(strings.TrimPrefix(current, prefix), c.Version), nil
 	case ShapeTag:
 		if c.Tag == "" {
 			return "", "", fmt.Errorf("%w: no release tag for %s", ErrUnrewritable, c.Version)

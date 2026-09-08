@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -113,6 +115,9 @@ type UpgradeResult struct {
 // manifest was rewritten and before resolution, to prove the rollback.
 var upgradeFailAfterManifestWrite func() error
 
+// rollbackTimeout bounds the restore an upgrade performs after a failure.
+const rollbackTimeout = 2 * time.Minute
+
 var hexCommit = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 // PlanUpgrade decides, per skill, whether and how its declaration moves
@@ -164,14 +169,14 @@ func (a *App) planUpgradeOne(ctx context.Context, req UpgradeRequest, name strin
 		return refuse(item, strings.TrimPrefix(rErr.Error(), resolver.ErrUnrewritable.Error()+": "), upgradeHint(shape, name))
 	}
 
-	tags, err := a.git.LsRemoteTags(ctx, refFromLock(rec.Source).URL)
+	tags, err := a.git.LsRemoteTags(ctx, effectiveSourceRef(decl, rec.Source).URL)
 	if err != nil {
 		return refuse(item, "lookup failed: "+err.Error(), "check network access and the source URL")
 	}
 	candidate, found := a.upgradeCandidate(req, shape, decl, rec, tags)
 	if !found {
 		if req.To != "" {
-			return refuse(item, "no release "+req.To+" in "+rec.Source.Original, "run `gskill update --list --all` to see what exists")
+			return refuse(item, "no release "+req.To+" in "+effectiveSourceLabel(decl, rec.Source), "run `gskill update --list --all` to see what exists")
 		}
 		item.Action = UpgradeActionNone
 		item.Reason = "already the newest release"
@@ -187,7 +192,7 @@ func (a *App) planUpgradeOne(ctx context.Context, req UpgradeRequest, name strin
 	}
 	key, value, err := resolver.RewriteDeclaration(shape, declValue(decl), candidate)
 	if err != nil {
-		return refuse(item, err.Error(), upgradeHint(shape, name))
+		return refuse(item, strings.TrimPrefix(err.Error(), resolver.ErrUnrewritable.Error()+": "), upgradeHint(shape, name))
 	}
 	item.Key, item.NewDecl = key, key+` = "`+value+`"`
 	item.Action = UpgradeActionRewrite
@@ -386,6 +391,11 @@ func (a *App) runUpgrade(ctx context.Context, p *project, req UpgradeRequest, pl
 		return err
 	}
 	var touched []string
+	// installed records the skills this run actually wrote content for. Only
+	// those may be replaced during a rollback: anything else on disk is the
+	// user's, and overwriting it would destroy the very content the upgrade
+	// refused to touch.
+	installed := make(map[string]bool)
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("upgrade panicked: %v", r)
@@ -393,7 +403,9 @@ func (a *App) runUpgrade(ctx context.Context, p *project, req UpgradeRequest, pl
 		if err == nil {
 			return
 		}
-		a.rollbackUpgrade(p, snap, touched)
+		if rErr := a.rollbackUpgrade(p, snap, touched, installed); rErr != nil {
+			err = errors.Join(err, rErr)
+		}
 	}()
 
 	for _, it := range plan.Items {
@@ -407,6 +419,7 @@ func (a *App) runUpgrade(ctx context.Context, p *project, req UpgradeRequest, pl
 		if applyErr != nil {
 			return applyErr
 		}
+		installed[it.Name] = true
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return errs.WithHint(errs.ErrCancelled, "the upgrade was rolled back; nothing changed")
 		}
@@ -421,11 +434,37 @@ func (a *App) runUpgrade(ctx context.Context, p *project, req UpgradeRequest, pl
 	return nil
 }
 
+// checkPlanFresh fails when the declaration on disk no longer matches the one
+// the plan was built from, so a rewrite computed against a superseded
+// declaration is never written.
+func (a *App) checkPlanFresh(p *project, it UpgradePlanItem, rec skillslock.Record) error {
+	// The manifest cache is keyed on size and mtime, so a concurrent edit of
+	// the same length within one mtime tick would be invisible. Drop the entry
+	// first: this check exists precisely to catch a writer we raced.
+	a.invalidateManifest(p.root)
+	current, _ := a.declarationFor(p.root, it.Name, rec)
+	if got := declLabel(current); got != it.CurrentDecl {
+		return errs.WithHint(
+			fmt.Errorf("%s: %s changed while the upgrade was being planned (%s is now %s)",
+				it.Name, manifest.FileName, it.CurrentDecl, got),
+			"re-run `gskill upgrade` to plan against the current declaration")
+	}
+	return nil
+}
+
 // applyUpgrade rewrites one declaration and realizes it.
 func (a *App) applyUpgrade(ctx context.Context, p *project, lf *skillslock.State, it UpgradePlanItem, req UpgradeRequest) (UpgradeSkillResult, error) {
 	res := resultFromPlan(it, UpgradeOutcomeFailed)
 	rec := lf.Skills[it.Name]
 	if it.Action == UpgradeActionRewrite {
+		// The plan was computed before the project lock was taken, so another
+		// process may have rewritten this declaration while we waited. Applying
+		// the stale rewrite would silently undo the newer tracking choice.
+		// Update re-derives eligibility under the lock for the same reason.
+		if err := a.checkPlanFresh(p, it, rec); err != nil {
+			res.Reason, res.Err = err.Error(), err
+			return res, err
+		}
 		value := strings.TrimSuffix(strings.TrimPrefix(it.NewDecl, it.Key+` = "`), `"`)
 		if err := manifest.SetKey(manifestPath(p.root), it.Name, it.Key, value); err != nil {
 			res.Reason, res.Err = err.Error(), err
@@ -488,16 +527,25 @@ func (a *App) verifyUpgraded(ctx context.Context, p *project, names []string) er
 }
 
 // rollbackUpgrade restores both files from the snapshot and re-materializes
-// every touched skill from the restored lock.
-func (a *App) rollbackUpgrade(p *project, snap upgradeSnapshot, touched []string) {
+// every touched skill from the restored lock. It returns the first failure it
+// hits so the caller can say the project was left half-restored rather than
+// reporting a plain upgrade failure over a project that no longer matches its
+// own lock.
+func (a *App) rollbackUpgrade(p *project, snap upgradeSnapshot, touched []string, installed map[string]bool) error {
+	var failures []error
 	if wErr := fsutil.WriteFileAtomic(manifestPath(p.root), snap.manifest, 0o644); wErr != nil {
-		a.Logger().Warn("upgrade rollback: restore manifest", "error", wErr)
+		failures = append(failures, fmt.Errorf("restore %s: %w", manifest.FileName, wErr))
 	}
 	if wErr := fsutil.WriteFileAtomic(p.lockPath, snap.lock, 0o644); wErr != nil {
-		a.Logger().Warn("upgrade rollback: restore lock", "error", wErr)
+		failures = append(failures, fmt.Errorf("restore %s: %w", skillslock.FileName, wErr))
 	}
 	a.invalidateManifest(p.root)
-	ctx := context.Background()
+	// A fresh context so the restore survives the cancellation that may have
+	// caused the failure, but a bounded one: the restore can now reach the
+	// network for a commit the clone cache lost, and a rollback must not hang
+	// a failed run indefinitely. Exceeding it surfaces as "rollback incomplete".
+	ctx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
+	defer cancel()
 	for _, name := range touched {
 		locked, ok := snap.state.Skills[name]
 		if !ok {
@@ -505,13 +553,25 @@ func (a *App) rollbackUpgrade(p *project, snap upgradeSnapshot, touched []string
 		}
 		agents, err := a.agentsByID(locked.Installation.Agents)
 		if err != nil {
-			a.Logger().Warn("upgrade rollback: agents", "skill", name, "error", err)
+			failures = append(failures, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		if _, rErr := a.reconcileFromLock(ctx, p, name, locked, agents, SyncRequest{Root: p.root, Offline: true}, false); rErr != nil {
-			a.Logger().Warn("upgrade rollback: reconcile", "skill", name, "error", rErr)
+		// replaceActive only for a skill this run installed: its content is
+		// ours, and the installer would otherwise read it as drift and refuse.
+		// For every other skill the restore stays guarded, so a hand-edited
+		// copy fails closed and is reported instead of being overwritten.
+		// Online: the old commit may no longer be in the clone cache, and
+		// upgrade already refuses --offline.
+		if _, rErr := a.reconcileFromLock(ctx, p, name, locked, agents, SyncRequest{Root: p.root}, reconcileOpts{replaceActive: installed[name]}); rErr != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", name, rErr))
 		}
 	}
+	if len(failures) == 0 {
+		return nil
+	}
+	return errs.WithHint(
+		fmt.Errorf("rollback incomplete: %w", errors.Join(failures...)),
+		"the project may not match its lockfile — run 'gskill repair'")
 }
 
 func countUpgradeOutcomes(out *UpgradeResult) {

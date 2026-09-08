@@ -1334,7 +1334,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	}
 
 	result, err := a.reconcileFromLock(ctx, p, name, prior, missing,
-		SyncRequest{Root: p.root, Offline: req.Offline}, false)
+		SyncRequest{Root: p.root, Offline: req.Offline}, reconcileOpts{})
 	if err != nil {
 		return LockSkillResult{}, false // repair failed: retry via the full path
 	}
@@ -1529,17 +1529,21 @@ func (a *App) declarationDiff(root, name string, lf *skillslock.State) []string 
 	if declared := declaredRequested(decl); declared != (resolver.Requested{}) && !intentAgrees(decl, prior) {
 		keys = append(keys, pinKey(decl))
 	}
-	return append(keys, placementDiff(name, decl, prior)...)
+	return append(keys, placementDiff(decl, prior)...)
 }
 
 // placementDiff names the non-pin keys — source, skill, mode — whose declared
 // value disagrees with the lock entry.
-func placementDiff(name string, decl manifest.Skill, prior skillslock.Record) []string {
+func placementDiff(decl manifest.Skill, prior skillslock.Record) []string {
 	var keys []string
 	if decl.Source != "" && decl.Source != prior.Source.Original && decl.Source != prior.Source.URL {
 		keys = append(keys, "source")
 	}
-	if decl.Skill != "" && decl.Skill != prior.Source.Path && decl.Skill != name {
+	// Any declared skill path that differs from the recorded one is a change,
+	// including one equal to the installed name: stageAndVerifyLockEntry
+	// honours decl.Skill as the source path with no such exemption, so
+	// exempting it here would let the diff and the consumer disagree.
+	if decl.Skill != "" && decl.Skill != prior.Source.Path {
 		keys = append(keys, "skill")
 	}
 	if decl.Mode != "" && decl.Mode != manifest.ModeAuto && decl.Mode != prior.Installation.Mode {
@@ -1576,6 +1580,14 @@ func (a *App) frozenPreflight(p *project, lf *skillslock.State) error {
 				"run 'gskill install' without --frozen-lockfile to resolve and lock it")
 		}
 		keys := a.declarationDiff(p.root, name, lf)
+		// Agents sit outside declarationDiff, which also feeds
+		// declarationChanged and declarationMatchesLock where an agents-only
+		// diff would change non-frozen semantics. Frozen still has to catch it:
+		// a narrowed list reaches removeDroppedAgents and deletes a target the
+		// suppressed lock write keeps on declaring.
+		if declared := a.declaredAgents(p.root, name); len(declared) > 0 && !sameStringSet(declared, prior.Installation.Agents) {
+			keys = append(keys, "agents")
+		}
 		if _, digest, oErr := a.overrideFor(p.root, name); oErr == nil && !overrideMatchesLock(prior, digest) {
 			keys = append(keys, "override")
 		}

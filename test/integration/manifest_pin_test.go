@@ -1,10 +1,13 @@
 package integration_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/glapsfun/gskill/internal/testutil"
 )
 
 // setManifestKey rewrites one scalar key in a skill's manifest block.
@@ -209,5 +212,38 @@ func TestPin_ModeEditRematerializes(t *testing.T) {
 	}
 	if !strings.Contains(readLock(t, proj), `"installMode": "copy"`) {
 		t.Errorf("lock does not record the copy mode:\n%s", readLock(t, proj))
+	}
+}
+
+// TestPin_SkillPathEditToInstalledNameReResolves: a skill installed as "demo"
+// from "legacy/demo" is re-pointed by editing `skill` to "demo". The runtime
+// honours that key as a source path, so this is a real change. The diff used
+// to exempt any value equal to the installed name, so install short-circuited
+// to "up to date" and kept serving legacy/demo — and --frozen-lockfile
+// accepted the mismatch, so CI could not see it either.
+func TestPin_SkillPathEditToInstalledNameReResolves(t *testing.T) {
+	t.Parallel()
+
+	repo := testutil.InitSkillRepo(t, "legacy/demo", validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--skill", "demo", "--version", "^1.0.0"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	if data := readFile(t, manifestPath(proj)); !bytes.Contains(data, []byte(`skill = "legacy/demo"`)) {
+		t.Fatalf("manifest does not record the source path:\n%s", data)
+	}
+	lock := readLock(t, proj)
+
+	setManifestKey(t, proj, "demo", "skill", "demo")
+	_, stderr, code := runGskill(t, proj, "install")
+	if code == 0 {
+		t.Errorf("install ignored the changed skill path and reported success; stderr %s", stderr)
+	}
+	if readLock(t, proj) != lock {
+		t.Error("a failed re-resolution rewrote the lock")
+	}
+	if _, stderr, code := runGskill(t, proj, "install", "--frozen-lockfile"); code != 4 {
+		t.Errorf("frozen install with a changed skill path exit = %d, want 4; stderr %s", code, stderr)
 	}
 }

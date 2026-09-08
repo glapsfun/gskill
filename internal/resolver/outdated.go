@@ -93,7 +93,7 @@ func OutdatedShaped(ctx context.Context, runner git.Runner, ref source.Ref, shap
 	case ShapeLocal:
 		return OutdatedResult{Current: "local", Latest: "local", Status: StatusLocalSource}, nil
 	case ShapeBranch:
-		return outdatedBranch(ctx, runner, ref, current)
+		return outdatedBranch(ctx, runner, ref, req, current)
 	case ShapeTag:
 		return outdatedTag(ctx, runner, ref, current)
 	case ShapeExactVersion:
@@ -186,9 +186,15 @@ func outdatedTag(ctx context.Context, runner git.Runner, ref source.Ref, current
 	return res, nil
 }
 
-// outdatedBranch compares the locked commit against the current branch head.
-func outdatedBranch(ctx context.Context, runner git.Runner, ref source.Ref, current Revision) (OutdatedResult, error) {
-	branch := current.Branch
+// outdatedBranch compares the locked commit against the head of the branch the
+// declaration names. The declared ref wins over the locked one: the manifest is
+// authoritative for intent, and the install will use it, so discovering against
+// the lock's branch would describe a branch the run is not going to touch.
+func outdatedBranch(ctx context.Context, runner git.Runner, ref source.Ref, req Requested, current Revision) (OutdatedResult, error) {
+	branch := req.Ref
+	if branch == "" {
+		branch = current.Branch
+	}
 	if branch == "" {
 		branch = "HEAD"
 	}

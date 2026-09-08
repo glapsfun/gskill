@@ -42,7 +42,7 @@ append  = ["gskill/code-review/house-rules.md"]
 | `version` | no | A semver constraint to track. `gskill update` advances within it; `gskill upgrade` changes it. An exact version (`1.2.0`) is a pin that only `upgrade` or an edit moves. |
 | `ref` | no | A tag or branch. Resolved to an immutable commit before it reaches the lockfile. |
 | `commit` | no | An exact revision. Wins over `ref`, which then has no effect. |
-| `agents` | no | Which agents receive the skill. Editing this and re-running `install` adds or removes targets. |
+| `agents` | no | Which agents receive the skill. Editing this adds or removes targets on the next `install`, `update`, or `upgrade`. Under `--frozen-lockfile` a changed list is refused (exit `4`) rather than applied. |
 | `mode` | no | `symlink` (default behaviour), `copy`, or `auto`. Recorded only when you ask for it. |
 
 Unknown keys in a skill table are an **error**, not a warning. A typo such as `apend` would

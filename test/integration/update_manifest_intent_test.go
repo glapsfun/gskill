@@ -318,3 +318,78 @@ func TestUpdate_NoProjectFilesExitsZero(t *testing.T) {
 		t.Errorf("stdout = %q", stdout)
 	}
 }
+
+// narrowAgents drops codex from one declaration, the way a user edits
+// skills.toml by hand to stop targeting an agent.
+func narrowAgents(t *testing.T, proj string) {
+	t.Helper()
+	data := readFile(t, manifestPath(proj))
+	out := bytes.Replace(data, []byte(`agents = ["claude", "codex"]`), []byte(`agents = ["claude"]`), 1)
+	if bytes.Equal(data, out) {
+		t.Fatalf("could not narrow the agent list in:\n%s", data)
+	}
+	if err := os.WriteFile(manifestPath(proj), out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdate_NarrowedAgentsRemovesTarget: install already removes the target
+// of an agent dropped from the manifest. update must do the same. Before the
+// fix it replaced the lock record with the narrowed agent set while leaving
+// the codex symlink on disk — an orphan no later command tracks, still
+// pointing at the active path update had just rewritten, so the dropped agent
+// silently kept reading new content.
+func TestUpdate_NarrowedAgentsRemovesTarget(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--version", "^1.0.0", "--agent", "claude,codex"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	codexTarget := filepath.Join(proj, ".codex", "skills", "demo")
+	if _, err := os.Stat(codexTarget); err != nil {
+		t.Fatalf("codex target missing after add: %v", err)
+	}
+	publishNewVersion(t, repo, "demo", "v1.1.0")
+	narrowAgents(t, proj)
+
+	if _, stderr, code := runGskill(t, proj, "update"); code != 0 {
+		t.Fatalf("update: %s", stderr)
+	}
+	if _, err := os.Stat(codexTarget); err == nil {
+		t.Error("update left the dropped agent's target behind as an untracked orphan")
+	}
+	if _, stderr, code := runGskill(t, proj, "verify"); code != 0 {
+		t.Errorf("verify after update: %s", stderr)
+	}
+}
+
+// TestUpdate_RefEditMovesToDeclaredBranch: the manifest is authoritative for
+// intent, so changing ref from main to release must make update follow
+// release. Discovery used to probe the locked branch, so an unchanged main
+// reported "up to date" and update never moved to release at all.
+func TestUpdate_RefEditMovesToDeclaredBranch(t *testing.T) {
+	t.Parallel()
+
+	repo := gitRepo(t, validSkill("demo"), "v1.0.0")
+	proj := newProject(t)
+	initProject(t, proj)
+	if _, stderr, code := runGskill(t, proj, "add", repo, "--ref", "main"); code != 0 {
+		t.Fatalf("add: %s", stderr)
+	}
+	testutil.GitRun(t, repo, "checkout", "--quiet", "-b", "release")
+	testutil.PublishCommit(t, repo, "demo",
+		"---\nname: demo\ndescription: updated\n---\n# demo on-release\n")
+	testutil.GitRun(t, repo, "checkout", "--quiet", "main")
+
+	setManifestKey(t, proj, "demo", "ref", "release")
+	if _, stderr, code := runGskill(t, proj, "update"); code != 0 {
+		t.Fatalf("update: %s", stderr)
+	}
+	content := readFile(t, filepath.Join(proj, ".agents", "skills", "demo", "SKILL.md"))
+	if !strings.Contains(string(content), "on-release") {
+		t.Errorf("update did not follow the declared branch:\n%s", content)
+	}
+}

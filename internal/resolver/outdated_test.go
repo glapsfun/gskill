@@ -3,6 +3,7 @@ package resolver_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/git"
@@ -277,5 +278,31 @@ func TestOutdated_PrereleaseNeverInformationalForStable(t *testing.T) {
 	}
 	if res.Status != resolver.StatusUpToDate || res.Informational != "" {
 		t.Errorf("got %+v, want plain up-to-date with no pre-release hint", res)
+	}
+}
+
+// TestOutdated_BranchPrefersDeclaredRef: the manifest is authoritative for
+// intent, so a ref edited from main to release must be what discovery probes.
+// Probing the locked branch instead makes an unchanged main look up to date
+// while the install would move to release, and shows main's candidate in the
+// preview when main has advanced.
+func TestOutdated_BranchPrefersDeclaredRef(t *testing.T) {
+	t.Parallel()
+
+	runner := fakeRunner{refs: map[string]string{
+		"main":    "oldheadoldheadoldhead",
+		"release": "releaseheadreleasehead",
+	}}
+	current := resolver.Revision{RefKind: resolver.RefKindBranch, Branch: "main", Commit: "oldheadoldheadoldhead"}
+
+	res, err := resolver.Outdated(context.Background(), runner, gitRef(), resolver.Requested{Ref: "release"}, current)
+	if err != nil {
+		t.Fatalf("Outdated: %v", err)
+	}
+	if !res.Available() || res.Status != resolver.StatusUpdateAvailable {
+		t.Errorf("got %+v, want the declared release branch to be actionable", res)
+	}
+	if want := "releasehead"; !strings.HasPrefix(res.Latest, want) {
+		t.Errorf("latest = %q, want the head of the declared branch (%s…)", res.Latest, want)
 	}
 }
