@@ -200,7 +200,11 @@ func finishPlanItem(item UpdatePlanItem, name string, decl manifest.Skill, decla
 	switch {
 	case item.Pinned:
 		item.NextAction = "gskill upgrade " + name
-		item.Reason = pinnedReason(decl, rec)
+		if declared {
+			item.Reason = pinnedReason(decl, rec)
+		} else {
+			item.Reason = notActionableReason(item.Status)
+		}
 		if item.DiscoveryErr != "" {
 			item.Reason += " (newest-tag lookup failed: " + item.DiscoveryErr + ")"
 		}
