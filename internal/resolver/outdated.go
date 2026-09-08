@@ -146,10 +146,13 @@ func outdatedSemver(ctx context.Context, runner git.Runner, ref source.Ref, req 
 		}
 	}
 
-	bestAll, _, anyTag := highestStable(tags, admitsPrerelease(req.Version))
+	allowPre := admitsPrerelease(req.Version)
+	bestAll, _, anyTag := highestStable(tags, allowPre)
 
 	bestSat, _, ok := highestTag(tags, constraint)
-	if ok {
+	if constraint == nil && !allowPre {
+		bestSat, _, ok = highestStable(tags, false)
+	}
 		if res := compareVersions(current.Version, bestSat); res.Available() {
 			return res, nil
 		}
