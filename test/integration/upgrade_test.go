@@ -72,7 +72,7 @@ func TestUpgrade_LatestRewritesOneLine(t *testing.T) {
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}
 	}
-	if _, stderr, code := runGskill(t, proj, "verify"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "verify"); code != 0 {
 		t.Errorf("verify after upgrade: %s", stderr)
 	}
 }
@@ -526,7 +526,7 @@ func TestUpgrade_RollbackAfterActivation(t *testing.T) { //nolint:paralleltest /
 	}
 	// --fail-on-drift is what makes this load-bearing: a plain check exits 0
 	// even with upgraded content sitting under a reverted lock.
-	if _, checkErr, checkCode := runGskill(t, proj, "check", "--fail-on-drift"); checkCode != 0 {
+	if _, checkErr, checkCode := runGskill(t, proj, "project", "check", "--fail-on-drift"); checkCode != 0 {
 		t.Errorf("check --fail-on-drift after rollback: exit %d %s", checkCode, checkErr)
 	}
 }

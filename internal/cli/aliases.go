@@ -5,8 +5,7 @@ const (
 	aliasKindCommand = "command"
 	aliasKindFlag    = "flag"
 
-	aliasMechKong   = "kong-alias"     // visible annotation on the canonical command
-	aliasMechHidden = "hidden-command" // absent from all help listings
+	aliasMechKong = "kong-alias" // visible annotation on the canonical command
 )
 
 // aliasMapping records one retained old invocation and the canonical form it
@@ -17,7 +16,7 @@ type aliasMapping struct {
 	Old       string // exact invocation that must keep working
 	Canonical string // canonical form it maps to
 	Kind      string // aliasKindCommand or aliasKindFlag
-	Mechanism string // aliasMechKong or aliasMechHidden
+	Mechanism string // aliasMechKong
 }
 
 // aliasTable is the single source of truth for backward-compatible aliases:
@@ -25,15 +24,12 @@ type aliasMapping struct {
 // completion. Every entry here must keep behaving identically to its
 // canonical form, silently (no deprecation nags), for as long as it exists;
 // removing a row is a breaking change that requires its own spec (as spec
-// 020 did for the former `status` -> `list` alias).
+// 020 did for the former `status` -> `list` alias, and spec 025 for the five
+// hidden aliases of the `project` maintenance commands). Only visible,
+// help-annotated aliases remain — there is no hidden mechanism any more.
 var aliasTable = []aliasMapping{
 	{Old: "find", Canonical: "search", Kind: aliasKindCommand, Mechanism: aliasMechKong},
 	{Old: "tui", Canonical: "dashboard", Kind: aliasKindCommand, Mechanism: aliasMechKong},
-	{Old: "sync", Canonical: "project sync", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
-	{Old: "repair", Canonical: "project repair", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
-	{Old: "verify", Canonical: "project verify", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
-	{Old: "check", Canonical: "project check", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
-	{Old: "diff", Canonical: "project diff", Kind: aliasKindCommand, Mechanism: aliasMechHidden},
 
 	// Flag audit result (spec FR-009): the shared vocabulary — --agent
 	// (repeatable), --global/--project, --force, --all, --dry-run, --yes,

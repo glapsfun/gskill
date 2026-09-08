@@ -18,11 +18,13 @@ A value set at a higher layer overrides the same value from any lower layer.
 | --- | --- | --- |
 | Flags | Pass on the command line | `gskill add ./skill --copy` |
 | Environment | `GSKILL_*` variables | `GSKILL_OFFLINE=1 gskill install --frozen-lockfile` |
-| Config file | Edit `config.toml` (find it with `gskill config path`) | `[defaults]` `install_mode = "copy"` |
+| Config file | Edit `config.toml` (find it with `gskill config list`) | `[defaults]` `install_mode = "copy"` |
 | Defaults | Built in | `install_mode` defaults to `symlink` |
 
-Run `gskill config path` to find the active config file, and `gskill config list` to print the
-effective, fully-resolved configuration.
+Run `gskill config list` to see both: it leads with the active config file path and then prints
+the effective, fully-resolved configuration. Its JSON form is `{"path": …, "values": {…}}` —
+the settings are nested under `values` so that the config-key namespace stays free of `path`,
+which is not a configuration key and is not accepted by `gskill config get`.
 
 ## Common settings
 

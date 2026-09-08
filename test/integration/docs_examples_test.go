@@ -19,7 +19,7 @@ import (
 // TestDocsExamples_LocalSkillLifecycle backs:
 //   - docs/tutorials/getting-started.md
 //   - docs/how-to/install-a-local-skill.md
-//   - docs/how-to/inspect-list-info-diff.md
+//   - docs/how-to/inspect-list-info-check.md
 //   - docs/how-to/script-with-json.md
 func TestDocsExamples_LocalSkillLifecycle(t *testing.T) {
 	t.Parallel()
@@ -79,7 +79,7 @@ func TestDocsExamples_VerifyDetectsTampering(t *testing.T) {
 		t.Fatalf("add: %s", stderr)
 	}
 
-	if _, stderr, code := runGskill(t, proj, "verify"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "verify"); code != 0 {
 		t.Fatalf("clean verify exit: %s", stderr)
 	}
 
@@ -88,7 +88,7 @@ func TestDocsExamples_VerifyDetectsTampering(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, code := runGskill(t, proj, "verify"); code != 6 {
+	if _, _, code := runGskill(t, proj, "project", "verify"); code != 6 {
 		t.Errorf("verify after tamper exit = %d, want 6 (integrity failure)", code)
 	}
 }
@@ -132,9 +132,9 @@ func TestDocsExamples_JSONStatusCommands(t *testing.T) {
 	}
 
 	for _, args := range [][]string{
-		{"check"},
+		{"project", "check"},
 		{"outdated"},
-		{"verify"},
+		{"project", "verify"},
 		{"update", "--list"},
 		{"update", "--list", "--all"},
 	} {
@@ -195,11 +195,11 @@ func TestDocsExamples_CustomizeASkill(t *testing.T) {
 	}
 	// check reports drift in its output; a non-zero exit is reserved for
 	// --fail-on-drift, which is the contract the page describes.
-	checkOut, checkErr, _ := runGskill(t, proj, "check")
+	checkOut, checkErr, _ := runGskill(t, proj, "project", "check")
 	if !strings.Contains(checkOut+checkErr, "house-rules.md") {
 		t.Errorf("check does not name the changed input, contrary to the page:\n%s\n%s", checkOut, checkErr)
 	}
-	if _, _, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 7 {
+	if _, _, code := runGskill(t, proj, "project", "check", "--fail-on-drift"); code != 7 {
 		t.Errorf("check --fail-on-drift = exit %d, want 7", code)
 	}
 }

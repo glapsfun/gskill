@@ -67,14 +67,9 @@ Remove all cached material.
 List cached entries.
 
 
-## `cache path`
-
-Print the cache directory.
-
-
 ## `cache stats`
 
-Show cache size and entry count.
+Show the cache directory, entry count, and size.
 
 
 ## `completion`
@@ -102,12 +97,7 @@ Print one configuration value.
 
 ## `config list`
 
-Print the effective configuration.
-
-
-## `config path`
-
-Print the config file path.
+Print the config file path and the effective configuration.
 
 
 ## `dashboard` (alias: `tui`)
@@ -175,11 +165,6 @@ Report fast drift status.
 | Flag | Type | Description |
 | --- | --- | --- |
 | `--fail-on-drift` | bool | Exit non-zero (7) if any drift is detected. |
-
-
-## `project diff`
-
-Show lock/disk differences.
 
 
 ## `project repair`

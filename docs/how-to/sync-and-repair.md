@@ -1,8 +1,5 @@
 # Sync and repair
 
-> `gskill project sync` / `gskill project repair` are the canonical commands;
-> the former flat `gskill sync` / `gskill repair` still work as silent aliases.
-
 Reconcile what's on disk with the lockfile, and fix installs that have gone missing or broken.
 
 ## Before you start
@@ -41,7 +38,7 @@ staging, **without** changing the lockfile.
 
 If committed skill content was edited by hand, plain `sync` (like `add` and `install`) fails with
 "committed content for skill X ... no longer matches skills-lock.json" and the hint to run
-`gskill repair` (or `gskill install --force`) to restore lock-true content, or re-add the skill to
+`gskill project repair` (or `gskill install --force`) to restore lock-true content, or re-add the skill to
 adopt the edits. Drift is never auto-repaired.
 
 ## Expected result

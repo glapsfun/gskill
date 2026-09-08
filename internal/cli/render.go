@@ -172,23 +172,9 @@ func renderSkillCatalogStyled(skills []discovery.DiscoveredSkill) string {
 	return renderAligned(st, []string{"ID", "VALID", "PATH"}, rows)
 }
 
-// renderDiffStyled renders `gskill project diff` for a TTY.
-func renderDiffStyled(entries []app.DiffEntry) string {
-	if len(entries) == 0 {
-		return "No skills declared."
-	}
-	st := tui.DefaultTheme()
-	rows := make([][]string, 0, len(entries))
-	for _, e := range entries {
-		rows = append(rows, []string{
-			st.Accent.Render(e.Name), st.StatusCell(e.Status),
-		})
-	}
-	return renderAligned(st, []string{"NAME", "STATUS"}, rows)
-}
-
-// renderConfigListStyled renders `gskill config list` for a TTY.
-func renderConfigListStyled(values map[string]string) string {
+// renderConfigListStyled renders `gskill config list` for a TTY, leading with
+// the config file path folded in from the retired `config path` command.
+func renderConfigListStyled(path string, values map[string]string) string {
 	st := tui.DefaultTheme()
 	keys := make([]string, 0, len(values))
 	for k := range values {
@@ -199,7 +185,7 @@ func renderConfigListStyled(values map[string]string) string {
 	for _, k := range keys {
 		rows = append(rows, []string{st.Accent.Render(k), values[k]})
 	}
-	return renderAligned(st, []string{"KEY", "VALUE"}, rows)
+	return st.Hint.Render("# "+path) + "\n" + renderAligned(st, []string{"KEY", "VALUE"}, rows)
 }
 
 // renderDoctorStyled renders `gskill doctor` for a TTY.

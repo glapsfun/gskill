@@ -67,8 +67,8 @@ re-generate the patch or drop it.
 Editing `house-rules.md` after installing changes the declaration's identity, so gskill reports it:
 
 ```bash
-gskill check      # names the skill and the input that changed
-gskill install    # re-applies, bringing committed content back in line
+gskill project check   # names the skill and the input that changed
+gskill install         # re-applies, bringing committed content back in line
 ```
 
 Under `--frozen-lockfile` the same edit fails closed instead — a CI run must not quietly

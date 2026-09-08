@@ -40,7 +40,7 @@ func TestSyncPrune_RemovesOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, stderr, code := runGskill(t, proj, "sync", "--prune"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync", "--prune"); code != 0 {
 		t.Fatalf("sync --prune: %s", stderr)
 	}
 
@@ -71,7 +71,7 @@ func TestRepair_RematerializesBrokenInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, stderr, code := runGskill(t, proj, "repair"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "repair"); code != 0 {
 		t.Fatalf("repair: %s", stderr)
 	}
 	if _, err := os.Stat(filepath.Join(proj, ".claude", "skills", "demo", "SKILL.md")); err != nil {

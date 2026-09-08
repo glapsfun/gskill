@@ -175,11 +175,11 @@ func TestRepoOwned_SymlinklessCheckoutDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, stderr, _ := runGskill(t, proj, "check")
+	_, stderr, _ := runGskill(t, proj, "project", "check")
 	if !strings.Contains(stderr, "plain file, not a symlink") || !strings.Contains(stderr, "core.symlinks=false") {
 		t.Errorf("check did not emit the frozen symlink-less error, stderr:\n%s", stderr)
 	}
-	if _, _, code := runGskill(t, proj, "check", "--fail-on-drift"); code != 7 {
+	if _, _, code := runGskill(t, proj, "project", "check", "--fail-on-drift"); code != 7 {
 		t.Errorf("check --fail-on-drift exit = %d, want 7", code)
 	}
 
@@ -192,7 +192,7 @@ func TestRepoOwned_SymlinklessCheckoutDetected(t *testing.T) {
 	// sync refuses to reconcile it, reporting the same frozen error
 	// (spec 022, epic T04: error, not silent repair).
 	requirePlainFile(t, linkPath, "after check/doctor")
-	_, stderr, code := runGskill(t, proj, "sync")
+	_, stderr, code := runGskill(t, proj, "project", "sync")
 	if code == 0 {
 		t.Error("sync on a symlink-less checkout succeeded, want fail-closed")
 	}

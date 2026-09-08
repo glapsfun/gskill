@@ -28,6 +28,3 @@ PROJECT (lockfile · installed state)
 
   project check [flags]
     Report fast drift status.
-
-  project diff
-    Show lock/disk differences.

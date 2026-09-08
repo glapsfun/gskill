@@ -157,7 +157,7 @@ func TestAutoMigrate_SyncConvertsWithOneNotice(t *testing.T) {
 	makeLegacyProject(t, a, home, proj, repo)
 	storeBefore := digestDir(t, filepath.Join(home, "store"))
 
-	if _, stderr, code := runGskillWithApp(t, a, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskillWithApp(t, a, proj, "project", "sync"); code != 0 {
 		t.Fatalf("sync exit %d: %s", code, stderr)
 	}
 
@@ -172,7 +172,7 @@ func TestAutoMigrate_SyncConvertsWithOneNotice(t *testing.T) {
 
 	// A second run migrates nothing and stays quiet.
 	notice.Reset()
-	if _, stderr, code := runGskillWithApp(t, a, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskillWithApp(t, a, proj, "project", "sync"); code != 0 {
 		t.Fatalf("second sync exit %d: %s", code, stderr)
 	}
 	if notice.Len() != 0 {
@@ -197,7 +197,7 @@ func TestAutoMigrate_OfflineFromStoreObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, stderr, code := runGskillWithApp(t, a, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskillWithApp(t, a, proj, "project", "sync"); code != 0 {
 		t.Fatalf("offline migration exit %d, want 0 (store object is valid): %s", code, stderr)
 	}
 	assertRepoOwnedDemo(t, proj)
@@ -220,7 +220,7 @@ func TestAutoMigrate_ColdCacheFetchesByCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, stderr, code := runGskillWithApp(t, a, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskillWithApp(t, a, proj, "project", "sync"); code != 0 {
 		t.Fatalf("cold-cache migration exit %d, want 0 (fetch by commit): %s", code, stderr)
 	}
 	assertRepoOwnedDemo(t, proj)
@@ -292,7 +292,7 @@ func TestAutoMigrate_NonMutatingLeavesLegacyUntouched(t *testing.T) {
 	makeLegacyProject(t, a, home, proj, repo)
 	before := digestDir(t, proj)
 
-	for _, args := range [][]string{{"list"}, {"check"}} {
+	for _, args := range [][]string{{"list"}, {"project", "check"}} {
 		if _, stderr, code := runGskillWithApp(t, a, proj, args...); code != 0 {
 			t.Fatalf("%v exit %d: %s", args, code, stderr)
 		}

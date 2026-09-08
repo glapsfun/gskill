@@ -25,7 +25,7 @@ gskill doctor --json     # machine-readable report
 - When a skill declares `requires.commands` (e.g. `kubectl`) or `requires.environment` (e.g.
   `KUBECONFIG`) and you want to confirm they're present.
 - When agent links look wrong: a checkout made without symlink support (e.g. `core.symlinks=false`)
-  leaves plain files where agent links should be — `gskill doctor` (and `gskill check`) report it;
+  leaves plain files where agent links should be — `gskill doctor` (and `gskill project check`) report it;
   the fix is to re-clone on a symlink-capable filesystem.
 
 ## See also

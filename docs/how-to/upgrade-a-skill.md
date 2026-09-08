@@ -86,7 +86,7 @@ disagree. The exit code is that of the failure (`130` for an interrupt).
 
 The restore replaces only content this run installed. Content you edited by hand is never
 overwritten by a rollback: the restore stops and the run reports `rollback incomplete` with a
-hint to run `gskill repair`, so a project that no longer matches its lockfile always says so
+hint to run `gskill project repair`, so a project that no longer matches its lockfile always says so
 rather than failing quietly.
 
 ## Machine-readable output

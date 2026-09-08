@@ -97,7 +97,7 @@ func TestCloneAndGo_OverriddenRestoreFromCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync"); code != 0 {
 		t.Fatalf("sync after losing committed content: exit %d: %s", code, stderr)
 	}
 	content, err := os.ReadFile(filepath.Join(proj, ".agents", "skills", "demo", "SKILL.md")) //nolint:gosec // test project

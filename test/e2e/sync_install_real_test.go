@@ -45,7 +45,7 @@ func TestE2E_SyncFromManifest(t *testing.T) {
 	proj := newProject(t)
 	writeManifest(t, proj, []string{"claude", "codex"}, "argocd", "fluxcd", "helm")
 
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync"); code != 0 {
 		t.Fatalf("first sync exit %d: %s", code, stderr)
 	}
 	for skill := range knownSkills {
@@ -58,7 +58,7 @@ func TestE2E_SyncFromManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stdout, stderr, code := runGskill(t, proj, "--json", "sync")
+	stdout, stderr, code := runGskill(t, proj, "--json", "project", "sync")
 	if code != 0 {
 		t.Fatalf("second sync exit %d: %s", code, stderr)
 	}

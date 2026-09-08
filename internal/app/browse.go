@@ -139,30 +139,6 @@ func (a *App) Info(_ context.Context, root, name string) (SkillInfo, error) {
 	}, nil
 }
 
-// DiffEntry reports how a locked skill differs from disk.
-type DiffEntry struct {
-	Name   string
-	Status string
-}
-
-// Diff reports lock/disk drift per skill.
-func (a *App) Diff(_ context.Context, root string) ([]DiffEntry, error) {
-	p := openProject(root)
-	lf, err := loadOrNewLock(p.lockPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var out []DiffEntry
-	for _, name := range sortedKeys(lf.Skills) {
-		out = append(out, DiffEntry{
-			Name:   name,
-			Status: string(classifySkill(root, name, lf)),
-		})
-	}
-	return out, nil
-}
-
 // SkillMarkdown returns the installed SKILL.md content for a skill, read from
 // its first available agent target (for the TUI preview).
 func (a *App) SkillMarkdown(_ context.Context, root, name string) (string, error) {

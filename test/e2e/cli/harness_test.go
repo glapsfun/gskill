@@ -25,6 +25,14 @@ type result struct {
 // command-coverage test.
 var invocations sync.Map // string -> bool
 
+// groupCommands are the command groups whose leaf must be recorded as a
+// two-token invocation ("project verify"), so the coverage contract in
+// requiredCommands can name a leaf instead of the bare group. Without this,
+// only a flag-shaped second token was ever joined, and the maintenance
+// commands would silently collapse to "project" once spec 025 moved them off
+// their flat aliases.
+var groupCommands = map[string]bool{"project": true, "cache": true, "config": true}
+
 func record(args []string) {
 	if len(args) == 0 {
 		return
@@ -40,7 +48,7 @@ func record(args []string) {
 		}
 	}
 	invocations.Store(parts[0], true)
-	if len(parts) == 2 && strings.HasPrefix(parts[1], "--") {
+	if len(parts) == 2 && (strings.HasPrefix(parts[1], "--") || groupCommands[parts[0]]) {
 		invocations.Store(parts[0]+" "+parts[1], true)
 	}
 	for _, a := range args {

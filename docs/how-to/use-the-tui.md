@@ -33,5 +33,5 @@ gskill dashboard
 
 ## See also
 
-- [Inspect with list, info, and diff](inspect-list-info-diff.md)
+- [Inspect with list, info, and check](inspect-list-info-check.md)
 - [Integrity and trust](../explanation/integrity-and-trust.md)

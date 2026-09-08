@@ -26,8 +26,8 @@ fetched for one project restores instantly in another.
 
 The cache lives under `$HOME/.gskill` (relocatable only via the `GSKILL_HOME` environment
 variable), alongside the only other things kept there: `locks/`, `tmp/`, and `config.toml`.
-GSKILL supports macOS and Linux. Use `gskill cache path` to print the exact directory on your
-machine.
+GSKILL supports macOS and Linux. Run `gskill cache stats` to print the exact directory on your
+machine, alongside its entry count and size (`--json` exposes it as the `path` field).
 
 ## See also
 

@@ -13,8 +13,7 @@ import (
 
 // configCmd groups configuration subcommands.
 type configCmd struct {
-	Path configPathCmd `cmd:"" help:"Print the config file path."`
-	List configListCmd `cmd:"" help:"Print the effective configuration."`
+	List configListCmd `cmd:"" help:"Print the config file path and the effective configuration."`
 	Get  configGetCmd  `cmd:"" help:"Print one configuration value."`
 }
 
@@ -39,32 +38,36 @@ func effectiveConfig(root string) (map[string]string, error) {
 	}, nil
 }
 
-type configPathCmd struct{}
-
-// Help returns the detailed help shown by `gskill config path --help`.
-func (configPathCmd) Help() string {
-	return examplesHelp("gskill config path")
-}
-
-// Run prints the configuration file path.
-func (configPathCmd) Run(out *Output) error {
+// configFilePath resolves the user-level configuration file, the value the
+// retired `config path` command used to print on its own.
+func configFilePath() (string, error) {
 	dir, err := config.Dir()
 	if err != nil {
-		return err
+		return "", err
 	}
-	path := filepath.Join(dir, "config.toml")
-	return out.Result(path, map[string]any{"path": path})
+	return filepath.Join(dir, "config.toml"), nil
 }
 
 type configListCmd struct{}
 
 // Help returns the detailed help shown by `gskill config list --help`.
 func (configListCmd) Help() string {
-	return examplesHelp("gskill config list --json")
+	return examplesHelp("gskill config list", "gskill config list --json")
 }
 
-// Run prints the effective configuration.
+// Run prints the config file path and the effective configuration.
+//
+// Spec 025 folded the former `config path` command in here. The values are
+// nested under "values" rather than flattened alongside "path", because the
+// flat object's keys are configuration keys: a sibling "path" would put a
+// non-configuration name into that namespace and leave `config get path`
+// failing as an unknown key. Nesting keeps the two namespaces apart and makes
+// the payload self-describing.
 func (configListCmd) Run(out *Output, root projectRoot) error {
+	path, err := configFilePath()
+	if err != nil {
+		return err
+	}
 	values, err := effectiveConfig(string(root))
 	if err != nil {
 		return err
@@ -75,16 +78,16 @@ func (configListCmd) Run(out *Output, root projectRoot) error {
 	}
 	sort.Strings(keys)
 
-	human := ""
+	human := "# " + path + "\n"
 	obj := make(map[string]any, len(values))
 	for _, k := range keys {
 		human += fmt.Sprintf("%s = %s\n", k, values[k])
 		obj[k] = values[k]
 	}
 	if out.Interactive() {
-		human = renderConfigListStyled(values)
+		human = renderConfigListStyled(path, values)
 	}
-	return out.Result(human, obj)
+	return out.Result(human, map[string]any{"path": path, "values": obj})
 }
 
 type configGetCmd struct {

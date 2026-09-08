@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -34,14 +35,11 @@ var helpPages = []struct {
 	{"project-repair", []string{"project", "repair"}},
 	{"project-verify", []string{"project", "verify"}},
 	{"project-check", []string{"project", "check"}},
-	{"project-diff", []string{"project", "diff"}},
 
-	{"cache-path", []string{"cache", "path"}},
 	{"cache-stats", []string{"cache", "stats"}},
 	{"cache-list", []string{"cache", "list"}},
 	{"cache-clean", []string{"cache", "clean"}},
 
-	{"config-path", []string{"config", "path"}},
 	{"config-list", []string{"config", "list"}},
 	{"config-get", []string{"config", "get"}},
 	{"doctor", []string{"doctor"}},
@@ -50,15 +48,53 @@ var helpPages = []struct {
 	{"version", []string{"version"}},
 }
 
-// visibleTopLevel is the canonical 16-entry command surface (spec 010 FR-001
-// + spec 011 onboard, minus the commands retired by spec 021 and the
-// store/migrate/projects trees retired by spec 022).
+// visibleTopLevel is the canonical 17-entry command surface (spec 010 FR-001
+// + spec 011 onboard + spec 024 upgrade, minus the commands retired by spec
+// 021, the store/migrate/projects trees retired by spec 022, and the hidden
+// flat aliases retired by spec 025). It is spelled out on purpose, so it
+// locks the contract independently of the grammar the help is rendered from,
+// and it is compared by set EQUALITY: a containment check cannot notice a
+// command that was added and never registered here — which is exactly how
+// `upgrade` went missing from this list between spec 024 and spec 025.
 var visibleTopLevel = []string{
-	"add", "onboard", "install", "update", "remove",
+	"add", "onboard", "install", "update", "upgrade", "remove",
 	"list", "info", "search", "outdated",
 	"project",
 	"cache", "config", "doctor",
 	"dashboard", "completion", "version",
+}
+
+// topLevelEntryRE matches one command entry in the root help: a name at
+// exactly two spaces of indentation. Descriptions sit at four spaces and the
+// flag block's entries start with a dash, so neither is captured.
+var topLevelEntryRE = regexp.MustCompile(`(?m)^ {2}([a-z][a-z-]*)\b`)
+
+// rootHelpCommands returns the set of command names the root help advertises.
+func rootHelpCommands(stdout string) map[string]bool {
+	got := make(map[string]bool)
+	for _, m := range topLevelEntryRE.FindAllStringSubmatch(stdout, -1) {
+		got[m[1]] = true
+	}
+	return got
+}
+
+// diffSets returns the names present in got but not want, and vice versa.
+func diffSets(got map[string]bool, want []string) (extra, missing []string) {
+	wantSet := make(map[string]bool, len(want))
+	for _, n := range want {
+		wantSet[n] = true
+		if !got[n] {
+			missing = append(missing, n)
+		}
+	}
+	for n := range got {
+		if !wantSet[n] {
+			extra = append(extra, n)
+		}
+	}
+	sort.Strings(extra)
+	sort.Strings(missing)
+	return extra, missing
 }
 
 // TestHelpPages_CoverEveryVisibleLeaf guards helpPages against drift: every
@@ -112,17 +148,22 @@ func TestRootHelp_GroupedSections(t *testing.T) {
 			t.Errorf("root help missing section title %q", section)
 		}
 	}
-	for _, name := range visibleTopLevel {
-		re := regexp.MustCompile(`(?m)^\s+` + name + `\b`)
-		if !re.MatchString(stdout) {
-			t.Errorf("root help missing visible command %q", name)
-		}
+	// Set equality, not containment (spec 025 FR-015): the advertised surface
+	// must be exactly the contracted inventory, so neither an unregistered new
+	// command nor a stale leftover can pass unnoticed.
+	extra, missing := diffSets(rootHelpCommands(stdout), visibleTopLevel)
+	if len(missing) > 0 {
+		t.Errorf("root help missing visible command(s) %v", missing)
 	}
-	// The regrouped maintenance commands must not appear as top-level entries
-	// (FR-004); they live under `project` and as hidden aliases only. `status`
-	// (spec 020) and `init`/`source`/`unlink` (spec 021) stay in this list
-	// because those commands were removed outright: they must never resurface
-	// in root help.
+	if len(extra) > 0 {
+		t.Errorf("root help advertises unexpected top-level command(s) %v", extra)
+	}
+	// The regrouped maintenance commands must not appear as top-level entries:
+	// spec 010 moved them under `project`, and spec 025 removed the hidden
+	// flat aliases that survived that move, so these spellings no longer exist
+	// at all. `status` (spec 020) and `init`/`source`/`unlink` (spec 021) stay
+	// in this list for the same reason — removed outright, and they must never
+	// resurface in root help.
 	for _, old := range []string{"sync", "repair", "lock", "verify", "check", "diff", "status", "init", "source", "unlink"} {
 		re := regexp.MustCompile(`(?m)^\s{2,4}` + old + `\b`)
 		if re.MatchString(stdout) {
@@ -151,11 +192,14 @@ func TestProjectBareInvocation_ShowsGroupHelp(t *testing.T) {
 	if stdout != helpOut {
 		t.Errorf("bare `gskill project` output differs from `gskill project --help`")
 	}
-	for _, sub := range []string{"sync", "repair", "verify", "check", "diff"} {
+	for _, sub := range []string{"sync", "repair", "verify", "check"} {
 		re := regexp.MustCompile(`(?m)^\s+project ` + sub + `\b`)
 		if !re.MatchString(stdout) {
 			t.Errorf("project group help missing subcommand %q", sub)
 		}
+	}
+	if regexp.MustCompile(`(?m)^\s+project diff\b`).MatchString(stdout) {
+		t.Errorf("project group help still lists the removed `diff` subcommand")
 	}
 }
 

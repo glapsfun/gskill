@@ -35,7 +35,7 @@ func TestSyncReconcile_LockDrivenRestore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync"); code != 0 {
 		t.Fatalf("sync: %s", stderr)
 	}
 	requireCounts(t, proj, 1)
@@ -57,14 +57,14 @@ func TestSyncReconcile_Idempotent(t *testing.T) {
 	if _, stderr, code := runGskill(t, proj, "add", repo, "--agent", "claude"); code != 0 {
 		t.Fatalf("add: %s", stderr)
 	}
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync"); code != 0 {
 		t.Fatalf("first sync: %s", stderr)
 	}
 
 	lockPath := filepath.Join(proj, "skills-lock.json")
 	before := dirMTime(t, lockPath)
 
-	stdout, stderr, code := runGskill(t, proj, "--json", "sync")
+	stdout, stderr, code := runGskill(t, proj, "--json", "project", "sync")
 	if code != 0 {
 		t.Fatalf("second sync: %s", stderr)
 	}
@@ -157,7 +157,7 @@ func TestSyncReconcile_LegacyMigration(t *testing.T) {
 		t.Fatalf("rm active: %v", err)
 	}
 
-	if _, stderr, code := runGskill(t, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskill(t, proj, "project", "sync"); code != 0 {
 		t.Fatalf("reconcile sync: %s", stderr)
 	}
 	requireResolvesActive(t, proj, ".claude", "demo") // re-pointed through active

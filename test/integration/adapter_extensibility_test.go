@@ -66,10 +66,10 @@ func TestAdapterExtensibility_NewAgentEndToEnd(t *testing.T) {
 	requireResolvesActive(t, proj, ".acme", "demo")
 
 	// sync (idempotent), check, status all work for the new agent.
-	if _, stderr, code := runGskillWithApp(t, a, proj, "sync"); code != 0 {
+	if _, stderr, code := runGskillWithApp(t, a, proj, "project", "sync"); code != 0 {
 		t.Fatalf("sync: %s", stderr)
 	}
-	if _, stderr, code := runGskillWithApp(t, a, proj, "check", "--fail-on-drift"); code != 0 {
+	if _, stderr, code := runGskillWithApp(t, a, proj, "project", "check", "--fail-on-drift"); code != 0 {
 		t.Fatalf("check: %s", stderr)
 	}
 
@@ -77,7 +77,7 @@ func TestAdapterExtensibility_NewAgentEndToEnd(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(proj, ".acme", "skills", "demo")); err != nil {
 		t.Fatal(err)
 	}
-	if _, stderr, code := runGskillWithApp(t, a, proj, "repair"); code != 0 {
+	if _, stderr, code := runGskillWithApp(t, a, proj, "project", "repair"); code != 0 {
 		t.Fatalf("repair: %s", stderr)
 	}
 	requireResolvesActive(t, proj, ".acme", "demo")

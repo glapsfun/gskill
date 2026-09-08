@@ -42,8 +42,8 @@ cheapest first:
 
 Hand-editing committed skill content makes plain `add`/`install`/`sync` fail with
 "committed content for skill X ... no longer matches skills-lock.json", plus a hint: run
-`gskill repair` (or `gskill install --force`) to restore lock-true content, or re-add the skill to
-adopt the edits. `gskill check --fail-on-drift` exits `7` on it, so CI catches drift too.
+`gskill project repair` (or `gskill install --force`) to restore lock-true content, or re-add the skill to
+adopt the edits. `gskill project check --fail-on-drift` exits `7` on it, so CI catches drift too.
 
 ## Migrating from the old model
 
@@ -57,7 +57,7 @@ needs it.
 ## Platform requirement
 
 The model needs working symlinks: macOS and Linux are supported; Windows is not. A checkout made
-with `core.symlinks=false` leaves plain files where agent links should be — `gskill check` and
+with `core.symlinks=false` leaves plain files where agent links should be — `gskill project check` and
 `gskill doctor` report it, and the fix is to re-clone on a symlink-capable filesystem. `--copy`
 remains a user-chosen install mode (real copies instead of links).
 
