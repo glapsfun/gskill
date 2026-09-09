@@ -58,8 +58,8 @@ These mirror the manifest `[defaults]` block and the global flags:
 | `defaults.agents` | list of agent IDs | Target agents when an `add` specifies none. |
 | `defaults.install_mode` | `symlink` \| `copy` \| `auto` | Default install mode. |
 | `store.lock_timeout` | duration | Bounds the project mutate-lock wait (name kept for config compatibility). |
-| offline | bool (flag `--offline`) | Operate without network. |
-| cache | bool (flag `--no-cache`) | Bypass the clone cache. |
+| `offline` | bool (flag `--offline`) | Operate without network. |
+| `no_cache` | bool (flag `--no-cache`) | Bypass the clone cache. |
 
 > **Known limitation.** `offline` and `no_cache` currently take effect **only** as command-line
 > flags. Setting them in a config file or via `GSKILL_OFFLINE` / `GSKILL_NO_CACHE` changes what
