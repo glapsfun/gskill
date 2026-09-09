@@ -20,7 +20,8 @@ Flags:
       --offline           Operate without network access.
       --no-cache          Bypass the content cache.
       --dry-run           Report actions without applying them.
-      --config=STRING     Path to a config file.
+      --config=STRING     Path to a TOML config file; overrides the user config
+                          file. Must exist.
   -v, --verbose           Enable verbose diagnostics.
   -C, --dir=STRING        Run as if gskill started in this directory.
 

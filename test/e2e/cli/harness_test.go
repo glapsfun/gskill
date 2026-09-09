@@ -99,6 +99,10 @@ func scrubbedEnv(t *testing.T, dir string) []string {
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + home,
 		"GSKILL_HOME=" + filepath.Join(home, ".gskill"),
+		// Explicit, though HOME already isolates it: the binary resolves a
+		// user config file (spec 026), and that isolation should not rest on
+		// the platform's HOME-derived default staying HOME-derived.
+		"GSKILL_CONFIG_DIR=" + filepath.Join(home, ".config", "gskill"),
 		"NO_COLOR=1",
 		"TERM=dumb",
 		"GOFLAGS=-mod=mod",

@@ -2,13 +2,12 @@ package cli
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strconv"
 
+	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/errs"
-	"github.com/glapsfun/gskill/internal/manifest"
 )
 
 // configCmd groups configuration subcommands.
@@ -17,35 +16,23 @@ type configCmd struct {
 	Get  configGetCmd  `cmd:"" help:"Print one configuration value."`
 }
 
-// effectiveConfig loads the merged configuration as a key/value map, including
-// the project layer declared in the manifest's [config] table (spec 023
-// FR-002). Without root the project layer is simply absent.
-func effectiveConfig(root string) (map[string]string, error) {
-	projectMap, err := manifest.ProjectConfig(root)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := config.Load(config.Sources{ProjectMap: projectMap})
-	if err != nil {
-		return nil, err
-	}
+// effectiveConfig renders the run's resolved configuration as a key/value map.
+//
+// It reads what the App already resolved rather than merging the layers again.
+// Resolving twice is how `config list` came to advertise a user config file
+// that nothing read (spec 026): the reporter and the applier were separate
+// code paths over different layer sets, so they could disagree — and did —
+// without any test noticing. Reading the applied value makes FR-007
+// structural.
+func effectiveConfig(a *app.App) map[string]string {
+	cfg := a.Config()
 	return map[string]string{
 		"log_level":  cfg.LogLevel,
 		"log_format": cfg.LogFormat,
 		"offline":    strconv.FormatBool(cfg.Offline),
 		"no_cache":   strconv.FormatBool(cfg.NoCache),
 		"jobs":       strconv.Itoa(cfg.Jobs),
-	}, nil
-}
-
-// configFilePath resolves the user-level configuration file, the value the
-// retired `config path` command used to print on its own.
-func configFilePath() (string, error) {
-	dir, err := config.Dir()
-	if err != nil {
-		return "", err
 	}
-	return filepath.Join(dir, "config.toml"), nil
 }
 
 type configListCmd struct{}
@@ -63,15 +50,20 @@ func (configListCmd) Help() string {
 // non-configuration name into that namespace and leave `config get path`
 // failing as an unknown key. Nesting keeps the two namespaces apart and makes
 // the payload self-describing.
-func (configListCmd) Run(out *Output, root projectRoot) error {
-	path, err := configFilePath()
-	if err != nil {
-		return err
+func (configListCmd) Run(out *Output, a *app.App) error {
+	path := a.ConfigFile()
+	if path == "" {
+		// The configuration directory could not be resolved, so there is no
+		// user layer and no path to print. Every other command carries on
+		// without one; this command's whole subject is that path, so it is the
+		// right place to surface the failure — and the only place that did
+		// before this layer existed.
+		var err error
+		if path, err = config.UserFile(); err != nil {
+			return err
+		}
 	}
-	values, err := effectiveConfig(string(root))
-	if err != nil {
-		return err
-	}
+	values := effectiveConfig(a)
 	keys := make([]string, 0, len(values))
 	for k := range values {
 		keys = append(keys, k)
@@ -100,11 +92,8 @@ func (configGetCmd) Help() string {
 }
 
 // Run prints a single configuration value.
-func (c configGetCmd) Run(out *Output, root projectRoot) error {
-	values, err := effectiveConfig(string(root))
-	if err != nil {
-		return err
-	}
+func (c configGetCmd) Run(out *Output, a *app.App) error {
+	values := effectiveConfig(a)
 	value, ok := values[c.Key]
 	if !ok {
 		return errs.WithHint(

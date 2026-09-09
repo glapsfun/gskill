@@ -105,12 +105,23 @@ func (a *App) storeLockTimeout(root string) time.Duration {
 // occupying the project layer. It is computed per call rather than cached on
 // the App: the manifest is a committed file a user edits between runs, and a
 // stale cached layer would silently ignore their edit.
+//
+// It carries the user config file in effect (a.configFile, empty until
+// ApplyRuntimeConfig has run) so that this second resolution agrees with
+// a.cfg. Omitting it would drop the user layer for every caller whose project
+// declares any [config] table at all — silently reverting a user-configured
+// store.lock_timeout to the default, which is exactly the class of
+// disagreement spec 026 exists to remove (FR-008).
+//
+// The file is not required here: it was already validated when the run
+// resolved configuration, and a file that vanished mid-run should not fail a
+// lock acquisition.
 func (a *App) projectConfig(root string) (*config.Config, error) {
 	projectMap, err := manifest.ProjectConfig(root)
 	if err != nil || len(projectMap) == 0 {
 		return nil, err
 	}
-	return config.Load(config.Sources{ProjectMap: projectMap})
+	return config.Load(config.Sources{UserFile: a.configFile, ProjectMap: projectMap})
 }
 
 // openHome resolves and ensures the gskill home: the App-level override when

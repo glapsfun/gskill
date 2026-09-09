@@ -24,6 +24,11 @@ const (
 	// EnvPrefix is the prefix for environment-variable overrides.
 	EnvPrefix = "GSKILL_"
 
+	// EnvConfigDir overrides the configuration directory, and with it the
+	// discovered user config file. It is the escape hatch on a machine where
+	// the platform convention cannot be resolved.
+	EnvConfigDir = EnvPrefix + "CONFIG_DIR"
+
 	appDir = "gskill"
 )
 
@@ -50,9 +55,16 @@ type Sources struct {
 	// Defaults seeds the lowest layer. When nil, DefaultMap is used.
 	Defaults map[string]any
 	// UserFile and ProjectFile are optional TOML config paths. A missing file
-	// is skipped without error.
-	UserFile    string
-	ProjectFile string
+	// is skipped without error, which is right for a path this package
+	// discovered on the caller's behalf — absence is the normal case.
+	//
+	// RequireUserFile reverses that for UserFile alone: a path the *user*
+	// named (gskill --config) is a statement of intent, so a missing one is an
+	// error rather than a silent no-op (spec 026 FR-003). ProjectFile has no
+	// equivalent because nothing names it explicitly.
+	UserFile        string
+	RequireUserFile bool
+	ProjectFile     string
 	// ProjectMap is the project layer supplied in memory rather than as a
 	// file: skills.toml holds project configuration inside its [config] table
 	// alongside skill declarations, so the manifest hands over just that
@@ -102,10 +114,11 @@ func Load(s Sources) (*Config, error) {
 		return nil, fmt.Errorf("load defaults: %w", err)
 	}
 
-	for _, path := range []string{s.UserFile, s.ProjectFile} {
-		if err := loadFile(k, path); err != nil {
-			return nil, err
-		}
+	if err := loadFile(k, s.UserFile, s.RequireUserFile); err != nil {
+		return nil, err
+	}
+	if err := loadFile(k, s.ProjectFile, false); err != nil {
+		return nil, err
 	}
 
 	if len(s.ProjectMap) > 0 {
@@ -174,13 +187,15 @@ func ParseFlexDuration(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// loadFile merges a TOML config file into k, skipping a missing path.
-func loadFile(k *koanf.Koanf, path string) error {
+// loadFile merges a TOML config file into k. A missing path is skipped unless
+// required, in which case it is reported — a path the user named must not
+// vanish silently.
+func loadFile(k *koanf.Koanf, path string, required bool) error {
 	if path == "" {
 		return nil
 	}
 	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) && !required {
 			return nil
 		}
 		return fmt.Errorf("stat config %s: %w", path, err)
@@ -233,7 +248,7 @@ func splitList(val string) []string {
 // Dir returns the gskill configuration directory, honoring GSKILL_CONFIG_DIR
 // and otherwise following the platform convention.
 func Dir() (string, error) {
-	if v := os.Getenv(EnvPrefix + "CONFIG_DIR"); v != "" {
+	if v := os.Getenv(EnvConfigDir); v != "" {
 		return v, nil
 	}
 	base, err := os.UserConfigDir()
@@ -241,6 +256,18 @@ func Dir() (string, error) {
 		return "", fmt.Errorf("resolve config dir: %w", err)
 	}
 	return filepath.Join(base, appDir), nil
+}
+
+// UserFile returns the discovered user configuration file: config.toml inside
+// the configuration directory. It is the path `gskill config list` reports,
+// and the source of the user layer whenever --config names nothing else
+// (spec 026 FR-004). The file need not exist; absence is normal and skipped.
+func UserFile() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.toml"), nil
 }
 
 // CacheDir returns the gskill cache directory, honoring GSKILL_CACHE_DIR and
