@@ -10,7 +10,7 @@ These apply to every command.
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--config` | string | Path to a config file. |
+| `--config` | string | Path to a TOML config file; overrides the user config file. Must exist. |
 | `--dir` | string | Run as if gskill started in this directory. |
 | `--dry-run` | bool | Report actions without applying them. |
 | `--json` | bool | Emit machine-readable JSON on stdout. |

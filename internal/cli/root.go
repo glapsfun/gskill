@@ -29,7 +29,7 @@ type rootCLI struct {
 	Offline       bool   `help:"Operate without network access."`
 	NoCache       bool   `name:"no-cache" help:"Bypass the content cache."`
 	DryRun        bool   `name:"dry-run" help:"Report actions without applying them."`
-	Config        string `help:"Path to a config file." type:"path"`
+	Config        string `help:"Path to a TOML config file; overrides the user config file. Must exist." type:"existingfile"`
 	Verbose       bool   `short:"v" help:"Enable verbose diagnostics."`
 	Dir           string `short:"C" help:"Run as if gskill started in this directory." type:"path"`
 
@@ -231,10 +231,21 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	})
 
 	root.resolveDir()
-	// The project layer only becomes resolvable once -C has been parsed, so
-	// configuration declared in the manifest is applied here rather than at
-	// startup (spec 023 FR-002).
-	application.ApplyProjectConfig(root.Dir)
+	// A nil App reaches Run only from tests that exercise the grammar alone.
+	// Configuration resolution below is not optional, so give them the same
+	// all-defaults App the real entrypoint would build.
+	if application == nil {
+		application = app.New(app.Options{})
+	}
+	// The user and project layers only become resolvable once --config and -C
+	// have been parsed, so configuration is completed here rather than at
+	// startup (spec 023 FR-002, spec 026 FR-001). A failure here is a real
+	// configuration error — a file that will not parse, or a config directory
+	// that will not resolve — and must stop the run rather than leave it on
+	// values the user did not ask for.
+	if cfgErr := application.ApplyRuntimeConfig(root.Dir, root.Config); cfgErr != nil {
+		return reportRunError(out, cfgErr)
+	}
 	kctx.BindTo(ctx, (*context.Context)(nil))
 	kctx.Bind(application)
 	kctx.Bind(projectRoot(root.Dir))

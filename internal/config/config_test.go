@@ -115,6 +115,40 @@ func TestLoad_MissingFilesAreSkipped(t *testing.T) {
 	}
 }
 
+// TestLoad_RequiredUserFileMissingIsError pins the distinction issue #66
+// asked to be made explicitly: a file the caller named is required, so a path
+// that is not there fails and says so, while the discovered file stays
+// optional (TestLoad_MissingFilesAreSkipped, unchanged, is the other half).
+func TestLoad_RequiredUserFileMissingIsError(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "absent.toml")
+
+	_, err := config.Load(config.Sources{UserFile: missing, RequireUserFile: true})
+	if err == nil {
+		t.Fatal("Load with a required missing user file returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Errorf("error %q does not name the offending path %q", err, missing)
+	}
+}
+
+// TestLoad_RequiredUserFilePresentLoads confirms the flag changes nothing
+// when the file is there.
+func TestLoad_RequiredUserFilePresentLoads(t *testing.T) {
+	t.Parallel()
+
+	path := writeTOML(t, t.TempDir(), "user.toml", "log_level = \"debug\"\n")
+
+	cfg, err := config.Load(config.Sources{UserFile: path, RequireUserFile: true})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "debug")
+	}
+}
+
 func TestDir_SuffixedWithApp(t *testing.T) {
 	t.Parallel()
 
@@ -136,6 +170,42 @@ func TestCacheDir_SuffixedWithApp(t *testing.T) {
 	}
 	if filepath.Base(dir) != "gskill" {
 		t.Errorf("CacheDir base = %q, want %q (in %q)", filepath.Base(dir), "gskill", dir)
+	}
+}
+
+// TestUserFile_JoinsConfigDirAndConfigToml pins the discovered user config
+// file: the path `gskill config list` reports, and the default source of the
+// user layer (spec 026 FR-004).
+func TestUserFile_JoinsConfigDirAndConfigToml(t *testing.T) {
+	t.Parallel()
+
+	dir, err := config.Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	got, err := config.UserFile()
+	if err != nil {
+		t.Fatalf("UserFile: %v", err)
+	}
+	if want := filepath.Join(dir, "config.toml"); got != want {
+		t.Errorf("UserFile() = %q, want %q", got, want)
+	}
+}
+
+// TestUserFile_HonorsConfigDirOverride keeps GSKILL_CONFIG_DIR authoritative
+// for the discovered file, so a test or a CI job can point the whole user
+// layer somewhere private.
+func TestUserFile_HonorsConfigDirOverride(t *testing.T) {
+	// No t.Parallel: t.Setenv pins the config dir for this test.
+	dir := t.TempDir()
+	t.Setenv("GSKILL_CONFIG_DIR", dir)
+
+	got, err := config.UserFile()
+	if err != nil {
+		t.Fatalf("UserFile: %v", err)
+	}
+	if want := filepath.Join(dir, "config.toml"); got != want {
+		t.Errorf("UserFile() = %q, want %q", got, want)
 	}
 }
 

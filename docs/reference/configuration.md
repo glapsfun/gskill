@@ -7,7 +7,7 @@ GSKILL resolves settings from layered sources. Inspect them with [`gskill config
 From highest priority to lowest:
 
 ```text
-command-line flags  >  GSKILL_* environment variables  >  config file  >  built-in defaults
+command-line flags  >  GSKILL_* environment variables  >  project [config]  >  user config file  >  built-in defaults
 ```
 
 A value set at a higher layer overrides the same value from any lower layer.
@@ -17,9 +17,30 @@ A value set at a higher layer overrides the same value from any lower layer.
 | Layer | How to set | Example |
 | --- | --- | --- |
 | Flags | Pass on the command line | `gskill add ./skill --copy` |
-| Environment | `GSKILL_*` variables | `GSKILL_OFFLINE=1 gskill install --frozen-lockfile` |
-| Config file | Edit `config.toml` (find it with `gskill config list`) | `[defaults]` `install_mode = "copy"` |
-| Defaults | Built in | `install_mode` defaults to `symlink` |
+| Environment | `GSKILL_*` variables | `GSKILL_LOG_LEVEL=debug gskill install --frozen-lockfile` |
+| Project | The `[config]` table in the committed `skills.toml` | `[config]` `log_level = "debug"` |
+| User config file | Edit `config.toml` (find it with `gskill config list`), or name one with `--config` | `log_level = "debug"` |
+| Defaults | Built in | `log_level` defaults to `info` |
+
+## The user config file
+
+GSKILL reads one user-level config file per run. By default it is `config.toml` inside the
+configuration directory — the exact path `gskill config list` prints on its first line, which
+follows the platform convention and honors `GSKILL_CONFIG_DIR`. The file is optional: if it is
+not there, the remaining layers apply and nothing is reported.
+
+`gskill --config <path>` names a different file for that run. It **replaces** the discovered
+file rather than layering on top of it, so a setting the named file leaves out falls through to
+the project, environment, and defaults — never to the file at the default path. `gskill config
+list` reports whichever of the two is in effect.
+
+Because `--config` is a path you typed, it must exist: a missing path, or one that turns out to
+be a directory, ends the run with the usage exit code (`2`) and a message naming it, rather than
+silently falling back to the defaults. A file that exists but does not parse as TOML ends the run
+with the generic error code (`1`), whether it was named or discovered.
+
+Note that the file contributes to the *file* layer, not the flag layer: an explicit flag on the
+command line still wins over anything the file says.
 
 Run `gskill config list` to see both: it leads with the user config file path (labelled
 `# user config:`, because the values below may have been overridden by the project `[config]`
@@ -37,8 +58,13 @@ These mirror the manifest `[defaults]` block and the global flags:
 | `defaults.agents` | list of agent IDs | Target agents when an `add` specifies none. |
 | `defaults.install_mode` | `symlink` \| `copy` \| `auto` | Default install mode. |
 | `store.lock_timeout` | duration | Bounds the project mutate-lock wait (name kept for config compatibility). |
-| offline | bool (flag `--offline` / `GSKILL_OFFLINE`) | Operate without network. |
-| cache | bool (flag `--no-cache` / `GSKILL_NO_CACHE`) | Bypass the clone cache. |
+| offline | bool (flag `--offline`) | Operate without network. |
+| cache | bool (flag `--no-cache`) | Bypass the clone cache. |
+
+> **Known limitation.** `offline` and `no_cache` currently take effect **only** as command-line
+> flags. Setting them in a config file or via `GSKILL_OFFLINE` / `GSKILL_NO_CACHE` changes what
+> `gskill config list` reports but does not change what any command does. Use `--offline` and
+> `--no-cache` until this is fixed.
 
 ## Removed keys
 
