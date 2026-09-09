@@ -240,9 +240,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, applicati
 	// The user and project layers only become resolvable once --config and -C
 	// have been parsed, so configuration is completed here rather than at
 	// startup (spec 023 FR-002, spec 026 FR-001). A failure here is a real
-	// configuration error — a file that will not parse, or a config directory
-	// that will not resolve — and must stop the run rather than leave it on
-	// values the user did not ask for.
+	// configuration error (e.g. a config file that exists but will not parse) and
+	// must stop the run rather than leave it on values the user did not ask for.
+	// Inability to discover the default user config path is non-fatal; it simply
+	// means the user-file layer is absent for this run.
 	if cfgErr := application.ApplyRuntimeConfig(root.Dir, root.Config); cfgErr != nil {
 		return reportRunError(out, cfgErr)
 	}
