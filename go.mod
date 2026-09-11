@@ -1,6 +1,6 @@
 module github.com/glapsfun/gskill
 
-go 1.26
+go 1.26.0
 
 toolchain go1.26.6
 
@@ -20,7 +20,7 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/muesli/termenv v0.16.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.41.0
 	sigs.k8s.io/yaml v1.6.0
