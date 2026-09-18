@@ -21,8 +21,8 @@ require (
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/muesli/termenv v0.16.0
 	golang.org/x/sync v0.23.0
-	golang.org/x/term v0.45.0
-	golang.org/x/text v0.41.0
+	golang.org/x/term v0.46.0
+	golang.org/x/text v0.42.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
@@ -65,5 +65,5 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 )
