@@ -1,0 +1,227 @@
+[skills.golang-benchmark]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-benchmark"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-cli]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-cli"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-code-style]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-code-style"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-concurrency]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-concurrency"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-context]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-context"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-continuous-integration]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-continuous-integration"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-data-structures]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-data-structures"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-database]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-database"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-dependency-injection]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-dependency-injection"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-dependency-management]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-dependency-management"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-design-patterns]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-design-patterns"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-documentation]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-documentation"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-error-handling]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-error-handling"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-gopls]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-gopls"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-graphql]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-graphql"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-grpc]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-grpc"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-how-to]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-how-to"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-lint]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-lint"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-modernize]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-modernize"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-naming]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-naming"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-observability]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-observability"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-performance]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-performance"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-pkg-go-dev]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-pkg-go-dev"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-popular-libraries]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-popular-libraries"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-project-layout]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-project-layout"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-refactoring]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-refactoring"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-safety]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-safety"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-security]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-security"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-spf13-cobra]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-spf13-cobra"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-spf13-viper]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-spf13-viper"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-stay-updated]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-stay-updated"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-stretchr-testify]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-stretchr-testify"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-structs-interfaces]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-structs-interfaces"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-swagger]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-swagger"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-testing]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-testing"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-troubleshooting]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-troubleshooting"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-uber-dig]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-uber-dig"
+version = "^2.0.0"
+agents = ["claude", "codex"]
+
+[skills.golang-uber-fx]
+source = "https://github.com/samber/cc-skills-golang"
+skill = "skills/golang-uber-fx"
+version = "^2.0.0"
+agents = ["claude", "codex"]
