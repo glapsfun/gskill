@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/glapsfun/gskill/internal/fsutil"
+	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
 
@@ -29,6 +30,10 @@ type DoctorReport struct {
 	DetectedAgents []string
 	Requirements   []RequirementCheck
 	Warnings       []string
+	// Notes are environment steps an agent needs before it loads this
+	// project's skills, such as trusting the project in Hermes (spec 027
+	// FR-012). They are informational and never count as warnings.
+	Notes []string
 }
 
 // Doctor checks the environment (git, detected agents) and reports declared
@@ -62,7 +67,11 @@ func (a *App) Doctor(ctx context.Context, root string) (DoctorReport, error) {
 	}
 	for _, name := range sortedKeys(lf.Skills) {
 		checkRequirements(name, lf.Skills[name].Requires, lf, &report)
+		if inst := lf.Skills[name].Installation; inst.Scope != string(installer.ScopeGlobal) {
+			report.Notes = append(report.Notes, a.projectNotes(inst.Agents)...)
+		}
 	}
+	report.Notes = dedupeLines(report.Notes)
 	reportSymlinklessCheckout(root, lf, &report)
 	return report, nil
 }

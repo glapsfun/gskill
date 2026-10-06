@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/agent"
@@ -78,5 +79,25 @@ func TestNewDefaultRegistry_HasClaudeAndCodex(t *testing.T) {
 		if _, ok := reg.Get(id); !ok {
 			t.Errorf("default registry missing %q", id)
 		}
+	}
+}
+
+// TestNewDefaultRegistry_SupportedAgents pins the exact supported set and its
+// order, which is also the detection order (spec 027 FR-001, SC-002).
+func TestNewDefaultRegistry_SupportedAgents(t *testing.T) {
+	t.Parallel()
+
+	reg := agent.NewDefaultRegistry()
+	want := []string{"claude", "codex", "cursor", "antigravity", "opencode", "openclaw", "hermes"}
+	all := reg.All()
+	got := make([]string, 0, len(all))
+	for _, a := range all {
+		got = append(got, a.ID())
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("registry = %v, want %v", got, want)
+	}
+	if _, ok := reg.Get("gemini-cli"); ok {
+		t.Error("gemini-cli is still registered")
 	}
 }

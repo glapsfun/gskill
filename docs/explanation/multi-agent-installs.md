@@ -5,15 +5,25 @@ user-global location. This page explains the model so you can predict where cont
 
 ## One skill, many agents
 
-GSKILL treats each agent (Claude Code, Codex, Cursor, Gemini CLI) as a target with its own skills
-directory. When you install a skill, you choose which agents receive it:
+GSKILL treats each agent (Claude Code, Codex, Cursor, Antigravity CLI, OpenCode, OpenClaw, Hermes
+Agent) as a target. When you install a skill, you choose which agents receive it:
 
 - Pass `--agent <id>` one or more times to target specific agents.
-- Pass nothing and GSKILL installs into the agents it **detects** in the project (by their marker
-  directories: `.claude/`, `.codex/`, `.cursor/`, `.gemini/`).
+- Pass nothing and GSKILL installs into the agents it **detects** in the project (by their markers:
+  `.claude/`, `.codex/`, `.cursor/`, `.opencode/` or `opencode.json(c)`, `.hermes/`).
 
 The lockfile records the full set of target agents and the exact path the skill was installed to for
 each one, so a restore reproduces the same multi-agent layout everywhere.
+
+## Shared-location agents
+
+Antigravity CLI, OpenCode, OpenClaw, and Hermes Agent read project skills straight from
+`.agents/skills/`, where GSKILL commits the content. For them the committed copy *is* the install: the
+lockfile records the target with mode `shared`, and nothing else is written.
+
+The consequence is that targeting cannot hide a project skill from these four agents. A skill you
+install only for `claude` still sits in `.agents/skills/`, so all four can load it. Use targeting to
+control what GSKILL records and installs globally, not what a shared-location agent can see.
 
 ## Why detection matters
 

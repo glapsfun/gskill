@@ -10,7 +10,7 @@ func NewClaudeCode() Agent {
 	return dirAgent{id: "claude", name: "Claude", markerDir: ".claude", symlinks: true}
 }
 
-// NewDefaultRegistry returns a registry populated with the v1 built-in agent
+// NewDefaultRegistry returns a registry populated with the built-in agent
 // adapters in priority order.
 func NewDefaultRegistry() *Registry {
 	reg := NewRegistry()
@@ -18,6 +18,9 @@ func NewDefaultRegistry() *Registry {
 	_ = reg.Register(NewClaudeCode())
 	_ = reg.Register(NewCodex())
 	_ = reg.Register(NewCursor())
-	_ = reg.Register(NewGeminiCLI())
+	_ = reg.Register(NewAntigravity())
+	_ = reg.Register(NewOpenCode())
+	_ = reg.Register(NewOpenClaw())
+	_ = reg.Register(NewHermes())
 	return reg
 }

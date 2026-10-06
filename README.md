@@ -10,7 +10,8 @@ Reproducible package management for AI agent skills.
 [![Downloads](https://img.shields.io/github/downloads/glapsfun/gskill/total)](https://github.com/glapsfun/gskill/releases)
 
 GSKILL installs, versions, locks, verifies, and restores `SKILL.md`-based AI agent
-skills across Claude Code, Codex, Cursor, Gemini CLI, developer machines, and CI.
+skills across Claude Code, Codex, Cursor, Antigravity CLI, OpenCode, OpenClaw, Hermes Agent,
+developer machines, and CI.
 Commit `skills-lock.json`; teammates and CI reproduce a byte-identical skill
 environment anywhere with `gskill install --frozen-lockfile`.
 
@@ -41,12 +42,15 @@ byte-for-byte from a single committed file.
 
 ## Supported agents and platforms
 
-| Agent | Agent ID | Marker |
+| Agent | Agent ID | Detected by |
 | --- | --- | --- |
 | Claude Code | `claude` | `.claude/` |
 | Codex | `codex` | `.codex/` |
 | Cursor | `cursor` | `.cursor/` |
-| Gemini CLI | `gemini-cli` | `.gemini/` |
+| Antigravity CLI | `antigravity` | never (use `--agent antigravity`) |
+| OpenCode | `opencode` | `.opencode/`, `opencode.json`, `opencode.jsonc` |
+| OpenClaw | `openclaw` | never (use `--agent openclaw`) |
+| Hermes Agent | `hermes` | `.hermes/` |
 
 gskill ships for **Linux and macOS** on **amd64** and **arm64**. Windows is not
 supported. See [Supported agents](docs/reference/agents.md) for detection and
@@ -218,9 +222,9 @@ Full documentation lives in [`docs/`](docs/README.md), organized by the
 GSKILL is under active development (pre-1.0); the current version is listed on the
 [releases page](https://github.com/glapsfun/gskill/releases). It
 supports Linux and macOS on amd64 and arm64; Windows is not currently supported. It
-targets Claude Code, Codex, Cursor, and Gemini CLI. The lockfile format
-(`skills-lock.json`) is versioned; breaking CLI or schema changes may occur before
-v1.0 and are documented in release notes.
+targets Claude Code, Codex, Cursor, Antigravity CLI, OpenCode, OpenClaw, and Hermes
+Agent. The lockfile format (`skills-lock.json`) is versioned; breaking CLI or schema
+changes may occur before v1.0 and are documented in release notes.
 
 `add`, `onboard`, `install` (incl. `--frozen-lockfile`/`--offline`),
 `verify`, `check`, `outdated`, `update`, `upgrade`, `remove`, `sync`, `repair`, `list`,

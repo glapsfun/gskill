@@ -75,7 +75,7 @@ type Result struct {
 	// otherwise the shared lock field would describe content never installed.
 	CompatHash    string
 	SkillFileHash string
-	Mode          Mode              // representative mode (the first agent's)
+	Mode          Mode              // representative mode (the first linking agent's; never shared)
 	Modes         map[string]string // agentID -> actual mode used
 	Agents        []string
 	ActivePath    string            // project-relative active entry (empty for global scope)
@@ -437,15 +437,17 @@ func (i *Installer) EnsureCached(ctx context.Context, req Request) error {
 }
 
 // activateAll materializes the active layer and links/copies it into every
-// target agent dir, returning the representative mode (the first agent's), the
-// project-relative active path, the per-agent target paths, and the per-agent
-// modes. For project scope the repo owns the content (spec 022): the active
-// entry .agents/skills/<name> is a real copied directory verified against
-// contentHash, and each agent target is a *relative* symlink into it, so both
-// are committable and survive a clone. For global scope there is no project
-// active layer, so agents derive directly from the store. Modes can differ
-// per agent — a symlink falls back to a copy on a filesystem that rejects it
-// — so each is recorded rather than collapsed to one value.
+// target agent dir, returning the representative mode (the first linking
+// agent's), the project-relative active path, the per-agent target paths, and
+// the per-agent modes. For project scope the repo owns the content (spec 022):
+// the active entry .agents/skills/<name> is a real copied directory verified
+// against contentHash, and each agent target is a *relative* symlink into it,
+// so both are committable and survive a clone. A shared-location agent's
+// target is the active entry itself and is only recorded (spec 027). For
+// global scope there is no project active layer, so agents derive directly
+// from the store. Modes can differ per agent — a symlink falls back to a copy
+// on a filesystem that rejects it — so each is recorded rather than collapsed
+// to one value.
 func (i *Installer) activateAll(ctx context.Context, req Request, name, storePath, contentHash string) (Mode, string, map[string]string, map[string]string, error) {
 	// linkTarget is what symlinked agents point at; copySource is the real
 	// directory copy-mode agents (and copy fallbacks) read from. For project
@@ -477,42 +479,77 @@ func (i *Installer) activateAll(ctx context.Context, req Request, name, storePat
 
 	targets := make(map[string]string, len(req.Agents))
 	modes := make(map[string]string, len(req.Agents))
-	primary := ModeSymlink
+	var primary Mode
 
-	for idx, ag := range req.Agents {
-		dest := i.targetDir(ag, req, name)
-		if err := i.guardForeignTarget(req, dest, storePath); err != nil {
+	for _, ag := range req.Agents {
+		if req.Scope != ScopeGlobal && agent.UsesSharedDir(ag, req.ProjectRoot) {
+			// The agent reads the active entry itself (spec 027): it is already
+			// ensured and verified above, so there is nothing to place, and
+			// clearing its target here would delete the committed content.
+			if err := ag.ValidateInstallation(ctx, i.targetDir(ag, req, name)); err != nil {
+				return "", "", nil, nil, fmt.Errorf("%w: %w", errs.ErrPartialInstall, err)
+			}
+			modes[ag.ID()] = string(ModeShared)
+			targets[ag.ID()] = activeRel
+			continue
+		}
+		usedMode, target, err := i.placeAgent(ctx, req, ag, name, storePath, linkTarget, copySource)
+		if err != nil {
 			return "", "", nil, nil, err
 		}
-		// Project-scope agent links store a relative target (spec 022: no
-		// committed artifact may reference a path outside the repo).
-		linkRef := linkTarget
-		if req.Scope != ScopeGlobal {
-			if rel, rErr := filepath.Rel(filepath.Dir(dest), linkTarget); rErr == nil {
-				linkRef = rel
-			}
-		}
-		act := agentActivation(req.ModePref, ag)
-		if req.Scope == ScopeGlobal {
-			// Agent-global installs are direct copies from the materialized
-			// content (spec 022: no store to link into; cache entries are
-			// evictable and must not be link targets).
-			act = activateCopy
-		}
-		usedMode, err := activateAgent(linkRef, copySource, dest, act)
-		if err != nil {
-			return "", "", nil, nil, fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
-		}
-		if idx == 0 {
+		if primary == "" {
 			primary = usedMode
 		}
 		modes[ag.ID()] = string(usedMode)
-		if err := ag.ValidateInstallation(ctx, dest); err != nil {
-			return "", "", nil, nil, fmt.Errorf("%w: %w", errs.ErrPartialInstall, err)
-		}
-		targets[ag.ID()] = i.recordTarget(req, dest)
+		targets[ag.ID()] = target
+	}
+	if primary == "" {
+		primary = impliedMode(req.ModePref)
 	}
 	return primary, activeRel, targets, modes, nil
+}
+
+// placeAgent links or copies the skill into one agent's own skills dir,
+// returning the mode used and the target path to record.
+func (i *Installer) placeAgent(ctx context.Context, req Request, ag agent.Agent, name, storePath, linkTarget, copySource string) (Mode, string, error) {
+	dest := i.targetDir(ag, req, name)
+	if err := i.guardForeignTarget(req, dest, storePath); err != nil {
+		return "", "", err
+	}
+	// Project-scope agent links store a relative target (spec 022: no
+	// committed artifact may reference a path outside the repo).
+	linkRef := linkTarget
+	if req.Scope != ScopeGlobal {
+		if rel, rErr := filepath.Rel(filepath.Dir(dest), linkTarget); rErr == nil {
+			linkRef = rel
+		}
+	}
+	act := agentActivation(req.ModePref, ag)
+	if req.Scope == ScopeGlobal {
+		// Agent-global installs are direct copies from the materialized
+		// content (spec 022: no store to link into; cache entries are
+		// evictable and must not be link targets).
+		act = activateCopy
+	}
+	usedMode, err := activateAgent(linkRef, copySource, dest, act)
+	if err != nil {
+		return "", "", fmt.Errorf("%w: activate %s for %s: %w", errs.ErrPartialInstall, name, ag.ID(), err)
+	}
+	if err := ag.ValidateInstallation(ctx, dest); err != nil {
+		return "", "", fmt.Errorf("%w: %w", errs.ErrPartialInstall, err)
+	}
+	return usedMode, i.recordTarget(req, dest), nil
+}
+
+// impliedMode is the representative mode for a skill whose every target is
+// shared: the placement the preference would give a linking agent. It is never
+// ModeShared, because the recorded mode is read back as a preference and
+// compared against the manifest's mode (spec 027 Research D3).
+func impliedMode(pref string) Mode {
+	if pref == PrefCopy {
+		return ModeCopy
+	}
+	return ModeSymlink
 }
 
 // guardForeignTarget fails closed when a PreserveForeign activation would

@@ -41,7 +41,14 @@ func (c checkCmd) Run(ctx context.Context, out *Output, a *app.App, root project
 	for _, p := range report.Problems {
 		out.Warn("%s", p)
 	}
-	if rErr := out.Result(human, map[string]any{"has_drift": report.HasDrift, "skills": skills}); rErr != nil {
+	for _, adv := range report.Advisories {
+		out.Warn("%s", adv)
+	}
+	if rErr := out.Result(human, map[string]any{
+		"has_drift":  report.HasDrift,
+		"skills":     skills,
+		"advisories": nonNilStrings(report.Advisories),
+	}); rErr != nil {
 		return rErr
 	}
 	if err != nil && errors.Is(err, errs.ErrDrift) {

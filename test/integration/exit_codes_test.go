@@ -236,3 +236,30 @@ func TestExitCodes_PartialInstallationIsExit10(t *testing.T) {
 		t.Errorf("exit code = %d, want 10 (partial installation)", code)
 	}
 }
+
+// TestExitCodes_UnknownAgentIsExit9 covers spec 027 FR-004: the retired
+// gemini-cli ID and the agy binary name are plain unknown agents that fail
+// before anything is written, and the error names the supported IDs.
+func TestExitCodes_UnknownAgentIsExit9(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []string{"gemini-cli", "agy"} {
+		t.Run(id, func(t *testing.T) {
+			t.Parallel()
+			proj := newProject(t)
+			before := topLevel(t, proj)
+
+			_, stderr, code := runGskill(t, proj, "add", localSkillDir(t, "demo"), "--agent", id)
+			if code != 9 {
+				t.Fatalf("exit code = %d, want 9: %s", code, stderr)
+			}
+			if !strings.Contains(stderr, "(known: claude, codex, cursor, antigravity, opencode, openclaw, hermes)") {
+				t.Errorf("error does not list the supported agents:\n%s", stderr)
+			}
+			after := topLevel(t, proj)
+			if len(after) != len(before) {
+				t.Errorf("rejected add wrote to the project: before %v, after %v", before, after)
+			}
+		})
+	}
+}

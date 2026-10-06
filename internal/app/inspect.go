@@ -58,8 +58,15 @@ func verifySkill(root, name string, locked skillslock.Record) SkillVerify {
 	expected := locked.Resolved.ContentHash
 	sv := SkillVerify{Name: name, OK: true, Expected: expected, Issue: "ok"}
 
+	// Shared-location agents all record the same active entry (spec 027);
+	// hash each distinct directory once.
+	verified := make(map[string]bool, len(locked.Installation.Targets))
 	for _, agentID := range sortedKeys(locked.Installation.Targets) {
 		dir := resolveTarget(root, locked.Installation.Targets[agentID])
+		if verified[filepath.Clean(dir)] {
+			continue
+		}
+		verified[filepath.Clean(dir)] = true
 		ok, actual, err := integrity.VerifyDir(dir, expected)
 		if err != nil {
 			sv.OK, sv.Issue = false, "missing"
@@ -91,6 +98,9 @@ type CheckReport struct {
 	// Problems are human-readable fault lines for drifted skills (including
 	// the spec 022 symlink-less-checkout error), rendered as diagnostics.
 	Problems []string
+	// Advisories are agent-specific content problems (spec 027 FR-011). They
+	// never set HasDrift or change the exit code.
+	Advisories []string
 }
 
 // Check produces a drift report over the three-hop chain (store → active →
@@ -123,7 +133,9 @@ func (a *App) Check(_ context.Context, root string, failOnDrift bool) (CheckRepo
 			report.Problems = append(report.Problems, health[name].Faults()...)
 		}
 		integrityFault = integrityFault || health[name].IntegrityFault()
+		report.Advisories = append(report.Advisories, a.lockedAdvice(p, name, lf.Skills[name])...)
 	}
+	report.Advisories = dedupeLines(report.Advisories)
 	if integrityFault {
 		return report, errs.ErrIntegrity
 	}

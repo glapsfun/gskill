@@ -237,6 +237,9 @@ func (a *App) frozenRequest(p *project, name string, locked skillslock.Record, r
 // reconcileOpts tunes how a lock-driven re-materialization treats content it
 // finds in place.
 type reconcileOpts struct {
+	// modePref overrides the recorded mode preference when set (an agent-add
+	// onto a shared-only skill, spec 027).
+	modePref string
 	// preserveForeign makes the installer fail closed on unowned destinations
 	// — set by the agent-add path (adding an agent must never clobber a
 	// user's content, spec 011 FR-016), left false by sync/repair whose
@@ -256,6 +259,9 @@ func (a *App) reconcileFromLock(ctx context.Context, p *project, name string, lo
 	ireq, err := a.frozenRequest(p, name, locked, InstallRequest{Root: p.root, Offline: req.Offline})
 	if err != nil {
 		return installer.Result{}, err
+	}
+	if opts.modePref != "" {
+		ireq.ModePref = opts.modePref
 	}
 	ireq.Agents = desiredAgents
 	ireq.PreserveForeign = opts.preserveForeign
@@ -358,6 +364,9 @@ func (a *App) sweepAgentOrphans(p *project, lf *skillslock.State, external map[s
 	roots := a.managedRoots(p)
 	var found []string
 	for _, ag := range a.agents.All() {
+		if agent.UsesSharedDir(ag, p.root) {
+			continue // its container is the store, which sweepActiveOrphans owns
+		}
 		container := ag.ProjectSkillDir(p.root)
 		entries, err := os.ReadDir(container)
 		if err != nil {

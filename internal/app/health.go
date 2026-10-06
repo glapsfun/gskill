@@ -10,6 +10,7 @@ import (
 	"github.com/glapsfun/gskill/internal/skillslock"
 
 	"github.com/glapsfun/gskill/internal/active"
+	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/installer"
 	"github.com/glapsfun/gskill/internal/integrity"
 	"github.com/glapsfun/gskill/internal/manifest"
@@ -23,6 +24,7 @@ type TargetState string
 const (
 	TargetOKSymlink    TargetState = "ok-symlink"    // symlink into the active entry
 	TargetOKCopy       TargetState = "ok-copy"       // a copy whose content is present
+	TargetOKShared     TargetState = "ok-shared"     // shared-location target whose active entry is healthy
 	TargetMissing      TargetState = "missing"       // no target on disk
 	TargetBroken       TargetState = "broken-link"   // symlink whose target is gone
 	TargetForeign      TargetState = "foreign"       // present but not gskill-managed
@@ -42,8 +44,11 @@ type SkillHealth struct {
 	ActiveState active.Health
 	ActivePath  string // project-relative active entry
 	Agents      map[string]TargetState
-	Modes       map[string]string
-	Targets     map[string]string // agentID -> recorded target path (repo-relative)
+	// Shared marks agents whose target is the active entry itself (spec 027):
+	// their state mirrors ActiveState rather than describing a separate path.
+	Shared  map[string]bool
+	Modes   map[string]string
+	Targets map[string]string // agentID -> recorded target path (repo-relative)
 	// OverrideDrift names the override input whose content no longer matches
 	// the identity recorded in the lock (spec 023 FR-010). It is reported
 	// separately from content drift because the causes and the remedies
@@ -61,7 +66,7 @@ func (h SkillHealth) Healthy() bool {
 		return false
 	}
 	for _, st := range h.Agents {
-		if st != TargetOKSymlink && st != TargetOKCopy {
+		if st != TargetOKSymlink && st != TargetOKCopy && st != TargetOKShared {
 			return false
 		}
 	}
@@ -101,8 +106,11 @@ func (h SkillHealth) Faults() []string {
 	}
 	for _, id := range sortedKeys(h.Agents) {
 		st := h.Agents[id]
-		if st == TargetOKSymlink || st == TargetOKCopy {
+		if st == TargetOKSymlink || st == TargetOKCopy || st == TargetOKShared {
 			continue
+		}
+		if h.Shared[id] && h.ActiveState != active.HealthOK {
+			continue // the active-entry line above already reports it
 		}
 		if st == TargetSymlinklessCheckout {
 			out = append(out, symlinklessCheckoutMsg(cmp.Or(h.Targets[id], h.Name)))
@@ -139,9 +147,11 @@ func isSymlinklessArtifact(path string) bool {
 // corrupt copy target — which maps to a fail-closed exit code. Drifted
 // committed content is deliberately NOT one: spec 022 reports it as drift
 // (exit 7); `gskill project verify` is the fail-closed hash check (exit 6).
+// A shared target's corrupt state only mirrors that drift, so it is not one
+// either (spec 027).
 func (h SkillHealth) IntegrityFault() bool {
-	for _, st := range h.Agents {
-		if st == TargetCorrupt {
+	for id, st := range h.Agents {
+		if st == TargetCorrupt && !h.Shared[id] {
 			return true
 		}
 	}
@@ -174,6 +184,7 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, v
 		Scope:      locked.Installation.Scope,
 		ActivePath: activePathOf(locked, name),
 		Agents:     make(map[string]TargetState, len(locked.Installation.Agents)),
+		Shared:     make(map[string]bool),
 		Modes:      locked.Installation.Modes,
 		Targets:    locked.Installation.Targets,
 	}
@@ -194,6 +205,12 @@ func (a *App) evaluateSkill(p *project, name string, locked skillslock.Record, v
 	}
 
 	for _, id := range locked.Installation.Agents {
+		if !global && a.isSharedTarget(p, id) {
+			state, shared := sharedTargetHealth(locked, id, name, h.ActiveState)
+			h.Agents[id] = state
+			h.Shared[id] = shared
+			continue
+		}
 		targetDir := a.agentTargetDir(p, id, name, locked.Installation.Targets[id], global)
 		if targetDir == "" {
 			h.Agents[id] = TargetForeign // unknown agent; cannot evaluate
@@ -227,6 +244,44 @@ func (a *App) agentTargetDir(p *project, id, name, recorded string, global bool)
 		return filepath.Join(ag.GlobalSkillDir(home), name)
 	}
 	return filepath.Join(ag.ProjectSkillDir(p.root), name)
+}
+
+// isSharedTarget reports whether id is a registered agent that reads p's
+// repo-owned store directly (spec 027).
+func (a *App) isSharedTarget(p *project, id string) bool {
+	ag, ok := a.agents.Get(id)
+	return ok && agent.UsesSharedDir(ag, p.root)
+}
+
+// sharedTargetHealth classifies a shared-location agent's target. A lock record
+// that does not point at the active entry with mode shared is foreign or a mode
+// mismatch; otherwise the state mirrors the active entry and shared is true.
+func sharedTargetHealth(locked skillslock.Record, id, name string, activeState active.Health) (TargetState, bool) {
+	if locked.Installation.Targets[id] != active.Rel(name) {
+		return TargetForeign, false
+	}
+	if locked.Installation.Modes[id] != string(installer.ModeShared) {
+		return TargetModeMismatch, false
+	}
+	return sharedTargetState(activeState), true
+}
+
+// sharedTargetState maps the active entry's health onto a shared-location
+// target, which is that entry (spec 027 FR-007).
+func sharedTargetState(s active.Health) TargetState {
+	switch s {
+	case active.HealthOK:
+		return TargetOKShared
+	case active.HealthMissing:
+		return TargetMissing
+	case active.HealthDrifted:
+		return TargetCorrupt
+	case active.HealthLegacy:
+		return TargetLegacyStore
+	case active.HealthForeign:
+		return TargetForeign
+	}
+	return TargetForeign
 }
 
 // activePathOf returns the recorded active path, or the conventional one when the

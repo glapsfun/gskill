@@ -52,7 +52,7 @@ Format: JSON, 2-space indent, trailing newline, stable key order (new entries ap
 | `gskill` | `agents` / `installMode` | How and where the skill is installed. |
 | `gskill` | `contentHash` / `skillFileHash` | gskill's own canonical checksums (`sha256:`-prefixed). `contentHash` is the full-content identity of the committed skill copy — it covers symlinks that the shared `computedHash` skips, so restores and `verify` check against it. |
 | `gskill` | `installedAt` / `updatedAt` | Audit timestamps; excluded from reproducibility. |
-| `gskill` | `state` | Residual machine state (per-agent targets and modes, frontmatter metadata) that keeps every existing command working. |
+| `gskill` | `state` | Residual machine state (per-agent targets and modes, frontmatter metadata) that keeps every existing command working. A per-agent mode is `symlink`, `copy`, or `shared`; `shared` marks an agent that reads the committed `.agents/skills/<name>` entry directly, so its target is that entry. `installMode` is never `shared`. |
 
 Pre-022 entries may still carry `scope` and `storeHash`. They parse cleanly, are never written
 anymore, and are dropped on the entry's first rewrite.

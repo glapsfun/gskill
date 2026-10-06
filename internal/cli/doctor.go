@@ -29,6 +29,9 @@ func (doctorCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 	for _, w := range report.Warnings {
 		out.Warn("warning: %s", w)
 	}
+	for _, n := range report.Notes {
+		out.Info("note: %s", n)
+	}
 
 	reqs := make([]map[string]any, 0, len(report.Requirements))
 	for _, r := range report.Requirements {
@@ -52,5 +55,6 @@ func (doctorCmd) Run(ctx context.Context, out *Output, a *app.App, root projectR
 		"detected_agents": report.DetectedAgents,
 		"requirements":    reqs,
 		"warnings":        report.Warnings,
+		"notes":           nonNilStrings(report.Notes),
 	})
 }

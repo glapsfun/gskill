@@ -62,7 +62,7 @@ func TestRegistry_AllPreservesRegistrationOrder(t *testing.T) {
 	t.Parallel()
 
 	r := agent.NewRegistry()
-	ids := []string{"claude", "codex", "cursor", "gemini-cli"}
+	ids := []string{"claude", "codex", "cursor", "antigravity"}
 	for _, id := range ids {
 		if err := r.Register(fakeAgent{id: id}); err != nil {
 			t.Fatalf("Register %s: %v", id, err)
@@ -111,5 +111,40 @@ func TestRegistry_RegisterRejectsEmptyID(t *testing.T) {
 		t.Error("Register with empty ID succeeded, want error")
 	} else if !errors.Is(err, agent.ErrInvalidAgent) {
 		t.Errorf("error = %v, want ErrInvalidAgent", err)
+	}
+}
+
+// suffixAgent is a fakeAgent whose project skill dir is root+suffix verbatim,
+// so tests can hand UsesSharedDir unclean spellings of the same path.
+type suffixAgent struct {
+	fakeAgent
+	suffix string
+}
+
+func (s suffixAgent) ProjectSkillDir(root string) string { return root + s.suffix }
+
+func TestUsesSharedDir(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	sep := string(filepath.Separator)
+	cases := []struct {
+		name string
+		a    agent.Agent
+		want bool
+	}{
+		{"store dir", suffixAgent{fakeAgent{id: "s"}, sep + filepath.Join(".agents", "skills")}, true},
+		{"trailing separator", suffixAgent{fakeAgent{id: "s"}, sep + filepath.Join(".agents", "skills") + sep}, true},
+		{"dot segment", suffixAgent{fakeAgent{id: "s"}, sep + "." + sep + filepath.Join(".agents", "skills")}, true},
+		{"own dir", fakeAgent{id: "own"}, false},
+		{"claude", agent.NewClaudeCode(), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := agent.UsesSharedDir(tc.a, root); got != tc.want {
+				t.Errorf("UsesSharedDir(%s) = %v, want %v", tc.a.ProjectSkillDir(root), got, tc.want)
+			}
+		})
 	}
 }
