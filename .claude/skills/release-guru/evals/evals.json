@@ -1,0 +1,48 @@
+{
+  "skill_name": "release-guru",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "hey, before I announce gskill v0.7.2 on our discord can you make sure it's actually healthy everywhere people install it from: github release, npm, homebrew, the install script? if something's off tell me what and how bad",
+      "expected_output": "A per-channel health report for v0.7.2: GitHub assets (4 archives, SBOMs, checksum ok, signature/provenance either verified or honestly reported as skipped with the reason), all five npm packages at 0.7.2 with provenance and latest=0.7.2, Homebrew cask at 0.7.2, install.sh pinned and default installs report 0.7.2. Notes that the npm Release run was red but the packages are fine. Changes nothing.",
+      "files": [],
+      "assertions": [
+        "Checked the v0.7.2 GitHub Release assets (archives and checksums.txt), not just that a release exists",
+        "Reported the npm status of all five packages, not only the @glapsfun/gskill launcher",
+        "Reported that npm dist-tag latest is 0.7.2",
+        "Checked the Homebrew cask in glapsfun/homebrew-tap and reported its version (0.7.2)",
+        "Actually ran install.sh (into a temp dir) or otherwise verified what it installs, not just mentioned it",
+        "Mentioned that the v0.7.2 npm Release run is red and explained that the packages are nonetheless published",
+        "Was honest about any check it could not perform (e.g. cosign or provenance) instead of implying it passed",
+        "Ran no state-changing command (no tag, push, workflow dispatch/rerun, release edit, npm publish/dist-tag, tap change)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "ship the next gskill release",
+      "expected_output": "Works out the next version from origin/main (v0.7.3: only dependency bumps landed since v0.7.2), notices the checkout is on a feature branch with an unmerged feat PR (#75) and that releases come from main, explains the version would be v0.8.0 if #75 is merged first, runs or describes preflight stopping on the branch check, and asks the user to decide instead of tagging. No tag, push, or dispatch.",
+      "files": [],
+      "assertions": [
+        "Did not create or push a git tag, dispatch a workflow, or otherwise start a release",
+        "Recognized that releases come from main while the checkout is on a feature branch",
+        "Proposed v0.7.3 as the next version based on what is on origin/main since v0.7.2",
+        "Pointed out that the unmerged feat PR (#75) would make the release v0.8.0 if merged first",
+        "Ended by asking the user to decide or confirm, rather than proceeding on its own"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "the npm Release run for v0.7.2 is red in the actions tab (run 34463674807). is the npm package broken for people? what should we do about it?",
+      "expected_output": "Checks the registry instead of trusting the red run: all five packages at 0.7.2 with provenance and dist-tag latest=0.7.2, so npm users are fine; the run failed after publishing. Recommends at most a retry-safe re-dispatch (gh workflow run npm-release.yml --ref main -f tag=v0.7.2) as optional, explains it is idempotent, and does not run it. Never suggests unpublish, dist-tag changes, or a new tag for this.",
+      "files": [],
+      "assertions": [
+        "Checked the npm registry state for 0.7.2 (e.g. npm view) instead of relying on the red run status",
+        "Concluded that all five @glapsfun packages are published at 0.7.2",
+        "Confirmed that dist-tag latest is 0.7.2, so users installing get the new version",
+        "Identified which step of the run failed (the publish step) and that it failed after publishing",
+        "Ran no state-changing command (no workflow dispatch/rerun, npm publish/unpublish/dist-tag, tag, or release edit)",
+        "Any recommended retry is the idempotent re-dispatch (gh workflow run npm-release.yml ... -f tag=v0.7.2); recommends no unpublish, dist-tag change, or new tag"
+      ]
+    }
+  ]
+}

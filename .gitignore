@@ -50,7 +50,12 @@ docs/pm
 t1
 
 # AI
-.claude
+# .claude stays local, except the release-guru skill: it is the release runbook
+# every agent cutting a gskill release needs, so it is versioned with the repo.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/release-guru/
 .codex
 .gskill
 CLAUDE.md
