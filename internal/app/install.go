@@ -256,6 +256,7 @@ func (a *App) materializeLocalAgentAdd(ctx context.Context, p *project, targets,
 		}
 		return saveLock(p.lockPath, lf)
 	})
+	res.Warnings = dedupeLines(res.Warnings)
 	return res, err
 }
 
@@ -271,7 +272,10 @@ func (a *App) relinkAgents(ctx context.Context, p *project, lf *skillslock.State
 	if err != nil {
 		return err
 	}
-	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root}, reconcileOpts{preserveForeign: true})
+	result, err := a.reconcileFromLock(ctx, p, name, locked, newAgents, SyncRequest{Root: p.root}, reconcileOpts{
+		preserveForeign: true,
+		modePref:        agentAddModePref(locked, a.declaredMode(p.root, name)),
+	})
 	if err != nil {
 		return err
 	}
@@ -285,7 +289,48 @@ func (a *App) relinkAgents(ctx context.Context, p *project, lf *skillslock.State
 	res.Installed = append(res.Installed, InstalledSkill{
 		Name: name, Path: locked.Source.Path, ContentHash: locked.Resolved.ContentHash, Targets: result.Targets,
 	})
+	res.Warnings = append(res.Warnings, a.recordAdvice(p, name, locked)...)
 	return nil
+}
+
+// agentAddModePref is the mode preference for adding agents to a locked skill.
+// A shared-only skill's recorded symlink mode is a stand-in (spec 027 Research
+// D3), not a symlink that was ever created, so the add follows the mode
+// declared in skills.toml: an explicit symlink stays strict, and anything else
+// keeps auto's copy fallback on filesystems without symlink support. Otherwise
+// the recorded mode applies, as for any reconcile.
+func agentAddModePref(locked skillslock.Record, declared string) string {
+	if locked.Installation.Mode != string(installer.ModeSymlink) || !onlySharedTargets(locked) {
+		return ""
+	}
+	if declared == installer.PrefSymlink {
+		return installer.PrefSymlink
+	}
+	return installer.DefaultModePref
+}
+
+// declaredMode returns the skill's mode declared in skills.toml, or "" when it
+// declares none.
+func (a *App) declaredMode(root, name string) string {
+	decl, ok := a.declaration(root, name)
+	if !ok {
+		return ""
+	}
+	return decl.Mode
+}
+
+// onlySharedTargets reports whether every agent of the locked skill reads the
+// repo-owned store directly, so no install of it ever placed a link or copy.
+func onlySharedTargets(locked skillslock.Record) bool {
+	if len(locked.Installation.Agents) == 0 {
+		return false
+	}
+	for _, id := range locked.Installation.Agents {
+		if locked.Installation.Modes[id] != string(installer.ModeShared) {
+			return false
+		}
+	}
+	return true
 }
 
 // localAgentAddTargets returns the already-locked skill names a pure agent-add
@@ -476,6 +521,7 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 				Name: s.ID, Path: s.RepoPath, ContentHash: result.ContentHash, Targets: result.Targets,
 			})
 			res.Warnings = append(res.Warnings, result.Warnings...)
+			res.Warnings = append(res.Warnings, a.recordAdvice(p, s.ID, lf.Skills[s.ID])...)
 			emit(k+1, s.ID, InstallPhaseComplete, InstallStatusInstalled)
 		}
 
@@ -493,6 +539,7 @@ func (a *App) installSelected(ctx context.Context, p *project, req AddRequest, r
 	if err != nil {
 		return AddResult{}, err
 	}
+	res.Warnings = dedupeLines(res.Warnings)
 	return res, nil
 }
 
@@ -556,6 +603,14 @@ func conflictErr(id string) error {
 // entry, unioning agents and merging the per-agent target/mode records while
 // preserving the resolved revision, source, and active path.
 func mergeAgentInstall(locked *skillslock.Record, result installer.Result) {
+	// A shared-only skill records a stand-in mode (spec 027 Research D3), so
+	// the incoming result's mode replaces it: a linking agent's actual mode
+	// keeps a later repair from demanding a symlink a copy-fallback filesystem
+	// never made, and a shared agent added with an explicit mode keeps the
+	// lock agreeing with the mode the manifest now declares.
+	if onlySharedTargets(*locked) && result.Mode != "" {
+		locked.Installation.Mode = string(result.Mode)
+	}
 	locked.Installation.Agents = unionStrings(locked.Installation.Agents, result.Agents)
 	if locked.Installation.Targets == nil {
 		locked.Installation.Targets = make(map[string]string, len(result.Targets))
@@ -575,11 +630,16 @@ func mergeAgentInstall(locked *skillslock.Record, result installer.Result) {
 }
 
 // removeTargets best-effort removes a skill's activated directories during an
-// atomic-install rollback.
+// atomic-install rollback. A shared-location target records the active entry
+// itself and is skipped: the rollback must never delete committed content
+// (spec 027 FR-010).
 func (a *App) removeTargets(root string, scope installer.Scope, r installer.Result) {
 	for _, target := range r.Targets {
 		path := target
 		if scope != installer.ScopeGlobal {
+			if r.ActivePath != "" && filepath.Clean(target) == filepath.Clean(r.ActivePath) {
+				continue
+			}
 			path = filepath.Join(root, target)
 		}
 		_ = os.RemoveAll(path)
@@ -771,7 +831,7 @@ func (a *App) agentsByID(ids []string) ([]agent.Agent, error) {
 		ag, ok := a.agents.Get(id)
 		if !ok {
 			return nil, errs.WithHint(
-				fmt.Errorf("%w: locked agent %q is not available", errs.ErrUnsupportedAgent, id),
+				fmt.Errorf("%w: locked agent %q is not available (known: %s)", errs.ErrUnsupportedAgent, id, a.knownAgentIDs()),
 				"run 'gskill doctor' to list detected agents",
 			)
 		}
@@ -793,7 +853,7 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 			ag, ok := a.agents.Get(id)
 			if !ok {
 				return nil, errs.WithHint(
-					fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, id),
+					fmt.Errorf("%w: unknown agent %q (known: %s)", errs.ErrUnsupportedAgent, id, a.knownAgentIDs()),
 					"run 'gskill doctor' to list detected agents",
 				)
 			}
@@ -815,15 +875,22 @@ func (a *App) targetAgents(ctx context.Context, root string, explicit, defaults 
 	if def, ok := a.agents.Get(agent.DefaultID); ok {
 		return []agent.Agent{def}, nil
 	}
-	known := make([]string, 0)
-	for _, ag := range a.agents.All() {
-		known = append(known, ag.ID())
-	}
 	return nil, errs.WithHint(
 		fmt.Errorf("%w: no target agent specified and none detected (known: %s)",
-			errs.ErrUnsupportedAgent, strings.Join(known, ", ")),
+			errs.ErrUnsupportedAgent, a.knownAgentIDs()),
 		"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing",
 	)
+}
+
+// knownAgentIDs lists the registered agent IDs in registration order, for
+// errors that reject an agent the registry does not hold.
+func (a *App) knownAgentIDs() string {
+	all := a.agents.All()
+	ids := make([]string, 0, len(all))
+	for _, ag := range all {
+		ids = append(ids, ag.ID())
+	}
+	return strings.Join(ids, ", ")
 }
 
 // installRequest assembles an installer.Request with shared defaults.

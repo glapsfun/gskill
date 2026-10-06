@@ -2,11 +2,14 @@ package app_test
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
 )
 
@@ -382,5 +385,81 @@ func TestPlanInstall_ForeignActiveEntryIsConflict(t *testing.T) {
 	}
 	if !strings.Contains(plan.Conflicts[0].Detail, ".agents") {
 		t.Errorf("conflict does not name the active path: %s", plan.Conflicts[0].Detail)
+	}
+}
+
+// planSharedAgent is a shared-location agent (spec 027): its project skill dir
+// is the active store itself.
+type planSharedAgent struct{}
+
+func (planSharedAgent) ID() string                                   { return "sharedfake" }
+func (planSharedAgent) DisplayName() string                          { return "Shared Fake" }
+func (planSharedAgent) Detect(context.Context, string) (bool, error) { return false, nil }
+func (planSharedAgent) ProjectSkillDir(root string) string {
+	return filepath.Join(root, ".agents", "skills")
+}
+
+func (planSharedAgent) GlobalSkillDir(home string) string {
+	return filepath.Join(home, ".sharedfake", "skills")
+}
+func (planSharedAgent) SupportsSymlinks() bool                             { return true }
+func (planSharedAgent) ValidateInstallation(context.Context, string) error { return nil }
+
+func sharedPlanApp() *app.App {
+	reg := agent.NewRegistry()
+	_ = reg.Register(agent.NewClaudeCode())
+	_ = reg.Register(planSharedAgent{})
+	return app.New(app.Options{Agents: reg, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+}
+
+func planShared(t *testing.T, a *app.App, root, src string, ids ...string) app.InstallPlan {
+	t.Helper()
+	disc := discover(t, a, root, src)
+	plan, err := a.PlanInstall(context.Background(), app.PlanRequest{
+		Root: root, Source: src, Discover: disc,
+		Selected: selectByID(t, disc, "alpha"),
+		AgentIDs: ids,
+	})
+	if err != nil {
+		t.Fatalf("PlanInstall: %v", err)
+	}
+	return plan
+}
+
+func TestPlanInstall_SharedAgentPlansTheActiveEntry(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	plan := planShared(t, sharedPlanApp(), root, src, "sharedfake")
+
+	if len(plan.Conflicts) != 0 {
+		t.Errorf("conflicts = %+v, want none", plan.Conflicts)
+	}
+	if len(plan.Actions) != 1 {
+		t.Fatalf("actions = %+v, want one", plan.Actions)
+	}
+	act := plan.Actions[0]
+	if want := filepath.Join(root, ".agents", "skills", "alpha"); act.AgentID != "sharedfake" || act.Destination != want {
+		t.Errorf("action = %s -> %s, want sharedfake -> %s", act.AgentID, act.Destination, want)
+	}
+}
+
+func TestPlanInstall_ForeignActiveEntryIsOneConflictWithSharedAgent(t *testing.T) {
+	t.Parallel()
+
+	src := sourceTree(t, "skills/alpha")
+	root := projectWithAgent(t)
+	activeDir := filepath.Join(root, ".agents", "skills", "alpha")
+	if err := os.MkdirAll(activeDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(activeDir, "SKILL.md"), []byte("# mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := planShared(t, sharedPlanApp(), root, src, "claude", "sharedfake")
+	if len(plan.Conflicts) != 1 {
+		t.Errorf("conflicts = %+v, want exactly one for the shared active entry", plan.Conflicts)
 	}
 }

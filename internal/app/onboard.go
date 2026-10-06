@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/discovery"
@@ -209,7 +208,7 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 				// Manifest-defaults wording, matching the non-guided path —
 				// not the lockfile's "locked agent" message (review finding).
 				return nil, errs.WithHint(
-					fmt.Errorf("%w: unknown agent %q", errs.ErrUnsupportedAgent, id),
+					fmt.Errorf("%w: unknown agent %q (known: %s)", errs.ErrUnsupportedAgent, id, a.knownAgentIDs()),
 					"run 'gskill doctor' to list detected agents",
 				)
 			}
@@ -220,13 +219,9 @@ func (a *App) AgentChoices(ctx context.Context, root string) ([]AgentChoice, err
 		if !ok {
 			// Nothing to preselect and no default: fail actionably instead of
 			// rendering an unfillable empty step (review finding).
-			known := make([]string, 0)
-			for _, ag := range a.agents.All() {
-				known = append(known, ag.ID())
-			}
 			return nil, errs.WithHint(
 				fmt.Errorf("%w: no target agent specified and none detected (known: %s)",
-					errs.ErrUnsupportedAgent, strings.Join(known, ", ")),
+					errs.ErrUnsupportedAgent, a.knownAgentIDs()),
 				"pass --agent <id>, or run 'gskill doctor' to see why detection found nothing",
 			)
 		}

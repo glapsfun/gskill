@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/active"
+	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/installer"
 )
@@ -69,7 +70,17 @@ func (a *App) safeTargetForRemoval(p *project, scope, agentID, name, recorded st
 // removal, means a single foreign-modified target aborts the whole batch
 // with zero partial deletions, instead of leaving some agents' files gone
 // while others remain (spec 013 FR-011).
+//
+// A shared-location agent's project target is the active entry itself, so it
+// is never removable through the agent: dropping the agent only drops its lock
+// record, and the content goes only with the skill via active.Remove (spec 027
+// FR-010).
 func (a *App) checkSafeTargetRemoval(p *project, scope, agentID, name, recorded, contentHash string) (target string, safe bool, err error) {
+	if scope != string(installer.ScopeGlobal) {
+		if ag, ok := a.agents.Get(agentID); ok && agent.UsesSharedDir(ag, p.root) {
+			return "", false, nil
+		}
+	}
 	target, ok := a.safeTargetForRemoval(p, scope, agentID, name, recorded)
 	if !ok {
 		a.log.Warn("skipping removal of out-of-bounds or mismatched target",

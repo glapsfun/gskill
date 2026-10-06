@@ -7,9 +7,10 @@ page explains the model and its consequences.
 ## Committed content, committed links
 
 Each installed skill is a real directory at `.agents/skills/<name>/`, committed to the repository.
-Agent directories (`.claude/skills/<name>`, `.codex/skills/<name>`, `.cursor/skills/<name>`,
-`.gemini/skills/<name>`) hold committed **relative symlinks** into it (e.g.
-`../../.agents/skills/<name>`), so every agent sees the same bytes without duplication.
+Agent directories (`.claude/skills/<name>`, `.codex/skills/<name>`, `.cursor/skills/<name>`) hold
+committed **relative symlinks** into it (e.g. `../../.agents/skills/<name>`), so every agent sees the
+same bytes without duplication. Antigravity CLI, OpenCode, OpenClaw, and Hermes Agent read
+`.agents/skills/` directly, so they need no link at all.
 
 The `.gitignore` gskill manages contains only a `.gskill/` line — `.agents/` is **not** ignored,
 because the content and links are meant to be committed.

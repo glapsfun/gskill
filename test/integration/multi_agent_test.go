@@ -1,8 +1,10 @@
 package integration_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -36,5 +38,25 @@ func TestMultiAgent_OneAddInstallsIntoAllDetected(t *testing.T) {
 		if !strings.Contains(lock, id) {
 			t.Errorf("lock targets missing %q:\n%s", id, lock)
 		}
+	}
+}
+
+// TestMultiAgent_PickerOffersTheSupportedAgents covers the interactive agent
+// picker surface of spec 027 FR-002.
+func TestMultiAgent_PickerOffersTheSupportedAgents(t *testing.T) {
+	t.Parallel()
+
+	proj := newProject(t)
+	choices, err := newApp(t).AgentChoices(context.Background(), proj)
+	if err != nil {
+		t.Fatalf("AgentChoices: %v", err)
+	}
+	got := make([]string, 0, len(choices))
+	for _, c := range choices {
+		got = append(got, c.ID)
+	}
+	want := []string{"claude", "codex", "cursor", "antigravity", "opencode", "openclaw", "hermes"}
+	if !slices.Equal(got, want) {
+		t.Errorf("picker offers %v, want %v", got, want)
 	}
 }

@@ -1,13 +1,17 @@
 // Package agent defines the pluggable per-agent behavior gskill installs into,
 // plus a registry of adapters. Concrete adapters (Claude Code, Codex, Cursor,
-// Gemini CLI) live in sibling files and register themselves with a Registry.
+// and the shared-location agents such as Antigravity CLI) live in sibling
+// files and register themselves with a Registry.
 package agent
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
+
+	"github.com/glapsfun/gskill/internal/active"
 )
 
 // ErrInvalidAgent is returned when registering an agent with an empty ID.
@@ -31,6 +35,30 @@ type Agent interface {
 	// ValidateInstallation checks that a skill installed at skillDir is usable
 	// by the agent.
 	ValidateInstallation(ctx context.Context, skillDir string) error
+}
+
+// Advisor is implemented by agents that can spot problems with an installed
+// skill's content that would stop the agent from loading it. Advice is
+// non-fatal guidance for the user and never fails an install (spec 027 FR-011).
+type Advisor interface {
+	// Advise returns one line per problem with the skill installed as
+	// skillName at skillDir.
+	Advise(skillName, skillDir string) []string
+}
+
+// ProjectNoter is implemented by agents that need one environment note after
+// a project-scope install targets them, such as a trust step the agent requires
+// before it loads project skills (spec 027 FR-012).
+type ProjectNoter interface {
+	ProjectNote() string
+}
+
+// UsesSharedDir reports whether a reads project skills straight from gskill's
+// repo-owned store (.agents/skills), so its project target is the active entry
+// itself. Such a target must never be linked, copied, or deleted on the
+// agent's behalf (spec 027 FR-005, FR-010).
+func UsesSharedDir(a Agent, projectRoot string) bool {
+	return filepath.Clean(a.ProjectSkillDir(projectRoot)) == filepath.Clean(active.Dir(projectRoot))
 }
 
 // Registry holds the known agent adapters in registration order.

@@ -17,18 +17,24 @@ func (s Scope) Valid() bool {
 
 // Mode is the actual activation method recorded for an installed skill. The
 // requested preference may be "auto", but only symlink or copy is ever recorded
-// (FR-020).
+// as a skill's representative mode (FR-020); a per-agent target may also record
+// shared (spec 027).
 type Mode string
 
 // Install modes.
 const (
 	ModeSymlink Mode = "symlink"
 	ModeCopy    Mode = "copy"
+	// ModeShared is a project target that is the active entry itself: a
+	// shared-location agent reads the repo-owned store directly (spec 027).
+	ModeShared Mode = "shared"
 )
 
-// Valid reports whether m is a recognized install mode.
+// Valid reports whether m is a recognized recorded install mode. ModeShared is
+// legal only as a per-agent mode, never as a skill's representative mode (spec
+// 027 Research D3), so callers checking a representative mode must reject it.
 func (m Mode) Valid() bool {
-	return m == ModeSymlink || m == ModeCopy
+	return m == ModeSymlink || m == ModeCopy || m == ModeShared
 }
 
 // Mode-preference strings accepted on the command line and in the manifest.

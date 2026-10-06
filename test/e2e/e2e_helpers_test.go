@@ -39,10 +39,13 @@ var knownSkills = map[string]string{
 
 // agentMarker maps an agent id to its project marker directory.
 var agentMarker = map[string]string{
-	"claude":     ".claude",
-	"codex":      ".codex",
-	"cursor":     ".cursor",
-	"gemini-cli": ".gemini",
+	"claude":      ".claude",
+	"codex":       ".codex",
+	"cursor":      ".cursor",
+	"antigravity": ".agents",
+	"opencode":    ".agents",
+	"openclaw":    ".agents",
+	"hermes":      ".agents",
 }
 
 // requireE2E skips unless the opt-in flag is set and git is available (FR-013).

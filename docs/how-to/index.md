@@ -9,8 +9,8 @@ GSKILL? Start with the [tutorial](../tutorials/getting-started.md) first.
 - [Install a local skill](install-a-local-skill.md) — add a skill from a folder on disk.
 - [Add a skill from Git](add-a-git-skill.md) — add a skill from a Git repository with a version
   constraint.
-- [Target specific agents](target-specific-agents.md) — install into Claude Code, Codex, Cursor, and/or
-  Gemini CLI, and choose project vs global scope.
+- [Target specific agents](target-specific-agents.md) — install into Claude Code, Codex, Cursor,
+  Antigravity CLI, OpenCode, OpenClaw, and/or Hermes Agent, and choose project vs global scope.
 - [Copy vs symlink](copy-vs-symlink.md) — choose how installed content lands on disk.
 - [Customize a skill without forking it](customize-a-skill.md) — patch, replace, or layer content
   onto an upstream skill and keep taking updates.

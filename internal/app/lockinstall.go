@@ -86,6 +86,10 @@ type LockSkillResult struct {
 	AgentsAdded   []string
 	AgentsRemoved []string
 	Err           error
+	// Advice is the agent-specific guidance for a skill this run covered,
+	// whether installed, repaired, or already up to date (spec 027 FR-011,
+	// FR-012); InstallFromLock folds it into Warnings.
+	Advice []string
 
 	// Provenance and failure detail (spec 014): populated for successes and
 	// failures alike whenever known; empty strings render as "—", never as
@@ -555,8 +559,10 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 			if r.Status == LockSkillInstalled || r.Status == LockSkillRepaired {
 				res.Changed = true
 			}
+			res.Warnings = append(res.Warnings, r.Advice...)
 		}
 	}
+	res.Warnings = dedupeLines(res.Warnings)
 	// Completed successes are persisted even when the run was interrupted:
 	// the lockfile stays valid and records exactly what was installed
 	// (FR-024, constitution I).
@@ -941,6 +947,7 @@ func (a *App) stageAndActivateLockEntry(ctx context.Context, p *project, lf *ski
 	r.ComputedHash = staged.compat
 	r.Status = LockSkillInstalled
 	r.Err = nil
+	r.Advice = a.recordAdvice(p, name, ls)
 	return r
 }
 
@@ -1323,6 +1330,9 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	r.StoreReuse = installer.StoreReused
 	r.StoreScope = installer.ScopeLabelCommitted
 	if len(missing) == 0 {
+		if !req.DryRun {
+			r.Advice = a.recordAdvice(p, name, prior)
+		}
 		return r, true
 	}
 	if req.DryRun {
@@ -1341,6 +1351,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	mergeAgentInstall(&prior, result)
 	lf.Skills[name] = prior
 	r.Status = LockSkillRepaired
+	r.Advice = a.recordAdvice(p, name, prior)
 	return r, true
 }
 
