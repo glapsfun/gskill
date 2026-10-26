@@ -435,3 +435,118 @@ func TestEnsureActive_FailedSwitchLeavesOldEntry(t *testing.T) {
 		t.Errorf("old entry state after failed switch = %q, want ok (untouched)", h)
 	}
 }
+
+// chmodFiles sets mode on every regular file under dir, the way a filesystem
+// without POSIX permissions (WSL DrvFs) reports them.
+func chmodFiles(t *testing.T, dir string, mode os.FileMode) {
+	t.Helper()
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		return os.Chmod(p, mode)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestEnsureActive_IdempotentOverAllExecutableCopy (spec 028 US1): an active
+// entry that reads back with every file executable is the same content, not
+// drift.
+func TestEnsureActive_IdempotentOverAllExecutableCopy(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src, hash := makeContent(t, "delta", "# skill\n")
+
+	if _, err := active.EnsureActive(root, "delta", src, active.EnsureOptions{ExpectedHash: hash}); err != nil {
+		t.Fatalf("first EnsureActive: %v", err)
+	}
+	chmodFiles(t, active.Path(root, "delta"), 0o755)
+
+	if _, err := active.EnsureActive(root, "delta", src, active.EnsureOptions{ExpectedHash: hash}); err != nil {
+		t.Fatalf("EnsureActive over an all-executable copy: %v", err)
+	}
+	if h, _ := active.HealthOf(root, "delta", hash); h != active.HealthOK {
+		t.Errorf("health = %q, want ok", h)
+	}
+}
+
+// TestEnsureActive_StagedCopyModesDifferFromHashedTree reproduces issue #76:
+// the expected hash comes from a tree with normal modes, while the staged copy
+// reads back with different ones. Before spec 028 swapIn rejected it with
+// "staged content ... does not match expected".
+func TestEnsureActive_StagedCopyModesDifferFromHashedTree(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+
+	write := func(mode os.FileMode) string {
+		d := filepath.Join(t.TempDir(), "epsilon")
+		if err := os.MkdirAll(filepath.Join(d, "scripts"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		files := map[string]string{"SKILL.md": "# skill\n", "scripts/run.sh": "#!/bin/sh\necho ok\n"}
+		for rel, body := range files {
+			if err := os.WriteFile(filepath.Join(d, rel), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		chmodFiles(t, d, mode)
+		return d
+	}
+	hashed, err := integrity.HashDir(write(0o644))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := write(0o755)
+
+	if _, err := active.EnsureActive(root, "epsilon", src, active.EnsureOptions{ExpectedHash: hashed.ContentHash}); err != nil {
+		t.Fatalf("EnsureActive with a staged copy whose modes differ: %v", err)
+	}
+	if h, _ := active.HealthOf(root, "epsilon", hashed.ContentHash); h != active.HealthOK {
+		t.Errorf("health = %q, want ok", h)
+	}
+}
+
+// TestEnsureActive_PermissionOnlyChangeReachesActiveEntry (spec 028 FR-012):
+// the hash ignores permissions, so a matching active entry is not swapped,
+// but an upstream executable-bit change must still reach it.
+func TestEnsureActive_PermissionOnlyChangeReachesActiveEntry(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+
+	write := func(mode os.FileMode) string {
+		d := filepath.Join(t.TempDir(), "zeta")
+		if err := os.MkdirAll(filepath.Join(d, "scripts"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		for rel, body := range map[string]string{"SKILL.md": "# skill\n", "scripts/run.sh": "#!/bin/sh\necho ok\n"} {
+			if err := os.WriteFile(filepath.Join(d, rel), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chmod(filepath.Join(d, "scripts", "run.sh"), mode); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	before, after := write(0o644), write(0o755)
+	h, err := integrity.HashDir(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := active.EnsureActive(root, "zeta", before, active.EnsureOptions{ExpectedHash: h.ContentHash}); err != nil {
+		t.Fatalf("first EnsureActive: %v", err)
+	}
+	if _, err := active.EnsureActive(root, "zeta", after, active.EnsureOptions{ExpectedHash: h.ContentHash}); err != nil {
+		t.Fatalf("EnsureActive after a permission-only change: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(active.Path(root, "zeta"), "scripts", "run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 != 0o111 {
+		t.Errorf("active run.sh mode = %v, want the upstream executable bits", info.Mode().Perm())
+	}
+}

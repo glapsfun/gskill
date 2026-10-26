@@ -50,12 +50,23 @@ Format: JSON, 2-space indent, trailing newline, stable key order (new entries ap
 | core | `computedHash` | SHA-256 over the skill folder's files (path + raw bytes, locale-sorted), hex, no prefix — identical to the external tool's hash and verified before every install. Only `install --force` may rewrite it. |
 | `gskill` | `sourceUrl` / `ref` / `commit` / `version` | The resolved, immutable identity gskill pinned to; `commit` is also the clone-cache key for restores. |
 | `gskill` | `agents` / `installMode` | How and where the skill is installed. |
-| `gskill` | `contentHash` / `skillFileHash` | gskill's own canonical checksums (`sha256:`-prefixed). `contentHash` is the full-content identity of the committed skill copy — it covers symlinks that the shared `computedHash` skips, so restores and `verify` check against it. |
+| `gskill` | `contentHash` / `skillFileHash` | gskill's own canonical checksums (`sha256:`-prefixed). `contentHash` is the full-content identity of the committed skill copy: it covers symlinks that the shared `computedHash` skips, so restores and `verify` check against it. File permissions are not part of it, so a checkout on a filesystem that cannot store them (a Windows drive under WSL) verifies like any other. |
 | `gskill` | `installedAt` / `updatedAt` | Audit timestamps; excluded from reproducibility. |
 | `gskill` | `state` | Residual machine state (per-agent targets and modes, frontmatter metadata) that keeps every existing command working. A per-agent mode is `symlink`, `copy`, or `shared`; `shared` marks an agent that reads the committed `.agents/skills/<name>` entry directly, so its target is that entry. `installMode` is never `shared`. |
 
 Pre-022 entries may still carry `scope` and `storeHash`. They parse cleanly, are never written
 anymore, and are dropped on the entry's first rewrite.
+
+Releases up to 0.7.3 also covered each file's executable bit in `contentHash`. Entries they
+wrote are still accepted. For a skill that ships an executable file, `install` rewrites the
+value once to the current form, and `add`, `update`, and `upgrade` do the same for the skills
+they reinstall. `project sync`, `project repair`, `list`, `project check`, `project verify`,
+`--frozen-lockfile`, and `--dry-run` never rewrite it.
+
+One exception: on a filesystem that cannot store permissions (a Windows drive under WSL), such
+an entry for a skill that ships an executable file only matches after it has been rewritten.
+Run a plain `gskill install` once after upgrading, on any machine. Upgrade every machine that
+shares a lock together: an older release reports a rewritten entry as drifted.
 
 **Core fields are shared property.** gskill fills them only when absent and never rewrites them
 (except `computedHash`, the shared verification fact). Unknown top-level fields, unknown entry

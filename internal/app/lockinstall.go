@@ -86,6 +86,9 @@ type LockSkillResult struct {
 	AgentsAdded   []string
 	AgentsRemoved []string
 	Err           error
+	// LockUpdated reports that the run rewrote this entry's recorded content
+	// hash in place, an entry written by a pre-028 release (spec 028).
+	LockUpdated bool
 	// Advice is the agent-specific guidance for a skill this run covered,
 	// whether installed, repaired, or already up to date (spec 027 FR-011,
 	// FR-012); InstallFromLock folds it into Warnings.
@@ -556,7 +559,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 			}
 		default:
 			healthy++
-			if r.Status == LockSkillInstalled || r.Status == LockSkillRepaired {
+			if r.Status == LockSkillInstalled || r.Status == LockSkillRepaired || r.LockUpdated {
 				res.Changed = true
 			}
 			res.Warnings = append(res.Warnings, r.Advice...)
@@ -1310,9 +1313,11 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		// output; that would silently stop catching that drift.
 		return LockSkillResult{}, false
 	}
-	if !committedContentUpToDate(p, name, prior, e.ComputedHash) {
+	current, upToDate := committedContentUpToDate(p, name, prior, e.ComputedHash)
+	if !upToDate {
 		return LockSkillResult{}, false
 	}
+	upgraded := upgradeLegacyContentHash(lf, name, &prior, current, req)
 
 	var missing []agent.Agent
 	for _, ag := range agents {
@@ -1322,6 +1327,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		}
 	}
 	r := LockSkillResult{Name: name, Source: e.Source, ComputedHash: e.ComputedHash, Status: LockSkillUpToDate}
+	markLegacyUpgrade(&r, upgraded, req.DryRun)
 	stampResultProvenance(&r, e, req)
 	r.Agents = ids
 	r.Commit = prior.Resolved.Commit
@@ -1355,6 +1361,35 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	return r, true
 }
 
+// upgradeLegacyContentHash records current for an entry that matched only
+// through the hash a pre-028 release wrote, and reports whether the entry
+// changes. It happens once, on a run that writes the lock: frozen runs never
+// change it, and a dry run only reports that it would (spec 028 FR-007).
+func upgradeLegacyContentHash(lf *skillslock.State, name string, prior *skillslock.Record, current string, req InstallFromLockRequest) bool {
+	if current == prior.Resolved.ContentHash || req.Frozen {
+		return false
+	}
+	if !req.DryRun {
+		prior.Resolved.ContentHash = current
+		lf.Skills[name] = *prior
+	}
+	return true
+}
+
+// markLegacyUpgrade surfaces an upgraded content hash on an up-to-date
+// entry: the real run counts as a lock change, a dry run plans one.
+func markLegacyUpgrade(r *LockSkillResult, upgraded, dryRun bool) {
+	if !upgraded {
+		return
+	}
+	if dryRun {
+		r.Status = LockSkillPlanned
+		r.PlannedAction = PlannedWouldUpdateLock
+		return
+	}
+	r.LockUpdated = true
+}
+
 // committedContentUpToDate establishes that the committed repo copy still
 // backs the lock entry (spec 022 FR-007): its full content hash must match
 // the resolved contentHash AND its compat hash the entry's computedHash —
@@ -1363,18 +1398,22 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 // --force, on the full path). The full content hash covers symlinks that
 // CompatHash skips by design, so a tampered committed copy never satisfies
 // the fast path — it falls through to the full path, which fails closed.
-func committedContentUpToDate(p *project, name string, prior skillslock.Record, computedHash string) bool {
+//
+// It also returns the committed copy's current content hash, which differs
+// from the recorded one only for an entry written by a pre-028 release.
+func committedContentUpToDate(p *project, name string, prior skillslock.Record, computedHash string) (string, bool) {
 	dest := installedContentPath(p, name, prior)
 	if dest == "" {
-		return false
+		return "", false
 	}
-	if ok, _, err := integrity.VerifyDir(dest, prior.Resolved.ContentHash); err != nil || !ok {
-		return false
+	ok, verified, err := integrity.VerifyDir(dest, prior.Resolved.ContentHash)
+	if err != nil || !ok {
+		return "", false
 	}
 	if compat, err := integrity.CompatHash(dest); err != nil || compat != computedHash {
-		return false
+		return "", false
 	}
-	return true
+	return verified.ContentHash, true
 }
 
 // installedContentPath returns the directory holding this entry's installed

@@ -22,7 +22,7 @@ func TestVerifyDir_MatchTamperAndSymlink(t *testing.T) {
 	// Direct directory matches.
 	ok, actual, err := integrity.VerifyDir(content, hashes.ContentHash)
 	if err != nil || !ok {
-		t.Fatalf("VerifyDir clean = ok:%v actual:%s err:%v", ok, actual, err)
+		t.Fatalf("VerifyDir clean = ok:%v actual:%s err:%v", ok, actual.ContentHash, err)
 	}
 
 	// A symlink to the content resolves and still matches.
@@ -45,5 +45,28 @@ func TestVerifyDir_MatchTamperAndSymlink(t *testing.T) {
 	}
 	if ok {
 		t.Error("VerifyDir did not detect tampered content")
+	}
+}
+
+func TestHashes_Matches(t *testing.T) {
+	t.Parallel()
+
+	h := integrity.Hashes{ContentHash: "sha256:new", LegacyContentHash: "sha256:old"}
+	cases := []struct {
+		name     string
+		hashes   integrity.Hashes
+		recorded string
+		want     bool
+	}{
+		{"empty recorded never matches", h, "", false},
+		{"empty recorded against empty hashes", integrity.Hashes{}, "", false},
+		{"current identity", h, "sha256:new", true},
+		{"pre-028 identity", h, "sha256:old", true},
+		{"anything else", h, "sha256:other", false},
+	}
+	for _, tc := range cases {
+		if got := tc.hashes.Matches(tc.recorded); got != tc.want {
+			t.Errorf("%s: Matches(%q) = %v, want %v", tc.name, tc.recorded, got, tc.want)
+		}
 	}
 }

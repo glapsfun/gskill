@@ -137,13 +137,14 @@ func ensureOverLink(dest, src, name string, opts EnsureOptions) (string, error) 
 // the occupant is foreign.
 func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
 	// One hash of dest answers every question below: VerifyDir hands back the
-	// actual content hash, so the accept-hash comparison is a string compare
-	// rather than another full recursive walk per candidate.
+	// actual hashes, so each accept-hash comparison is a Matches call rather
+	// than another full recursive walk per candidate.
 	ok, actual, err := integrity.VerifyDir(dest, opts.ExpectedHash)
 	if err != nil {
 		return "", fmt.Errorf("verify active %s: %w", name, err)
 	}
 	if ok {
+		syncExecBits(src, dest)
 		return dest, nil
 	}
 	hadPrior := false
@@ -152,7 +153,7 @@ func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
 			continue
 		}
 		hadPrior = true
-		if h == actual {
+		if actual.Matches(h) {
 			return dest, swapIn(dest, src, opts.ExpectedHash, name)
 		}
 	}
@@ -166,6 +167,44 @@ func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
 			"run 'gskill project repair' (or 'gskill install --force') to restore lock-true content, or re-add the skill to adopt the edited content as a new version")
 	}
 	return "", foreignErr(name, dest, "directory content gskill did not install")
+}
+
+// syncExecBits copies the executable bits of src's regular files onto the
+// same files in dest. The content hash ignores permissions (spec 028), so an
+// entry that matches is not swapped, yet an upstream permission-only change
+// must still reach it (FR-012). Best effort: a filesystem that cannot store
+// permissions (WSL DrvFs) keeps reporting its own, and symlinks are skipped.
+func syncExecBits(src, dest string) {
+	if filepath.Clean(src) == filepath.Clean(dest) {
+		return
+	}
+	_ = filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.Type().IsRegular() {
+			syncExecBit(src, dest, p, d)
+		}
+		return nil
+	})
+}
+
+// syncExecBit applies one source file's executable bits to its counterpart
+// in dest, leaving it untouched when either side cannot be read.
+func syncExecBit(src, dest, p string, d os.DirEntry) {
+	want, err := d.Info()
+	if err != nil {
+		return
+	}
+	rel, err := filepath.Rel(src, p)
+	if err != nil {
+		return
+	}
+	target := filepath.Join(dest, rel)
+	got, err := os.Lstat(target)
+	if err != nil || !got.Mode().IsRegular() {
+		return
+	}
+	if exec := want.Mode().Perm() & 0o111; got.Mode().Perm()&0o111 != exec {
+		_ = os.Chmod(target, got.Mode().Perm()&^0o111|exec)
+	}
 }
 
 // swapIn stages a verified copy of src as a temporary sibling of dest, then
@@ -190,7 +229,7 @@ func swapIn(dest, src, expectedHash, name string) error {
 	if !ok {
 		_ = os.RemoveAll(tmp)
 		return fmt.Errorf("%w: staged content %s for %q does not match expected %s",
-			errs.ErrIntegrity, got, name, expectedHash)
+			errs.ErrIntegrity, got.ContentHash, name, expectedHash)
 	}
 
 	old := fmt.Sprintf("%s%s%d", dest, oldMarker, stamp)
@@ -259,15 +298,15 @@ func Owned(dest string, roots []string, acceptHashes ...string) bool {
 		}
 		return false
 	}
-	// Hash dest at most once: VerifyDir returns the actual hash, so every
-	// further candidate is a string compare instead of another full walk
+	// Hash dest at most once: VerifyDir returns the actual hashes, so every
+	// further candidate is a Matches call instead of another full walk
 	// (the installer's overwrite guard passes up to three hashes per target).
-	actual := ""
+	var actual *integrity.Hashes
 	for _, h := range acceptHashes {
 		if h == "" {
 			continue
 		}
-		if actual == "" {
+		if actual == nil {
 			ok, got, err := integrity.VerifyDir(dest, h)
 			if err != nil {
 				return false
@@ -275,10 +314,10 @@ func Owned(dest string, roots []string, acceptHashes ...string) bool {
 			if ok {
 				return true
 			}
-			actual = got
+			actual = &got
 			continue
 		}
-		if h == actual {
+		if actual.Matches(h) {
 			return true
 		}
 	}
@@ -355,7 +394,7 @@ func Remove(root, name string, acceptHashes ...string) error {
 		return nil //nolint:nilerr // unverifiable content: never delete
 	}
 	for _, want := range acceptHashes {
-		if want == "" || want != h.ContentHash {
+		if !h.Matches(want) {
 			continue
 		}
 		if err := os.RemoveAll(dest); err != nil {

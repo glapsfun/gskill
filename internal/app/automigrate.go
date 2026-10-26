@@ -166,11 +166,15 @@ func (a *App) seedFromLegacyStore(p *project, name, hash string) {
 		if info, err := os.Stat(obj); err != nil || !info.IsDir() {
 			continue
 		}
-		if ok, _, err := integrity.VerifyDir(obj, hash); err != nil || !ok {
+		ok, verified, err := integrity.VerifyDir(obj, hash)
+		if err != nil || !ok {
 			continue
 		}
+		// A pre-028 hash is checked here against the object, whose modes are
+		// the ones it was recorded with; the staged copy is verified against
+		// the current hash (spec 028 R3).
 		if _, err := active.EnsureActive(p.root, name, obj, active.EnsureOptions{
-			ExpectedHash: hash,
+			ExpectedHash: verified.ContentHash,
 			Replace:      true,
 			LegacyRoots:  p.legacyStoreRoots(),
 		}); err == nil {

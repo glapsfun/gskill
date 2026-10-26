@@ -73,7 +73,7 @@ func verifySkill(root, name string, locked skillslock.Record) SkillVerify {
 			return sv
 		}
 		if !ok {
-			sv.OK, sv.Issue, sv.Actual = false, "mismatch", actual
+			sv.OK, sv.Issue, sv.Actual = false, "mismatch", actual.ContentHash
 			return sv
 		}
 	}
