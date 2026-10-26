@@ -507,3 +507,46 @@ func TestEnsureActive_StagedCopyModesDifferFromHashedTree(t *testing.T) {
 		t.Errorf("health = %q, want ok", h)
 	}
 }
+
+// TestEnsureActive_PermissionOnlyChangeReachesActiveEntry (spec 028 FR-012):
+// the hash ignores permissions, so a matching active entry is not swapped,
+// but an upstream executable-bit change must still reach it.
+func TestEnsureActive_PermissionOnlyChangeReachesActiveEntry(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+
+	write := func(mode os.FileMode) string {
+		d := filepath.Join(t.TempDir(), "zeta")
+		if err := os.MkdirAll(filepath.Join(d, "scripts"), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		for rel, body := range map[string]string{"SKILL.md": "# skill\n", "scripts/run.sh": "#!/bin/sh\necho ok\n"} {
+			if err := os.WriteFile(filepath.Join(d, rel), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chmod(filepath.Join(d, "scripts", "run.sh"), mode); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	before, after := write(0o644), write(0o755)
+	h, err := integrity.HashDir(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := active.EnsureActive(root, "zeta", before, active.EnsureOptions{ExpectedHash: h.ContentHash}); err != nil {
+		t.Fatalf("first EnsureActive: %v", err)
+	}
+	if _, err := active.EnsureActive(root, "zeta", after, active.EnsureOptions{ExpectedHash: h.ContentHash}); err != nil {
+		t.Fatalf("EnsureActive after a permission-only change: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(active.Path(root, "zeta"), "scripts", "run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 != 0o111 {
+		t.Errorf("active run.sh mode = %v, want the upstream executable bits", info.Mode().Perm())
+	}
+}

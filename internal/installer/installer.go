@@ -703,8 +703,12 @@ func hashShipped(dir, expect string) (integrity.Hashes, string, error) {
 		return integrity.Hashes{}, "", err
 	}
 	if expect != "" && !hashes.Matches(expect) {
+		got := hashes.ContentHash
+		if hashes.LegacyContentHash != got {
+			got += " (pre-028 form " + hashes.LegacyContentHash + ")"
+		}
 		return integrity.Hashes{}, "", fmt.Errorf("%w: content %s does not match locked %s",
-			errs.ErrIntegrity, hashes.ContentHash, expect)
+			errs.ErrIntegrity, got, expect)
 	}
 	compat, err := integrity.CompatHash(dir)
 	if err != nil {

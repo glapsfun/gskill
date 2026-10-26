@@ -811,8 +811,7 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 // produced. A pre-028 entry records the legacy hash of the same content: that
 // is a representation upgrade, not a change (spec 028).
 func sameContent(recorded string, result installer.Result) bool {
-	return recorded == result.ContentHash ||
-		(result.LegacyContentHash != "" && recorded == result.LegacyContentHash)
+	return integrity.Hashes{ContentHash: result.ContentHash, LegacyContentHash: result.LegacyContentHash}.Matches(recorded)
 }
 
 // pruneDroppedAgents removes the targets of agents the run no longer installs

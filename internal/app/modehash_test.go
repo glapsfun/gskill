@@ -351,9 +351,25 @@ func TestModeHash_LegacyEntryUpgradedOnce(t *testing.T) {
 	a, root := execProject(t)
 	legacyizeLock(t, root, skillAlpha)
 	betaBefore := entryRaw(t, root, "beta")
+	snapshot := lockBytes(t, root)
 
-	if _, err := installLock(t, a, root, false); err != nil {
+	plan, err := a.InstallFromLock(t.Context(), app.InstallFromLockRequest{Root: root, Agents: []string{testAgent}, DryRun: true})
+	if err != nil {
+		t.Fatalf("dry run with a pre-028 entry: %v", err)
+	}
+	assertLockUnchanged(t, root, snapshot, "a dry run")
+	for _, s := range plan.Skills {
+		if s.Name == skillAlpha && (s.Status != app.LockSkillPlanned || s.PlannedAction != app.PlannedWouldUpdateLock) {
+			t.Errorf("dry run alpha = %s/%s, want planned %s", s.Status, s.PlannedAction, app.PlannedWouldUpdateLock)
+		}
+	}
+
+	res, err := installLock(t, a, root, false)
+	if err != nil {
 		t.Fatalf("install with a pre-028 entry: %v", err)
+	}
+	if !res.Changed {
+		t.Error("install rewrote the lock but reported Changed=false")
 	}
 	if got, want := contentHashes(t, root)[skillAlpha], currentHash(t, root, skillAlpha); got != want {
 		t.Errorf("alpha contentHash = %s, want it upgraded to %s", got, want)
@@ -505,4 +521,28 @@ func TestModeHash_LegacyLockFromPermissionlessCheckout(t *testing.T) {
 			t.Errorf("%s contentHash = %s, want it upgraded to %s", name, got[name], want)
 		}
 	}
+}
+
+// TestModeHash_LegacyEntryOnPermissionlessCheckoutNeedsOneInstall pins the
+// documented limitation (research R7) and its remedy: a pre-028 entry written
+// on a normal filesystem for a skill that ships an executable file cannot
+// match in place on a checkout that reads every file back as executable, and
+// one plain install rewrites it so everything is clean from then on.
+func TestModeHash_LegacyEntryOnPermissionlessCheckoutNeedsOneInstall(t *testing.T) {
+	t.Parallel()
+
+	a, root := execProject(t)
+	legacyizeLock(t, root, skillAlpha)
+	chmodTree(t, filepath.Join(root, ".agents", "skills"), 0o755)
+
+	if cr, err := a.Check(t.Context(), root, false); err != nil || !cr.HasDrift {
+		t.Fatalf("check before the rewrite = drift:%v err:%v; the limitation no longer reproduces, update the docs", cr.HasDrift, err)
+	}
+	if _, err := installLock(t, a, root, false); err != nil {
+		t.Fatalf("install on the permission-less checkout: %v", err)
+	}
+	if got, want := contentHashes(t, root)[skillAlpha], currentHash(t, root, skillAlpha); got != want {
+		t.Errorf("alpha contentHash = %s, want it rewritten to %s", got, want)
+	}
+	assertClean(t, a, root)
 }

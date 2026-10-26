@@ -86,6 +86,9 @@ type LockSkillResult struct {
 	AgentsAdded   []string
 	AgentsRemoved []string
 	Err           error
+	// LockUpdated reports that the run rewrote this entry's recorded content
+	// hash in place, an entry written by a pre-028 release (spec 028).
+	LockUpdated bool
 	// Advice is the agent-specific guidance for a skill this run covered,
 	// whether installed, repaired, or already up to date (spec 027 FR-011,
 	// FR-012); InstallFromLock folds it into Warnings.
@@ -556,7 +559,7 @@ func (a *App) installAllLockEntries(ctx context.Context, p *project, l *skillslo
 			}
 		default:
 			healthy++
-			if r.Status == LockSkillInstalled || r.Status == LockSkillRepaired {
+			if r.Status == LockSkillInstalled || r.Status == LockSkillRepaired || r.LockUpdated {
 				res.Changed = true
 			}
 			res.Warnings = append(res.Warnings, r.Advice...)
@@ -1314,7 +1317,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	if !upToDate {
 		return LockSkillResult{}, false
 	}
-	upgradeLegacyContentHash(lf, name, &prior, current, req)
+	upgraded := upgradeLegacyContentHash(lf, name, &prior, current, req)
 
 	var missing []agent.Agent
 	for _, ag := range agents {
@@ -1324,6 +1327,7 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		}
 	}
 	r := LockSkillResult{Name: name, Source: e.Source, ComputedHash: e.ComputedHash, Status: LockSkillUpToDate}
+	markLegacyUpgrade(&r, upgraded, req.DryRun)
 	stampResultProvenance(&r, e, req)
 	r.Agents = ids
 	r.Commit = prior.Resolved.Commit
@@ -1358,14 +1362,32 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 }
 
 // upgradeLegacyContentHash records current for an entry that matched only
-// through the hash a pre-028 release wrote. It happens once, on a run that
-// writes the lock: frozen and dry runs never change it (spec 028 FR-007).
-func upgradeLegacyContentHash(lf *skillslock.State, name string, prior *skillslock.Record, current string, req InstallFromLockRequest) {
-	if current == prior.Resolved.ContentHash || req.Frozen || req.DryRun {
+// through the hash a pre-028 release wrote, and reports whether the entry
+// changes. It happens once, on a run that writes the lock: frozen runs never
+// change it, and a dry run only reports that it would (spec 028 FR-007).
+func upgradeLegacyContentHash(lf *skillslock.State, name string, prior *skillslock.Record, current string, req InstallFromLockRequest) bool {
+	if current == prior.Resolved.ContentHash || req.Frozen {
+		return false
+	}
+	if !req.DryRun {
+		prior.Resolved.ContentHash = current
+		lf.Skills[name] = *prior
+	}
+	return true
+}
+
+// markLegacyUpgrade surfaces an upgraded content hash on an up-to-date
+// entry: the real run counts as a lock change, a dry run plans one.
+func markLegacyUpgrade(r *LockSkillResult, upgraded, dryRun bool) {
+	if !upgraded {
 		return
 	}
-	prior.Resolved.ContentHash = current
-	lf.Skills[name] = *prior
+	if dryRun {
+		r.Status = LockSkillPlanned
+		r.PlannedAction = PlannedWouldUpdateLock
+		return
+	}
+	r.LockUpdated = true
 }
 
 // committedContentUpToDate establishes that the committed repo copy still
