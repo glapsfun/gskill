@@ -131,3 +131,47 @@ func readSkill(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+// TestInstall_OverrideLegacyExpectAccepted (spec 028 G3): an overridden skill
+// that ships an executable file, locked by a pre-028 release, is accepted both
+// from the committed copy and through the full pipeline, which hashes the
+// post-override content.
+func TestInstall_OverrideLegacyExpectAccepted(t *testing.T) {
+	t.Parallel()
+
+	material := localSkill(t, "demo")
+	addScript(t, material)
+	projectRoot := t.TempDir()
+	writeInput(t, projectRoot, "gskill/demo/rules.md", "## House rules\nCite file:line.\n")
+	inst := newInstaller(t)
+
+	req := localRequest(t, projectRoot, material, "demo")
+	req.Override = overrides.Spec{Append: []string{"gskill/demo/rules.md"}}
+	if _, err := inst.Install(context.Background(), req); err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	h := legacyHashes(t, projectRoot, "demo")
+	req.ExpectContentHash = h.LegacyContentHash
+
+	res, err := inst.Install(context.Background(), req)
+	if err != nil {
+		t.Fatalf("committed restore against a pre-028 hash: %v", err)
+	}
+	if res.ContentHash != h.ContentHash {
+		t.Errorf("committed restore ContentHash = %s, want %s", res.ContentHash, h.ContentHash)
+	}
+
+	if err := os.RemoveAll(filepath.Join(projectRoot, ".agents", "skills", "demo")); err != nil {
+		t.Fatal(err)
+	}
+	res, err = inst.Install(context.Background(), req)
+	if err != nil {
+		t.Fatalf("full pipeline against a pre-028 hash: %v", err)
+	}
+	if res.ContentHash != h.ContentHash {
+		t.Errorf("full pipeline ContentHash = %s, want %s", res.ContentHash, h.ContentHash)
+	}
+	if res.BaseHash == "" || res.BaseHash == res.ContentHash {
+		t.Errorf("BaseHash = %q, want the upstream hash, distinct from the post-override %s", res.BaseHash, res.ContentHash)
+	}
+}

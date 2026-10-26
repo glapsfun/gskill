@@ -69,6 +69,10 @@ type Result struct {
 	// ContentHash when nothing was overridden (spec 023 FR-008).
 	BaseHash    string
 	ContentHash string
+	// LegacyContentHash is the shipped content's pre-028 identity as read
+	// from disk (spec 028). Callers comparing against a lock entry written by
+	// an older release accept it as unchanged content, not a change.
+	LegacyContentHash string
 	// CompatHash is the npx-compatible computedHash of the *shipped* content.
 	// With an override applied this differs from a hash of the upstream
 	// extract, so callers must use it rather than re-hashing Skill.Dir —
@@ -173,19 +177,20 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 	}
 
 	return Result{
-		Skill:         skill,
-		BaseHash:      baseHashes.ContentHash,
-		ContentHash:   hashes.ContentHash,
-		CompatHash:    compat,
-		SkillFileHash: hashes.SkillFileHash,
-		Mode:          mode,
-		Modes:         modes,
-		Agents:        agentIDs(req.Agents),
-		ActivePath:    activePath,
-		Targets:       targets,
-		Warnings:      warnings,
-		StoreReuse:    reuse,
-		StoreScope:    ScopeLabelCommitted,
+		Skill:             skill,
+		BaseHash:          baseHashes.ContentHash,
+		ContentHash:       hashes.ContentHash,
+		LegacyContentHash: hashes.LegacyContentHash,
+		CompatHash:        compat,
+		SkillFileHash:     hashes.SkillFileHash,
+		Mode:              mode,
+		Modes:             modes,
+		Agents:            agentIDs(req.Agents),
+		ActivePath:        activePath,
+		Targets:           targets,
+		Warnings:          warnings,
+		StoreReuse:        reuse,
+		StoreScope:        ScopeLabelCommitted,
 	}, nil
 }
 
@@ -195,7 +200,7 @@ func (i *Installer) Install(ctx context.Context, req Request) (Result, error) {
 // — an error with the repair hint (FR-008) — unless the caller explicitly
 // reconciles (ReplaceActive), in which case the full pipeline replaces it.
 func (i *Installer) installFromCommitted(ctx context.Context, req Request) (Result, bool, error) {
-	dest, state := committedCandidate(req)
+	dest, state, hashes := committedCandidate(req)
 	switch state { //nolint:exhaustive // committedMatch falls through to the hit path below
 	case committedAbsent:
 		return Result{}, false, nil
@@ -213,11 +218,14 @@ func (i *Installer) installFromCommitted(ctx context.Context, req Request) (Resu
 	if err != nil {
 		return Result{}, true, fmt.Errorf("discover committed content for %q: %w", req.Name, err)
 	}
-	warnings, err := validateContent(dest)
-	if err != nil {
+	// The scan still rejects symlinks that escape the skill, but its
+	// executable-bit warnings are not repeated: this copy was scanned when it
+	// was first installed, and a permission-less filesystem (WSL DrvFs)
+	// reports every committed file as executable (spec 028 FR-011).
+	if _, err := validateContent(dest); err != nil {
 		return Result{}, true, err
 	}
-	warnings = append(warnings, identityWarning(req.Name, skill.Frontmatter.Name)...)
+	warnings := identityWarning(req.Name, skill.Frontmatter.Name)
 	skillFile, err := os.ReadFile(filepath.Join(dest, integrity.SkillFileName)) //nolint:gosec // repo-owned active entry
 	if err != nil {
 		return Result{}, true, fmt.Errorf("read committed %s: %w", integrity.SkillFileName, err)
@@ -226,22 +234,26 @@ func (i *Installer) installFromCommitted(ctx context.Context, req Request) (Resu
 	// Close any live progress line: nothing is fetched for a committed hit.
 	progress.Emit(ctx, progress.Event{Phase: progress.PhaseDone, Repo: req.Ref.Display()})
 
-	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), dest, req.ExpectContentHash)
+	// The lock may carry a pre-028 hash; from here on the committed copy's
+	// current hash is what activation verifies and what the lock records
+	// (spec 028 R3).
+	mode, activePath, targets, modes, err := i.activateAll(ctx, req, installName(req, skill), dest, hashes.ContentHash)
 	if err != nil {
 		return Result{}, true, err
 	}
 	return Result{
-		Skill:         skill,
-		ContentHash:   req.ExpectContentHash,
-		SkillFileHash: integrity.HashContent(skillFile),
-		Mode:          mode,
-		Modes:         modes,
-		Agents:        agentIDs(req.Agents),
-		ActivePath:    activePath,
-		Targets:       targets,
-		Warnings:      warnings,
-		StoreReuse:    StoreReused,
-		StoreScope:    ScopeLabelCommitted,
+		Skill:             skill,
+		ContentHash:       hashes.ContentHash,
+		LegacyContentHash: hashes.LegacyContentHash,
+		SkillFileHash:     integrity.HashContent(skillFile),
+		Mode:              mode,
+		Modes:             modes,
+		Agents:            agentIDs(req.Agents),
+		ActivePath:        activePath,
+		Targets:           targets,
+		Warnings:          warnings,
+		StoreReuse:        StoreReused,
+		StoreScope:        ScopeLabelCommitted,
 	}, true, nil
 }
 
@@ -256,24 +268,25 @@ const (
 
 // committedCandidate inspects the active entry for the fast path: only a
 // real directory counts (legacy links and artifacts take the full pipeline),
-// and only project-scope lock-driven installs are eligible.
-func committedCandidate(req Request) (string, committedState) {
+// and only project-scope lock-driven installs are eligible. On a match it also
+// returns the verified hashes of the committed copy.
+func committedCandidate(req Request) (string, committedState, integrity.Hashes) {
 	if req.ExpectContentHash == "" || req.Name == "" || req.Scope == ScopeGlobal {
-		return "", committedAbsent
+		return "", committedAbsent, integrity.Hashes{}
 	}
 	dest := active.Path(req.ProjectRoot, req.Name)
 	info, err := os.Lstat(dest)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return dest, committedAbsent
+		return dest, committedAbsent, integrity.Hashes{}
 	}
-	ok, _, err := integrity.VerifyDir(dest, req.ExpectContentHash)
+	ok, hashes, err := integrity.VerifyDir(dest, req.ExpectContentHash)
 	if err != nil {
-		return dest, committedAbsent // unreadable: let the full pipeline decide
+		return dest, committedAbsent, integrity.Hashes{} // unreadable: let the full pipeline decide
 	}
 	if !ok {
-		return dest, committedDrifted
+		return dest, committedDrifted, integrity.Hashes{}
 	}
-	return dest, committedMatch
+	return dest, committedMatch, hashes
 }
 
 // Discover materializes the source and discovers the skill without activating
@@ -689,7 +702,7 @@ func hashShipped(dir, expect string) (integrity.Hashes, string, error) {
 	if err != nil {
 		return integrity.Hashes{}, "", err
 	}
-	if expect != "" && hashes.ContentHash != expect {
+	if expect != "" && !hashes.Matches(expect) {
 		return integrity.Hashes{}, "", fmt.Errorf("%w: content %s does not match locked %s",
 			errs.ErrIntegrity, hashes.ContentHash, expect)
 	}

@@ -64,21 +64,65 @@ func TestHashDir_LFNormalizesText(t *testing.T) {
 	}
 }
 
-func TestHashDir_ExecBitChangesHash(t *testing.T) {
+// TestHashDir_ExecBitDoesNotChangeHash pins spec 028: permissions are not
+// content, so a filesystem that reports every file as executable (WSL DrvFs)
+// yields the same identity. Only the pre-028 legacy value still sees the bit.
+func TestHashDir_ExecBitDoesNotChangeHash(t *testing.T) {
 	t.Parallel()
 
-	plain := t.TempDir()
-	writeFile(t, plain, "SKILL.md", []byte("x"), 0o600)
-	writeFile(t, plain, "run.sh", []byte("#!/bin/sh\n"), 0o600)
+	blob := []byte{0x00, 0x0d, 0x0a, 0x01}
+	mk := func(mode os.FileMode) string {
+		d := t.TempDir()
+		writeFile(t, d, "SKILL.md", []byte("x"), 0o600)
+		writeFile(t, d, "run.sh", []byte("#!/bin/sh\n"), 0o600)
+		writeFile(t, d, "blob.bin", blob, 0o600)
+		for _, rel := range []string{"run.sh", "blob.bin"} {
+			if err := os.Chmod(filepath.Join(d, rel), mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return d
+	}
 
-	exec := t.TempDir()
-	writeFile(t, exec, "SKILL.md", []byte("x"), 0o600)
-	writeFile(t, exec, "run.sh", []byte("#!/bin/sh\n"), 0o700)
+	hp, err := integrity.HashDir(mk(0o644))
+	if err != nil {
+		t.Fatal(err)
+	}
+	he, err := integrity.HashDir(mk(0o755))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hp.ContentHash != he.ContentHash {
+		t.Errorf("exec bit changed the content hash: %s vs %s", hp.ContentHash, he.ContentHash)
+	}
+	if hp.LegacyContentHash == he.LegacyContentHash {
+		t.Error("legacy hash ignored the exec bit; it must keep the pre-028 rule")
+	}
+}
 
-	hp, _ := integrity.HashDir(plain)
-	he, _ := integrity.HashDir(exec)
-	if hp.ContentHash == he.ContentHash {
-		t.Error("exec bit difference did not change content hash")
+func TestHashDir_SymlinkAndFileStillDiffer(t *testing.T) {
+	t.Parallel()
+
+	file := t.TempDir()
+	writeFile(t, file, "SKILL.md", []byte("x"), 0o600)
+	writeFile(t, file, "ref.md", []byte(integrity.SkillFileName), 0o600)
+
+	link := t.TempDir()
+	writeFile(t, link, "SKILL.md", []byte("x"), 0o600)
+	if err := os.Symlink(integrity.SkillFileName, filepath.Join(link, "ref.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	hf, err := integrity.HashDir(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hl, err := integrity.HashDir(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hf.ContentHash == hl.ContentHash {
+		t.Error("a symlink and a regular file with the same bytes produced the same hash")
 	}
 }
 

@@ -137,8 +137,8 @@ func ensureOverLink(dest, src, name string, opts EnsureOptions) (string, error) 
 // the occupant is foreign.
 func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
 	// One hash of dest answers every question below: VerifyDir hands back the
-	// actual content hash, so the accept-hash comparison is a string compare
-	// rather than another full recursive walk per candidate.
+	// actual hashes, so each accept-hash comparison is a Matches call rather
+	// than another full recursive walk per candidate.
 	ok, actual, err := integrity.VerifyDir(dest, opts.ExpectedHash)
 	if err != nil {
 		return "", fmt.Errorf("verify active %s: %w", name, err)
@@ -152,7 +152,7 @@ func ensureOverDir(dest, src, name string, opts EnsureOptions) (string, error) {
 			continue
 		}
 		hadPrior = true
-		if h == actual {
+		if actual.Matches(h) {
 			return dest, swapIn(dest, src, opts.ExpectedHash, name)
 		}
 	}
@@ -190,7 +190,7 @@ func swapIn(dest, src, expectedHash, name string) error {
 	if !ok {
 		_ = os.RemoveAll(tmp)
 		return fmt.Errorf("%w: staged content %s for %q does not match expected %s",
-			errs.ErrIntegrity, got, name, expectedHash)
+			errs.ErrIntegrity, got.ContentHash, name, expectedHash)
 	}
 
 	old := fmt.Sprintf("%s%s%d", dest, oldMarker, stamp)
@@ -259,15 +259,15 @@ func Owned(dest string, roots []string, acceptHashes ...string) bool {
 		}
 		return false
 	}
-	// Hash dest at most once: VerifyDir returns the actual hash, so every
-	// further candidate is a string compare instead of another full walk
+	// Hash dest at most once: VerifyDir returns the actual hashes, so every
+	// further candidate is a Matches call instead of another full walk
 	// (the installer's overwrite guard passes up to three hashes per target).
-	actual := ""
+	var actual *integrity.Hashes
 	for _, h := range acceptHashes {
 		if h == "" {
 			continue
 		}
-		if actual == "" {
+		if actual == nil {
 			ok, got, err := integrity.VerifyDir(dest, h)
 			if err != nil {
 				return false
@@ -275,10 +275,10 @@ func Owned(dest string, roots []string, acceptHashes ...string) bool {
 			if ok {
 				return true
 			}
-			actual = got
+			actual = &got
 			continue
 		}
-		if h == actual {
+		if actual.Matches(h) {
 			return true
 		}
 	}
@@ -355,7 +355,7 @@ func Remove(root, name string, acceptHashes ...string) error {
 		return nil //nolint:nilerr // unverifiable content: never delete
 	}
 	for _, want := range acceptHashes {
-		if want == "" || want != h.ContentHash {
+		if !h.Matches(want) {
 			continue
 		}
 		if err := os.RemoveAll(dest); err != nil {

@@ -795,7 +795,7 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 	}
 
 	old, existed := lf.Skills[name]
-	changed := !existed || old.Resolved.ContentHash != result.ContentHash || old.Resolved.Commit != rev.Commit
+	changed := !existed || !sameContent(old.Resolved.ContentHash, result) || old.Resolved.Commit != rev.Commit
 	locked, lockErr := buildLockEntry(ref, rev, ireq, result, rq)
 	if lockErr != nil {
 		return SkillChange{}, lockErr
@@ -805,6 +805,14 @@ func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, 
 	}
 	lf.Skills[name] = locked
 	return SkillChange{Name: name, ContentHash: result.ContentHash, Changed: changed}, nil
+}
+
+// sameContent reports whether recorded identifies the content the install
+// produced. A pre-028 entry records the legacy hash of the same content: that
+// is a representation upgrade, not a change (spec 028).
+func sameContent(recorded string, result installer.Result) bool {
+	return recorded == result.ContentHash ||
+		(result.LegacyContentHash != "" && recorded == result.LegacyContentHash)
 }
 
 // pruneDroppedAgents removes the targets of agents the run no longer installs

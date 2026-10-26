@@ -1310,9 +1310,11 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 		// output; that would silently stop catching that drift.
 		return LockSkillResult{}, false
 	}
-	if !committedContentUpToDate(p, name, prior, e.ComputedHash) {
+	current, upToDate := committedContentUpToDate(p, name, prior, e.ComputedHash)
+	if !upToDate {
 		return LockSkillResult{}, false
 	}
+	upgradeLegacyContentHash(lf, name, &prior, current, req)
 
 	var missing []agent.Agent
 	for _, ag := range agents {
@@ -1355,6 +1357,17 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 	return r, true
 }
 
+// upgradeLegacyContentHash records current for an entry that matched only
+// through the hash a pre-028 release wrote. It happens once, on a run that
+// writes the lock: frozen and dry runs never change it (spec 028 FR-007).
+func upgradeLegacyContentHash(lf *skillslock.State, name string, prior *skillslock.Record, current string, req InstallFromLockRequest) {
+	if current == prior.Resolved.ContentHash || req.Frozen || req.DryRun {
+		return
+	}
+	prior.Resolved.ContentHash = current
+	lf.Skills[name] = *prior
+}
+
 // committedContentUpToDate establishes that the committed repo copy still
 // backs the lock entry (spec 022 FR-007): its full content hash must match
 // the resolved contentHash AND its compat hash the entry's computedHash —
@@ -1363,18 +1376,22 @@ func (a *App) lockEntryUpToDate(ctx context.Context, p *project, lf *skillslock.
 // --force, on the full path). The full content hash covers symlinks that
 // CompatHash skips by design, so a tampered committed copy never satisfies
 // the fast path — it falls through to the full path, which fails closed.
-func committedContentUpToDate(p *project, name string, prior skillslock.Record, computedHash string) bool {
+//
+// It also returns the committed copy's current content hash, which differs
+// from the recorded one only for an entry written by a pre-028 release.
+func committedContentUpToDate(p *project, name string, prior skillslock.Record, computedHash string) (string, bool) {
 	dest := installedContentPath(p, name, prior)
 	if dest == "" {
-		return false
+		return "", false
 	}
-	if ok, _, err := integrity.VerifyDir(dest, prior.Resolved.ContentHash); err != nil || !ok {
-		return false
+	ok, verified, err := integrity.VerifyDir(dest, prior.Resolved.ContentHash)
+	if err != nil || !ok {
+		return "", false
 	}
 	if compat, err := integrity.CompatHash(dest); err != nil || compat != computedHash {
-		return false
+		return "", false
 	}
-	return true
+	return verified.ContentHash, true
 }
 
 // installedContentPath returns the directory holding this entry's installed
