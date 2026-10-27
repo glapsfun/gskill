@@ -68,8 +68,10 @@ both files. The CI `site` job fails if the README falls out of step.
 
 - `--local` uses gskill built from your checkout and serves the example skill from your working
   tree, offline. The CI `site` job runs this on every pull request.
-- `--release` installs the latest release and fetches the example skill from GitHub. It runs
-  after every publish, and reports when the site has moved ahead of the latest release.
+- `--release` installs a published release (the one in `VERSION`, or the latest stable release)
+  and fetches the example skill from GitHub. `.github/workflows/landing-example.yml` runs it after
+  each release and after changes to the example on `main`, and reports when the site has moved
+  ahead of what visitors can install.
 
 ## Generated reference pages
 

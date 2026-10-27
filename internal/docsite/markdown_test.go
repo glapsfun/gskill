@@ -48,6 +48,30 @@ func TestParsePage(t *testing.T) {
 			wantTitle: "Real",
 			wantDesc:  "Para.",
 		},
+		{
+			name:      "code span contents kept verbatim",
+			src:       "# T\n\nCommitted at `.agents/skills/<name>/`, with `a*b*`, ``__init__`` and <em>html</em>.\n",
+			wantTitle: "T",
+			wantDesc:  "Committed at .agents/skills/<name>/, with a*b*, __init__ and html.",
+		},
+		{
+			name:      "less-than outside a tag kept",
+			src:       "# T\n\nWhen a < b and b > c.\n",
+			wantTitle: "T",
+			wantDesc:  "When a < b and b > c.",
+		},
+		{
+			name:      "trailing hash in the title kept",
+			src:       "# Use GSKILL with C#\n\nText.\n",
+			wantTitle: "Use GSKILL with C#",
+			wantDesc:  "Text.",
+		},
+		{
+			name:      "closing hashes dropped from the title",
+			src:       "# Closed title ##  \n\nText.\n",
+			wantTitle: "Closed title",
+			wantDesc:  "Text.",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

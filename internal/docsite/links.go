@@ -63,8 +63,8 @@ var (
 // relative targets. Fenced code blocks and inline code spans are left alone.
 func RewriteLinks(src, fromPath string, cfg Config) (string, error) {
 	var errs []error
-	rewrite := func(target string) string {
-		out, err := rewriteTarget(target, fromPath, cfg)
+	rewrite := func(target string, image bool) string {
+		out, err := rewriteTarget(target, fromPath, image, cfg)
 		if err != nil {
 			errs = append(errs, err)
 			return target
@@ -87,29 +87,34 @@ func RewriteLinks(src, fromPath string, cfg Config) (string, error) {
 // inside an inline code span. Matching runs on a copy where code spans are
 // blanked out, so a link whose text contains code still matches while a link
 // written inside code does not.
-func rewriteLine(line string, rewrite func(string) string) string {
+func rewriteLine(line string, rewrite func(target string, image bool) string) string {
 	masked := maskCodeSpans(line)
 	var b strings.Builder
 	last := 0
 	for _, m := range inlineLinkRe.FindAllStringSubmatchIndex(masked, -1) {
 		start, end := m[4], m[5]
 		b.WriteString(line[last:start])
-		b.WriteString(rewrite(line[start:end]))
+		b.WriteString(rewrite(line[start:end], line[m[2]] == '!'))
 		last = end
 	}
 	b.WriteString(line[last:])
 	out := b.String()
 
 	if m := refDefRe.FindStringSubmatchIndex(maskCodeSpans(out)); m != nil {
-		out = out[:m[4]] + rewrite(out[m[4]:m[5]]) + out[m[5]:]
+		out = out[:m[4]] + rewrite(out[m[4]:m[5]], false) + out[m[5]:]
 	}
 	return out
 }
 
-// maskCodeSpans returns line with the contents of every inline code span
-// replaced by 'x', byte for byte, so match offsets apply to the original.
-func maskCodeSpans(line string) string {
-	b := []byte(line)
+// codeSpan is the byte range of one inline code span: [start, end) covers the
+// backtick fences, [inner, innerEnd) the contents between them.
+type codeSpan struct{ start, inner, innerEnd, end int }
+
+// codeSpans returns the inline code spans in s, in order. A span opens with a
+// run of backticks and closes with the next run of the same length.
+func codeSpans(s string) []codeSpan {
+	b := []byte(s)
+	var spans []codeSpan
 	for i := 0; i < len(b); {
 		if b[i] != '`' {
 			i++
@@ -121,10 +126,20 @@ func maskCodeSpans(line string) string {
 			i += n
 			continue
 		}
-		for j := i + n; j < closeAt; j++ {
+		spans = append(spans, codeSpan{start: i, inner: i + n, innerEnd: closeAt, end: closeAt + n})
+		i = closeAt + n
+	}
+	return spans
+}
+
+// maskCodeSpans returns line with the contents of every inline code span
+// replaced by 'x', byte for byte, so match offsets apply to the original.
+func maskCodeSpans(line string) string {
+	b := []byte(line)
+	for _, sp := range codeSpans(line) {
+		for j := sp.inner; j < sp.innerEnd; j++ {
 			b[j] = 'x'
 		}
-		i = closeAt + n
 	}
 	return string(b)
 }
@@ -156,8 +171,9 @@ func findRun(b []byte, from int, c byte, n int) int {
 }
 
 // rewriteTarget maps one link target per the rewriting table in the
-// content-transform contract.
-func rewriteTarget(target, fromPath string, cfg Config) (string, error) {
+// content-transform contract. image marks an embedded image, which must be one
+// the site serves: a GitHub blob URL is a web page, not image bytes.
+func rewriteTarget(target, fromPath string, image bool, cfg Config) (string, error) {
 	body, suffix := splitLinkSuffix(target)
 	if passThrough(target) || body == "" {
 		return target, nil
@@ -177,6 +193,9 @@ func rewriteTarget(target, fromPath string, cfg Config) (string, error) {
 	ext := strings.ToLower(path.Ext(docsRel))
 	switch {
 	case !insideDocs, cfg.Excluded != nil && cfg.Excluded(docsRel):
+		if image {
+			return "", fmt.Errorf("%s: image %s is not published with the site; move it under docs/, outside excluded paths", fromPath, target)
+		}
 		return cfg.BlobBase + "/" + repoRel + suffix, nil
 	case imageExts[ext]:
 		return cfg.BasePath + "/" + assetsPath + "/" + docsRel + suffix, nil

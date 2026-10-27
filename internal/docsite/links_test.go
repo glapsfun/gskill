@@ -21,6 +21,7 @@ func linkTree() map[string]string {
 	files[".github/workflows/release.yml"] = "name: Release\n"
 	files["docs/img/d.svg"] = "<svg/>"
 	files["docs/design/fig.png"] = "png"
+	files["assets/logo.png"] = "png"
 	return files
 }
 
@@ -46,7 +47,8 @@ func TestRewriteLinks(t *testing.T) {
 		{"inline code untouched", "`[b](b.md)` and [b](b.md)", "`[b](b.md)` and [b](/gskill/how-to/b/)"},
 		{"fenced code untouched", "```md\n[b](b.md)\n```\n[b](b.md)", "```md\n[b](b.md)\n```\n[b](/gskill/how-to/b/)"},
 		{"image is served from docs-assets", "![d](../img/d.svg)", "![d](/gskill/docs-assets/img/d.svg)"},
-		{"image in an excluded dir goes to github", "![f](../design/fig.png)", "![f](" + BlobBase + "/docs/design/fig.png)"},
+		{"link to an image in an excluded dir goes to github", "[f](../design/fig.png)", "[f](" + BlobBase + "/docs/design/fig.png)"},
+		{"link to an image outside docs goes to github", "[l](../../assets/logo.png)", "[l](" + BlobBase + "/assets/logo.png)"},
 		{"two links on a line", "[a](b.md) or [i](index.md)", "[a](/gskill/how-to/b/) or [i](/gskill/how-to/)"},
 	}
 	root := newTree(t, linkTree())
@@ -74,6 +76,8 @@ func TestRewriteLinks_Errors(t *testing.T) {
 		{"missing target", "[m](missing.md)", "how-to/a.md: link target missing.md does not exist"},
 		{"missing repository file", "[m](../../nope.txt)", "how-to/a.md: link target ../../nope.txt does not exist"},
 		{"escapes the repository", "[o](../../../outside.md)", "how-to/a.md: link target ../../../outside.md escapes the repository"},
+		{"image outside docs", "![l](../../assets/logo.png)", "how-to/a.md: image ../../assets/logo.png is not published with the site"},
+		{"image in an excluded dir", "![f](../design/fig.png)", "how-to/a.md: image ../design/fig.png is not published with the site"},
 	}
 	root := newTree(t, linkTree())
 	cfg := testConfig(root)

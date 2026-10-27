@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -55,7 +56,7 @@ func ParsePage(src, rel string, cfg Config) (Page, error) {
 	if desc == "" {
 		return Page{}, fmt.Errorf("%s: no prose paragraph to use as the description", rel)
 	}
-	heading := strings.TrimRight(strings.TrimPrefix(lines[titleAt], "# "), "# ")
+	heading := atxClosingRe.ReplaceAllString(strings.TrimPrefix(lines[titleAt], "# "), "")
 	page := Page{
 		Title:       plainText(heading),
 		Description: truncate(desc, maxDescription),
@@ -118,6 +119,11 @@ func skipPreamble(lines []string) int {
 	}
 	return i
 }
+
+// atxClosingRe matches an ATX heading's optional closing sequence: a run of #
+// after whitespace at the end of the line. A # inside the text, as in "C#",
+// is not one.
+var atxClosingRe = regexp.MustCompile(`\s+#+\s*$`)
 
 // findTitle returns the index of the first ATX H1 outside fenced code at or
 // after start, or -1.
@@ -192,21 +198,41 @@ var plainTextRules = []struct {
 	{regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`), ""},
 	{regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`), "$1"},
 	{regexp.MustCompile(`\[([^\]]*)\]\[[^\]]*\]`), "$1"},
-	{regexp.MustCompile("`+([^`]*)`+"), "$1"},
 	{regexp.MustCompile(`\*\*([^*]+)\*\*`), "$1"},
 	{regexp.MustCompile(`__([^_]+)__`), "$1"},
 	{regexp.MustCompile(`\*([^*\s][^*]*)\*`), "$1"},
 	{regexp.MustCompile(`(^|\W)_([^_\s][^_]*)_(\W|$)`), "$1$2$3"},
-	{regexp.MustCompile(`<[^>]+>`), ""},
+	{regexp.MustCompile(`</?[A-Za-z][^>]*>|<!--.*?-->`), ""},
 	{regexp.MustCompile(`\s+`), " "},
 }
 
+// codeSlotRe matches the placeholder plainText puts where a code span was.
+var codeSlotRe = regexp.MustCompile("\x00([0-9]+)\x00")
+
 // plainText strips inline Markdown (links, images, code, emphasis, HTML) and
-// collapses whitespace.
+// collapses whitespace. Code spans are set aside first and restored last, so
+// their contents come through verbatim: <name> is not a tag, *a* is not
+// emphasis.
 func plainText(md string) string {
+	var b strings.Builder
+	var code []string
+	last := 0
+	for _, sp := range codeSpans(md) {
+		b.WriteString(md[last:sp.start])
+		b.WriteString("\x00" + strconv.Itoa(len(code)) + "\x00")
+		code = append(code, md[sp.inner:sp.innerEnd])
+		last = sp.end
+	}
+	b.WriteString(md[last:])
+	md = b.String()
+
 	for _, r := range plainTextRules {
 		md = r.re.ReplaceAllString(md, r.repl)
 	}
+	md = codeSlotRe.ReplaceAllStringFunc(md, func(slot string) string {
+		i, _ := strconv.Atoi(slot[1 : len(slot)-1])
+		return code[i]
+	})
 	return strings.TrimSpace(md)
 }
 

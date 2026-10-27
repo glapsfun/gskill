@@ -56,9 +56,10 @@ gskill ships for **Linux and macOS** on **amd64** and **arm64**. Windows is not
 supported. See [Supported agents](docs/reference/agents.md) for detection and
 scope details.
 
-## Quick start
+## Install
 
-**Install** (pick one; details in [docs/installation.md](docs/installation.md)):
+Pick one method, then check it with `gskill version`. More detail is in
+[docs/installation.md](docs/installation.md).
 
 <!-- install-methods:start -->
 ### Install script
@@ -106,14 +107,15 @@ npx @glapsfun/gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill
 ```
 <!-- install-methods:end -->
 
-Verify the install with `gskill version`.
-
-**Use it:**
+## Quick start
 
 ```bash
-gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude  # resolve, install, lock
-gskill install --frozen-lockfile                                 # reproduce exactly elsewhere
-gskill project verify                                            # re-hash installed content vs the lock
+# Resolve, install, and lock a skill (auto-initializes the project)
+gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude
+# Reproduce exactly elsewhere
+gskill install --frozen-lockfile
+# Re-hash installed content against the lock
+gskill project verify
 ```
 
 Commit `skills-lock.json` — it's the only project state file GSKILL writes; it

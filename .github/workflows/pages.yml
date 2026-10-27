@@ -6,7 +6,9 @@ name: Pages
 #
 # Triggers: pushes to main that change the site's inputs, manual dispatch, and
 # release.yml, which dispatches it after each release (GITHUB_TOKEN-created
-# releases never start workflows on their own).
+# releases never start workflows on their own). The landing example check
+# against a release lives in landing-example.yml, outside this concurrency
+# group, so it never waits on a deploy or gets dropped from the queue.
 
 on:
   push:
@@ -14,11 +16,9 @@ on:
     paths:
       - "docs/**"
       - "website/**"
-      - "examples/**"
       - "cmd/gen-site/**"
       - "internal/docsite/**"
       - "scripts/site.sh"
-      - "scripts/check-landing-example.sh"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
     inputs:
@@ -27,6 +27,8 @@ on:
         required: false
         type: string
         default: manual
+
+run-name: ${{ inputs.reason && format('Pages ({0})', inputs.reason) || '' }}
 
 # Nothing by default; each job asks for exactly what it needs.
 permissions: {}
@@ -62,12 +64,8 @@ jobs:
           node-version: "24"
       - name: Check the README install region
         run: go run ./cmd/gen-site -check
-      - name: Generate site content from docs/
-        run: go run ./cmd/gen-site
-      - name: Install site dependencies
-        run: npm ci --prefix website
-      - name: Build the site (fails on broken links or anchors)
-        run: npm run build --prefix website
+      - name: Generate and build the site (fails on broken links or anchors)
+        run: ./scripts/site.sh build
       - name: Upload the Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
@@ -90,20 +88,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
-
-  # Runs the landing page example exactly as published, against the latest
-  # release. A failure means the site documents something visitors cannot
-  # install yet; it turns this run red but never blocks or undoes the deploy.
-  example-vs-release:
-    name: example-vs-release
-    needs: deploy
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Run the landing example against the latest release
-        run: ./scripts/check-landing-example.sh --release
