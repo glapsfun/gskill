@@ -1,0 +1,90 @@
+name: Pages
+
+# Publishes the documentation site (website/, content generated from docs/ by
+# cmd/gen-site) to https://glapsfun.github.io/gskill/. Pull requests are
+# validated by the `site` job in ci.yml; this workflow only publishes.
+#
+# Triggers: pushes to main that change the site's inputs, manual dispatch, and
+# release.yml, which dispatches it after each release (GITHUB_TOKEN-created
+# releases never start workflows on their own). The landing example check
+# against a release lives in landing-example.yml, outside this concurrency
+# group, so it never waits on a deploy or gets dropped from the queue.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "website/**"
+      - "cmd/gen-site/**"
+      - "internal/docsite/**"
+      - "scripts/site.sh"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why this publish was started, e.g. a release tag"
+        required: false
+        type: string
+        default: manual
+
+run-name: ${{ inputs.reason && format('Pages ({0})', inputs.reason) || '' }}
+
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
+
+# One deployment at a time, never cancelled mid-flight: a cancelled deploy can
+# leave the site half-published, and the queued run still publishes the newest
+# main afterwards.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # No caches here: this job produces the published artifact, so a poisonable
+  # cache must not feed it (zizmor cache-poisoning). Integrity > speed.
+  # actions/configure-pages is deliberately absent: it needs Pages API read
+  # access, and its outputs (origin, base path) are fixed in astro.config.mjs.
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.10"
+          cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Check the README install region
+        run: go run ./cmd/gen-site -check
+      - name: Generate and build the site (fails on broken links or anchors)
+        run: ./scripts/site.sh build
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: website/dist
+
+  # The only job that can publish. A failed build never reaches it, so the
+  # previous deployment keeps serving.
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

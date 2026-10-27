@@ -56,34 +56,66 @@ gskill ships for **Linux and macOS** on **amd64** and **arm64**. Windows is not
 supported. See [Supported agents](docs/reference/agents.md) for detection and
 scope details.
 
-## Quick start
+## Install
 
-**Install** (pick one):
+Pick one method, then check it with `gskill version`. More detail is in
+[docs/installation.md](docs/installation.md).
 
-```bash
-# Install script — downloads the right archive and verifies its checksum
+<!-- install-methods:start -->
+### Install script
+
+Downloads the right archive for your platform and verifies its checksum.
+
+```sh
 curl -sSfL https://raw.githubusercontent.com/glapsfun/gskill/main/scripts/install.sh | sh
-
-# Homebrew (macOS and Linux)
-brew install glapsfun/tap/gskill
-
-# Go (requires a Go toolchain)
-go install github.com/glapsfun/gskill/cmd/gskill@latest
-
-# npm — or run directly with npx, no install needed (requires Node.js >= 20)
-npm install --global @glapsfun/gskill
-npx @glapsfun/gskill version
-npx @glapsfun/gskill add github.com/owner/repo --skill example --agent claude
 ```
 
-Verify the install with `gskill version`.
+### Homebrew
 
-**Use it:**
+macOS and Linux.
+
+```sh
+brew install glapsfun/tap/gskill
+```
+
+### Go
+
+Requires a Go toolchain.
+
+```sh
+go install github.com/glapsfun/gskill/cmd/gskill@latest
+```
+
+### npm
+
+Requires Node.js 20 or newer.
+
+```sh
+npm install --global @glapsfun/gskill
+```
+
+### npx
+
+Run without installing. Requires Node.js 20 or newer.
+
+```sh
+npx @glapsfun/gskill version
+```
+
+```sh
+npx @glapsfun/gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude
+```
+<!-- install-methods:end -->
+
+## Quick start
 
 ```bash
-gskill add github.com/owner/repo --skill example --agent claude  # resolve, install, lock (auto-initializes the project)
-gskill install --frozen-lockfile                                 # reproduce exactly elsewhere
-gskill project verify                                            # re-hash installed content vs the lock
+# Resolve, install, and lock a skill (auto-initializes the project)
+gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude
+# Reproduce exactly elsewhere
+gskill install --frozen-lockfile
+# Re-hash installed content against the lock
+gskill project verify
 ```
 
 Commit `skills-lock.json` — it's the only project state file GSKILL writes; it

@@ -1,0 +1,21 @@
+---
+// Starlight's header social links plus a text link to GitHub Releases, so the
+// source and the releases are one click away from every page.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+---
+
+<a href="https://github.com/glapsfun/gskill/releases" class="releases">Releases</a>
+<Default />
+
+<style>
+  .releases {
+    color: var(--sl-color-text-accent);
+    font-size: var(--sl-text-sm);
+    text-decoration: none;
+    padding: 0.5em;
+    margin: -0.5em 0;
+  }
+  .releases:hover {
+    color: var(--sl-color-white);
+  }
+</style>

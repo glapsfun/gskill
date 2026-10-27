@@ -1,0 +1,85 @@
+# Documentation site navigation (https://glapsfun.github.io/gskill/).
+#
+# Every Markdown page under docs/ must be listed in exactly one group below, or
+# matched by `exclude` with a reason. `go test ./test/docs/...` and
+# `go run ./cmd/gen-site` both fail on a page that is neither, so a new page
+# cannot silently go missing from the site.
+#
+# Pages are docs-relative paths, written either as a bare string or as
+# {path, label} when the sidebar label should differ from the page title.
+# After editing, run: scripts/site.sh gen
+base: /gskill
+
+exclude:
+  - path: design/**
+    reason: internal design records, not user documentation
+
+groups:
+  - group: Start here
+    pages:
+      - path: README.md
+        label: Overview
+      - path: installation.md
+        label: Installation
+      - path: tutorials/getting-started.md
+        label: Getting started
+
+  - group: How-to guides
+    pages:
+      - path: how-to/index.md
+        label: All how-to guides
+      - how-to/install-a-local-skill.md
+      - how-to/add-a-git-skill.md
+      - how-to/target-specific-agents.md
+      - how-to/copy-vs-symlink.md
+      - how-to/customize-a-skill.md
+      - how-to/reproduce-with-frozen-lockfile.md
+      - how-to/work-offline.md
+      - how-to/verify-integrity.md
+      - how-to/gate-ci-on-drift.md
+      - how-to/update-and-lock.md
+      - how-to/upgrade-a-skill.md
+      - how-to/remove-and-gc.md
+      - how-to/sync-and-repair.md
+      - how-to/inspect-list-info-check.md
+      - how-to/manage-the-cache.md
+      - how-to/reuse-skills-across-projects.md
+      - how-to/use-different-skill-versions.md
+      - how-to/configure-gskill.md
+      - how-to/shell-completion.md
+      - how-to/run-doctor.md
+      - how-to/use-the-tui.md
+      - how-to/script-with-json.md
+
+  - group: Reference
+    pages:
+      - reference/commands.md
+      - reference/exit-codes.md
+      - reference/configuration.md
+      - reference/manifest.md
+      - reference/lockfile-schema.md
+      - reference/frontmatter-schema.md
+      - reference/agents.md
+
+  - group: Explanation
+    pages:
+      - explanation/reproducibility-model.md
+      - explanation/lifecycle.md
+      - explanation/integrity-and-trust.md
+      - explanation/repo-owned-storage.md
+      - explanation/project-and-global-state.md
+      - explanation/store-and-cache.md
+      - explanation/multi-agent-installs.md
+
+  - group: Contributing
+    pages:
+      - contributing/development.md
+      - contributing/website.md
+      - ci-cd.md
+      - how-to/releasing.md
+      - explanation/cli-styling.md
+    links:
+      - label: Source on GitHub
+        url: https://github.com/glapsfun/gskill
+      - label: Releases
+        url: https://github.com/glapsfun/gskill/releases

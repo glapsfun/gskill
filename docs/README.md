@@ -14,6 +14,7 @@ with one job.
 
 | If you want to… | Go to |
 | --- | --- |
+| **Install** GSKILL on Linux or macOS | [Installation](installation.md) |
 | **Learn** GSKILL from scratch, step by step | [Tutorial: Getting started](tutorials/getting-started.md) |
 | **Do** a specific task (recipes with examples) | [How-to guides](how-to/index.md) |
 | **Look up** a command, flag, exit code, or file format | [Reference](#reference) |

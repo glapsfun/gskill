@@ -65,3 +65,12 @@ CLAUDE.md
 .agents
 skills-lock.json
 .gskill/
+
+# Documentation site (website/): dependencies, build output, and the content
+# tree cmd/gen-site regenerates from docs/ on every build.
+/website/node_modules/
+/website/dist/
+/website/.astro/
+/website/src/content/docs/
+/website/src/generated/
+/website/public/docs-assets/

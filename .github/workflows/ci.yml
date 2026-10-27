@@ -154,3 +154,29 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Audit workflows
         run: ./scripts/audit-workflows.sh
+
+  # Documentation site: fail if the README install region drifted from
+  # docs/installation.md, regenerate the content from docs/, build it with link
+  # and anchor validation, and run the landing page example against the gskill
+  # built from this commit. Additive like build-test; publishing is pages.yml.
+  site:
+    name: site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.10"
+          cache: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install site dependencies
+        run: npm ci --prefix website
+      - name: Check, build, and run the landing example
+        run: ./scripts/site.sh check

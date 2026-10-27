@@ -1,0 +1,51 @@
+name: Landing example
+
+# Runs the landing page's workflow example (website/src/landing/example.sh)
+# against a published release, the way a visitor would. On pushes to main that
+# change the example or what it fetches, it installs the latest stable release;
+# when release.yml dispatches it, it installs that release's tag. A failure
+# means the site documents something visitors cannot install. Informational:
+# it never blocks or undoes a pages.yml deploy.
+#
+# Kept apart from pages.yml on purpose. pages.yml serializes whole runs in one
+# concurrency group, where GitHub keeps a single pending run and cancels the
+# rest, so a release check queued there could vanish without a report.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/src/landing/example.sh"
+      - "examples/**"
+      - "scripts/check-landing-example.sh"
+      - "scripts/install.sh"
+      - "scripts/lib.sh"
+      - ".github/workflows/landing-example.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to install, e.g. v0.9.0; empty for the latest stable release"
+        required: false
+        type: string
+        default: ""
+
+run-name: ${{ inputs.version && format('Landing example vs {0}', inputs.version) || '' }}
+
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
+
+jobs:
+  example-vs-release:
+    name: example-vs-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the landing example against the release
+        env:
+          VERSION: ${{ inputs.version }}
+        run: ./scripts/check-landing-example.sh --release
