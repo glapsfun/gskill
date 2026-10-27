@@ -1,11 +1,12 @@
 name: Landing example
 
 # Runs the landing page's workflow example (website/src/landing/example.sh)
-# against a published release, the way a visitor would. On pushes to main that
-# change the example or what it fetches, it installs the latest stable release;
-# when release.yml dispatches it, it installs that release's tag. A failure
-# means the site documents something visitors cannot install. Informational:
-# it never blocks or undoes a pages.yml deploy.
+# against a published release, the way a visitor would. After every site
+# publish (pages.yml dispatches it) and on pushes to main that change what the
+# example fetches, it installs the latest stable release; when release.yml
+# dispatches it, it installs that release's tag. A failure means the site
+# documents something visitors cannot install. Informational: it never blocks
+# or undoes a pages.yml deploy.
 #
 # Kept apart from pages.yml on purpose. pages.yml serializes whole runs in one
 # concurrency group, where GitHub keeps a single pending run and cancels the
@@ -14,8 +15,9 @@ name: Landing example
 on:
   push:
     branches: [main]
+    # website/src/landing/example.sh is absent on purpose: changing it
+    # publishes the site, and pages.yml dispatches this check after deploying.
     paths:
-      - "website/src/landing/example.sh"
       - "examples/**"
       - "scripts/check-landing-example.sh"
       - "scripts/install.sh"

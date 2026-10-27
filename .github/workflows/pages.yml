@@ -8,7 +8,8 @@ name: Pages
 # release.yml, which dispatches it after each release (GITHUB_TOKEN-created
 # releases never start workflows on their own). The landing example check
 # against a release lives in landing-example.yml, outside this concurrency
-# group, so it never waits on a deploy or gets dropped from the queue.
+# group, so it never waits on a deploy or gets dropped from the queue. The
+# `example` job dispatches it after every deploy.
 
 on:
   push:
@@ -88,3 +89,22 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  # Re-checks the published landing example against the latest stable release
+  # on every publish. Only the dispatch runs here; the check itself runs in
+  # landing-example.yml, outside the pages concurrency group. Skipped when
+  # release.yml started this run, since it dispatches the check with the tag.
+  example:
+    name: example
+    needs: deploy
+    if: ${{ !startsWith(inputs.reason, 'release ') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write # dispatch landing-example.yml
+    steps:
+      - name: Dispatch the landing example check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run landing-example.yml --ref main

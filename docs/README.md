@@ -7,6 +7,8 @@ zero gskill commands; commit `skills-lock.json` — the single file that records
 resolved reality — and prove or restore a byte-identical skill environment anywhere with
 `gskill install --frozen-lockfile`.
 
+These pages are also published, with search, at <https://glapsfun.github.io/gskill/>.
+
 This documentation follows the [Diátaxis](https://diataxis.fr/) framework — four kinds of docs, each
 with one job.
 
