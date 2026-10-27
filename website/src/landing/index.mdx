@@ -6,6 +6,12 @@ editUrl: https://github.com/glapsfun/gskill/edit/main/website/src/landing/index.
 hero:
   title: Reproducible skills for every AI agent
   tagline: GSKILL installs, versions, locks, verifies, and restores SKILL.md skills across Claude Code, Codex, Cursor, and more. Commit one lockfile, and anyone can reproduce the same skills, byte for byte.
+  image:
+    alt: The GSKILL logo
+    # Resolved from website/src/content/docs/index.mdx, where gen-site copies
+    # this file, so these point at website/src/assets/.
+    light: ../../assets/logo-light.svg
+    dark: ../../assets/logo-dark.svg
   actions:
     - text: Get started
       link: /gskill/tutorials/getting-started/
@@ -15,7 +21,7 @@ hero:
       link: /gskill/installation/
       icon: download
       variant: secondary
-    - text: GitHub
+    - text: View on GitHub
       link: https://github.com/glapsfun/gskill
       icon: external
       variant: minimal
@@ -65,3 +71,26 @@ lockfile records, and `gskill project verify` re-hashes it to prove nothing chan
 
 Supports Claude Code, Codex, Cursor, Antigravity CLI, OpenCode, OpenClaw, and Hermes Agent on
 Linux and macOS. See [Supported agents](/gskill/reference/agents/).
+
+## Where to next
+
+<CardGrid>
+  <Card title="New here" icon="open-book">
+    [What is GSKILL?](/gskill/overview/) then [Getting started](/gskill/tutorials/getting-started/):
+    add a skill, commit it, and reproduce it from the lockfile.
+  </Card>
+  <Card title="Know what you want" icon="setting">
+    The [how-to guides](/gskill/how-to/) cover one task per page: adding skills, updating,
+    working offline, and gating CI on drift.
+  </Card>
+  <Card title="Looking something up" icon="list-format">
+    [Commands](/gskill/reference/commands/), [exit codes](/gskill/reference/exit-codes/),
+    [configuration](/gskill/reference/configuration/), and the
+    [lockfile schema](/gskill/reference/lockfile-schema/).
+  </Card>
+  <Card title="How it works" icon="information">
+    The [reproducibility model](/gskill/explanation/reproducibility-model/),
+    [integrity and trust](/gskill/explanation/integrity-and-trust/), and the
+    [clone cache](/gskill/explanation/store-and-cache/).
+  </Card>
+</CardGrid>

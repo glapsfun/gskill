@@ -25,6 +25,9 @@ export default defineConfig({
     starlight({
       title: 'GSKILL',
       description: 'Reproducible package management for AI agent skills.',
+      // Imported assets, so they live under src/; the title text sits beside
+      // the logo, which therefore needs no alt text.
+      logo: { light: './src/assets/logo-light.svg', dark: './src/assets/logo-dark.svg' },
       social: [{ icon: 'github', label: 'GitHub', href: repo }],
       favicon: '/favicon.svg',
       customCss: ['./src/styles/custom.css'],
