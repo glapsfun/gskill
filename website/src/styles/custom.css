@@ -1,0 +1,20 @@
+/*
+ * Site additions on top of Starlight's defaults. Starlight already scrolls wide
+ * tables inside their own box and drops the sidebar when printing; these rules
+ * cover what it leaves out.
+ */
+
+@media print {
+  /* A printed install page lists every method, not just the selected tab. */
+  starlight-tabs [role='tablist'] {
+    display: none;
+  }
+  starlight-tabs [role='tabpanel'][hidden] {
+    display: block;
+  }
+
+  /* Copy buttons do nothing on paper. */
+  .expressive-code .copy {
+    display: none;
+  }
+}

@@ -1,0 +1,67 @@
+---
+title: GSKILL
+description: Reproducible package management for AI agent skills. Install, lock, verify, and restore SKILL.md skills across agents, machines, and CI.
+template: splash
+editUrl: https://github.com/glapsfun/gskill/edit/main/website/src/landing/index.mdx
+hero:
+  title: Reproducible skills for every AI agent
+  tagline: GSKILL installs, versions, locks, verifies, and restores SKILL.md skills across Claude Code, Codex, Cursor, and more. Commit one lockfile, and anyone can reproduce the same skills, byte for byte.
+  actions:
+    - text: Get started
+      link: /gskill/tutorials/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: Install
+      link: /gskill/installation/
+      icon: download
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/glapsfun/gskill
+      icon: external
+      variant: minimal
+---
+
+{/* Built from website/src/content/docs/index.mdx (gen-site copies it there), so
+    relative imports resolve from that directory, not from src/landing. */}
+import { Card, CardGrid, Code } from '@astrojs/starlight/components';
+import InstallTabs from '../../components/InstallTabs.astro';
+import example from '../../landing/example.sh?raw';
+
+## Install
+
+<InstallTabs />
+
+Then check it with `gskill version`. For install locations and release verification, see
+[Install GSKILL](/gskill/installation/).
+
+## Add, commit, reproduce, verify
+
+<Code code={example} lang="sh" title="Terminal" />
+
+The skill's content lands in your repository next to `skills-lock.json`, so a fresh clone
+already has working skills. `gskill install --frozen-lockfile` restores exactly what the
+lockfile records, and `gskill project verify` re-hashes it to prove nothing changed.
+
+## Why GSKILL
+
+<CardGrid>
+  <Card title="Reproducible installs" icon="seti:lock">
+    `skills-lock.json` records what you asked for and what was resolved.
+    `--frozen-lockfile` restores exactly, or fails closed.
+  </Card>
+  <Card title="Verified integrity" icon="approve-check">
+    Every install is checked against a recorded content hash, and
+    `gskill project verify` re-checks on demand. Skill content is never executed.
+  </Card>
+  <Card title="Many agents, one copy" icon="puzzle">
+    A skill is resolved and stored once, then shared with every agent that targets
+    it through symlinks, or copies where links are not supported.
+  </Card>
+  <Card title="Built for CI" icon="setting">
+    Every capability is a CLI command with `--json` output and documented exit codes,
+    so pipelines can gate on drift.
+  </Card>
+</CardGrid>
+
+Supports Claude Code, Codex, Cursor, Antigravity CLI, OpenCode, OpenClaw, and Hermes Agent on
+Linux and macOS. See [Supported agents](/gskill/reference/agents/).

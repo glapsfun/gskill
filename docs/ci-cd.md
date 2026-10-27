@@ -20,7 +20,9 @@ weakens, or lets you bypass that gate.
 | `workflow-audit` | `zizmor` + `actionlint` | PR + push | **required** |
 | `codeql` | CodeQL (Go, security-extended) | PR + push + weekly | **required** (high-severity blocks) |
 | `pr-title` | semantic-pull-request | PR | **required** |
+| `site` | `scripts/site.sh check` | PR + push | **required** — docs site builds, links valid, README install region in sync, landing example runs |
 | `scorecard` | OpenSSF Scorecard | push-to-`main` + weekly | **informational** (grade/trend, not a merge gate) |
+| `example-vs-release` (`pages.yml`) | `scripts/check-landing-example.sh --release` | each publish | **informational** — never blocks or undoes a deploy |
 
 Required gates **fail closed**: a degraded, errored, or unavailable required check blocks
 merge rather than passing silently. `scorecard` is explicitly *not* a required check.
@@ -170,12 +172,34 @@ GSKILL uses the hosted **Mend Renovate GitHub App**:
 These gates only block merges when branch protection requires them. Configure on `main`:
 
 - **Required status checks**: `verify`, `build-test (ubuntu-latest)`,
-  `build-test (macos-latest)`, `release-dryrun`, `workflow-audit`, `codeql`, `pr-title`.
+  `build-test (macos-latest)`, `release-dryrun`, `workflow-audit`, `codeql`, `pr-title`, `site`.
 - **Do not** mark `scorecard` required (it is informational).
 - Require a pull request with at least one review; dismiss stale approvals on new commits.
 - Disallow force-pushes and deletions on `main`.
 
 Once set, OpenSSF Scorecard's Branch-Protection check will score this configuration.
+
+---
+
+## Documentation site
+
+The site at <https://glapsfun.github.io/gskill/> is built from `docs/` and published by its own
+workflow. See [Work on the documentation site](contributing/website.md) for local commands.
+
+| Piece | What it does | Permissions |
+| --- | --- | --- |
+| `ci.yml` job `site` | `scripts/site.sh check`: fails on a stale README install region, regenerates the content, builds with link and anchor validation, runs the landing example against the gskill built from the commit | `contents: read` |
+| `pages.yml` job `build` | Same build, no caches (it produces the published artifact), uploads the Pages artifact | `contents: read` |
+| `pages.yml` job `deploy` | `actions/deploy-pages`, environment `github-pages` | `pages: write`, `id-token: write` |
+| `pages.yml` job `example-vs-release` | Runs the landing example against the latest release; red means the site documents something not yet released | `contents: read` |
+| `release.yml` step | Dispatches `pages.yml` on `main` after each release | existing `actions: write` |
+
+`pages.yml` runs on pushes to `main` that touch the site's inputs, on manual dispatch, and from
+`release.yml`. Deployments share one concurrency group and are never cancelled mid-flight, so
+the site always serves one complete build. A failed build never reaches `deploy`.
+
+Reproduce locally: `scripts/site.sh check` (the `site` job) and
+`scripts/check-landing-example.sh --release` (the post-publish check).
 
 ---
 

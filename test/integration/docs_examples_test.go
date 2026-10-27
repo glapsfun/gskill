@@ -265,3 +265,57 @@ func TestDocsExamples_UpgradeASkill(t *testing.T) {
 		assertSingleJSON(t, stdout, "upgrade --json")
 	}
 }
+
+// TestDocsExamples_RemoteInRepoPathSelectsOneSkill backs the runnable examples
+// on the site and in the README: `gskill add <host>/<owner>/<repo>/<path>` must
+// install only the skill at <path>, even when the repository holds other
+// SKILL.md files (as this repository does under .claude/ and .agents/). Git is
+// redirected from the real github.com URL to a local fixture with
+// GIT_CONFIG_*, which gskill passes through to git, so the remote shorthand and
+// its in-repo path resolution are exercised offline. A local path would not
+// do: gskill treats it as a plain folder and never runs discovery.
+func TestDocsExamples_RemoteInRepoPathSelectsOneSkill(t *testing.T) {
+	fixture := t.TempDir()
+	gitRun(t, fixture, "init", "--quiet", "-b", "main")
+	for rel, name := range map[string]string{
+		"examples/skills/hello-gskill": "hello-gskill",
+		".claude/skills/other":         "other",
+		".agents/skills/decoy":         "decoy",
+	} {
+		dir := filepath.Join(fixture, filepath.FromSlash(rel))
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(validSkill(name)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitRun(t, fixture, "add", "-A")
+	gitRun(t, fixture, "commit", "--quiet", "-m", "fixture")
+
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url."+fixture+".insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/glapsfun/gskill.git")
+
+	proj := newProject(t)
+	initProject(t, proj)
+	src := "github.com/glapsfun/gskill/examples/skills/hello-gskill"
+	if _, stderr, code := runGskill(t, proj, "add", src, "--agent", "claude"); code != 0 {
+		t.Fatalf("add %s exit %d: %s", src, code, stderr)
+	}
+
+	if _, err := os.Stat(filepath.Join(proj, ".claude", "skills", "hello-gskill", "SKILL.md")); err != nil {
+		t.Errorf("hello-gskill not installed: %v", err)
+	}
+	for _, decoy := range []string{"other", "decoy"} {
+		for _, dir := range []string{".claude", ".agents"} {
+			if _, err := os.Stat(filepath.Join(proj, dir, "skills", decoy)); !os.IsNotExist(err) {
+				t.Errorf("decoy skill %q installed under %s (stat err = %v)", decoy, dir, err)
+			}
+		}
+	}
+	lock := string(readFile(t, filepath.Join(proj, "skills-lock.json")))
+	if !strings.Contains(lock, "hello-gskill") || strings.Contains(lock, `"decoy"`) || strings.Contains(lock, `"other"`) {
+		t.Errorf("lockfile should hold only hello-gskill:\n%s", lock)
+	}
+}

@@ -1,0 +1,21 @@
+---
+// One tab per install method, read from src/generated/install-methods.json.
+// `go run ./cmd/gen-site` writes that file from the install-methods region of
+// docs/installation.md, so commands are edited in one place. The shared
+// syncKey keeps the chosen tab across pages and visits.
+import { Code, TabItem, Tabs } from '@astrojs/starlight/components';
+import methods from '../generated/install-methods.json';
+---
+
+<Tabs syncKey="install-method">
+  {
+    methods.map((method) => (
+      <TabItem label={method.label}>
+        {method.prerequisites && <p>{method.prerequisites}</p>}
+        {method.blocks.map((block) => (
+          <Code code={block} lang="sh" />
+        ))}
+      </TabItem>
+    ))
+  }
+</Tabs>
