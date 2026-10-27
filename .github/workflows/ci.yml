@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # main merges through a merge queue; required checks must also report on the
+  # queued merge commit, or the queue waits on them until it times out.
+  merge_group:
 
 # Least privilege by default: read-only token; jobs inherit unless they declare more.
 permissions:
