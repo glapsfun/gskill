@@ -1,5 +1,13 @@
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="website/src/assets/logo-dark.svg">
+  <img src="website/src/assets/logo-light.svg" alt="GSKILL logo" width="120">
+</picture>
+
 # GSKILL
-Reproducible package management for AI agent skills.
+
+**Reproducible package management for AI agent skills.**
 
 [![CI](https://github.com/glapsfun/gskill/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/glapsfun/gskill/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/glapsfun/gskill)](https://github.com/glapsfun/gskill/releases/latest)
@@ -8,6 +16,13 @@ Reproducible package management for AI agent skills.
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/glapsfun/gskill/badge)](https://scorecard.dev/viewer/?uri=github.com/glapsfun/gskill)
 [![Downloads](https://img.shields.io/github/downloads/glapsfun/gskill/total)](https://github.com/glapsfun/gskill/releases)
+[![Docs](https://img.shields.io/badge/docs-site-blue)](https://glapsfun.github.io/gskill/)
+
+**📖 Read the docs: [glapsfun.github.io/gskill](https://glapsfun.github.io/gskill/)**
+
+**[Docs](docs/README.md)** · **[Install](docs/installation.md)** · **[Getting started](docs/tutorials/getting-started.md)** · **[CLI reference](docs/reference/commands.md)**
+
+</div>
 
 GSKILL installs, versions, locks, verifies, and restores `SKILL.md`-based AI agent
 skills across Claude Code, Codex, Cursor, Antigravity CLI, OpenCode, OpenClaw, Hermes Agent,
@@ -26,18 +41,18 @@ byte-for-byte from a single committed file.
 
 ## Key features
 
-- **Reproducible installs** — `skills-lock.json` records intent and resolved
+- **Reproducible installs**: `skills-lock.json` records intent and resolved
   reality together; `--frozen-lockfile` restores exactly, or fails closed.
-- **Verified integrity** — every install is checked against a recorded content
+- **Verified integrity**: every install is checked against a recorded content
   hash; `gskill project verify` re-checks on demand; skill content is never executed.
-- **Multi-agent, one store** — a skill is resolved and stored once and shared by
+- **Multi-agent, one copy**: a skill is resolved and stored once and shared by
   every agent that targets it, via symlinks (or copies where unsupported).
-- **Cross-project reuse** — a user-level global store (`~/.gskill`) holds each
-  skill version once per machine; other projects link to it with no re-download,
-  restore offline from it, and clean it with a conservative `store gc`.
-- **Scriptable** — every capability is reachable from the CLI, with `--json`
+- **Cross-project reuse**: a machine-level clone cache (`~/.gskill/cache`) keeps
+  each fetched source commit once, so adding the same skill to another project
+  downloads nothing and restores work offline; `gskill cache clean` frees the space.
+- **Scriptable**: every capability is reachable from the CLI, with `--json`
   output and documented exit codes for CI.
-- **Signed releases** — checksummed, cosign-signed archives with SBOMs and
+- **Signed releases**: checksummed, cosign-signed archives with SBOMs and
   build-provenance attestations.
 
 ## Supported agents and platforms
@@ -236,7 +251,8 @@ gskill upgrade my-skill --latest # move the declared version in skills.toml, the
 
 ## Documentation
 
-Full documentation lives in [`docs/`](docs/README.md), organized by the
+Read the documentation at <https://glapsfun.github.io/gskill/>, with search and a
+sidebar. Its source lives in [`docs/`](docs/README.md), organized by the
 [Diátaxis](https://diataxis.fr/) framework:
 
 - **[Tutorial: Getting started](docs/tutorials/getting-started.md)** — from an
@@ -245,7 +261,7 @@ Full documentation lives in [`docs/`](docs/README.md), organized by the
 - **[Reference](docs/README.md#reference)** — commands, exit codes, configuration,
   and the lockfile/frontmatter schemas.
 - **[Explanation](docs/README.md#explanation)** — the reproducibility model,
-  integrity and trust, the store, and multi-agent installs.
+  integrity and trust, the clone cache, and multi-agent installs.
 - **[Contributing](docs/contributing/development.md)** — the TDD workflow and
   quality gate for anyone changing GSKILL itself.
 
