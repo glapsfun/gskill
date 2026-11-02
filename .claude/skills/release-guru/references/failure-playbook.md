@@ -7,8 +7,9 @@ which is what decides the action (a run's red/green status alone does not).
 
 Two rules hold everywhere: never delete, move, or force-push a tag that reached origin unless
 section C's narrow exception applies and the user agreed; and never use `npm unpublish`,
-`npm dist-tag`, `gh release delete|edit`, or hand edits to the Homebrew tap to "fix" a release.
-Those are maintainer decisions with public consequences.
+`npm dist-tag`, `gh release delete|edit`, hand edits to the Homebrew tap, or pushing, deleting, or
+re-tagging images in ghcr.io to "fix" a release. Those are maintainer decisions with public
+consequences.
 
 ## Contents
 
@@ -21,6 +22,7 @@ Those are maintainer decisions with public consequences.
 - G. npm run failed
 - H. Verification failed after green runs
 - I. A bad release is discovered later
+- J. Image run failed
 
 ## A. Preflight failed
 
@@ -64,11 +66,11 @@ Check `gh release view <tag>` and `scripts/release-status.sh <tag>`.
   Treat it like section C, real failure.
 - **The GitHub Release exists** (typically the Homebrew cask push failed, which runs after the
   release is created): the release is public. Don't re-run the job; the overwrite guard refuses,
-  and the release must not be rewritten. The npm dispatch, the last step, did not run either.
-  Tell the user, and offer:
-  1. The npm channel can still be completed: `gh workflow run npm-release.yml --ref main -f
-     tag=<tag>` (it reads the published assets, verifies cosign, and is retry-safe). Provenance
-     did not run either; say so (section E).
+  and the release must not be rewritten. The npm and image dispatches at the end of the job did
+  not run either. Tell the user, and offer:
+  1. npm and the image can still be completed: `scripts/watch-npm.sh <tag> --redispatch`, then
+     `scripts/watch-image.sh <tag> --redispatch` (each reads the published release, verifies it,
+     and is retry-safe). Provenance did not run either; say so (section E).
   2. Homebrew: the likely cause is the `TAP_GITHUB_TOKEN` secret (expired, or lost `contents:
      write` on `glapsfun/homebrew-tap`). Once fixed, the next stable release updates the cask
      again; updating the cask now by hand is the maintainer's call, not yours.
@@ -76,19 +78,22 @@ Check `gh release view <tag>` and `scripts/release-status.sh <tag>`.
 ## E. Provenance attestation step failed
 
 Public: the GitHub Release with all assets and signatures, and the Homebrew cask (stable). Missing:
-the provenance attestation, and npm (its dispatch is the step after).
+the provenance attestation, npm, and the image (their dispatches are the steps after).
 
 Tell the user the release is out without provenance. With their OK, complete npm with
-`gh workflow run npm-release.yml --ref main -f tag=<tag>` (npm verifies the cosign signature, not
-the attestation), then continue at step 6. Attesting after the fact is a maintainer task.
+`scripts/watch-npm.sh <tag> --redispatch` (npm verifies the cosign signature, not the
+attestation), then the image with `scripts/watch-image.sh <tag> --redispatch`, then continue at
+step 8. Attesting after the fact is a maintainer task.
 
 ## F. "Trigger npm publish" step failed
 
-Public: the GitHub Release, signatures, provenance, and Homebrew cask. Only npm is missing.
+Public: the GitHub Release, signatures, provenance, and Homebrew cask. Missing: npm, and the
+dispatches after it: the site publish, the landing example check, and the image.
 
-This is completing the release the user already approved, and the npm workflow is retry-safe, so
-dispatch it: `gh workflow run npm-release.yml --ref main -f tag=<tag>`. Then continue at step 6
-and mention the manual dispatch in the report.
+This is completing the release the user already approved, and both workflows are retry-safe, so
+run `scripts/watch-npm.sh <tag> --redispatch`, then `scripts/watch-image.sh <tag>
+--redispatch`, and continue at step 8. Mention the manual dispatches in the report, and that the
+site publish and landing example check did not run for this release.
 
 ## G. npm run failed
 
@@ -97,12 +102,13 @@ dist-tags). Then:
 
 - **5/5 published and the dist-tag is right** (`latest` = version for stable, `next` for rc): npm
   is fine; the run failed after publishing (v0.7.2 did this, in its publish step). Report it as
-  published, noting the red run. Optionally re-dispatch to get a green run; already-published
-  versions are skipped, so the re-run converges without changing anything.
+  published, noting the red run. Optionally re-dispatch (`scripts/watch-npm.sh <tag>
+  --redispatch`) to get a green run; already-published versions are skipped, so the re-run
+  converges without changing anything.
 - **0/5 published**: nothing reached npm. Read the failed log (`gh run view <id> --log-failed`).
   Common causes: npm trusted-publisher configuration (needs a maintainer in npm's settings), npm
   older than 11.5.1, or a registry outage. After the cause is fixed, re-dispatch:
-  `gh workflow run npm-release.yml --ref main -f tag=<tag>`. Never add an `NPM_TOKEN`.
+  `scripts/watch-npm.sh <tag> --redispatch`. Never add an `NPM_TOKEN`.
 - **Partial (1-4 of 5)**: re-dispatch once; the publisher skips existing versions and publishes the
   rest. If a completed run still leaves the set partial, stop: that needs operator intervention,
   and nothing may be overwritten or unpublished. Ask the user.
@@ -110,8 +116,9 @@ dist-tags). Then:
   changing dist-tags is a maintainer action. Note the publisher refuses to move `latest` backwards
   when retrying an older stable tag, by design.
 
-Dispatching from `--ref main` is correct for retries: packaging code comes from the ref, binaries
-always come from the tag's release assets.
+`--redispatch` dispatches `npm-release.yml` from `main`, which is correct for retries: packaging
+code comes from the ref, binaries always come from the tag's release assets. It then follows only
+the new run, never the failed one it replaces.
 
 ## H. Verification failed after green runs
 
@@ -134,3 +141,32 @@ Never delete or move the tag, delete the GitHub Release, or unpublish npm packag
 lockfiles already point at them. Fix the bug on `main` and ship a new patch release through this
 runbook. Deprecating the bad npm version (`npm deprecate`) or editing the release notes to warn
 users are maintainer decisions; suggest them, don't do them.
+
+## J. Image run failed
+
+Public: everything from the Release run and npm. The image workflow never touches the GitHub
+Release assets, Homebrew, or npm. Run `scripts/release-status.sh <tag>` for the image rows, then
+read the failed job: `gh run view <id> --log-failed`. Every re-dispatch below is
+`scripts/watch-image.sh <tag> --redispatch`: it dispatches `image-release.yml` on the tag ref
+(any other ref is refused) and follows the new run, never the failed one. After it succeeds,
+continue at step 8.
+
+- **A guard refused** (the `publish` job's "Guards" step): an invalid tag, a run not dispatched
+  from the tag ref, no GitHub Release yet, or a tag without `.ko.yaml`. Fix the dispatch and
+  re-dispatch. A tag without `.ko.yaml` predates the image channel; older tags are not
+  back-filled, so there is nothing to publish.
+- **Digest mismatch** ("refusing to move a version tag"): `ghcr.io/glapsfun/gskill:<version>`
+  already points at a different image than this rebuild. Nothing was pushed. Stop and ask the
+  user; never delete, move, or re-push a version tag.
+- **Anonymous pull denied in `verify`** (HTTP 401 or 403, "no pull token"): the package is still
+  private, which is expected on the first publish. A maintainer sets `ghcr.io/glapsfun/gskill` to
+  public once, in its package settings. Then re-dispatch.
+- **Push, sign, attest, or record failed** (a registry or network error): re-dispatch. The
+  rebuild has the same digest, the push changes nothing, the missing steps complete, and `record`
+  replaces its block instead of adding a second one.
+- **Run cancelled**: runs for the same tag share one concurrency group, and GitHub keeps only the
+  newest pending run in a group. A cancelled run was replaced by a newer one for the same tag;
+  watch that one.
+- **`verify` failed for any other reason** (platforms, tags, signature, provenance, version parity
+  with the archive, or a smoke test): the image is published but not verified, and the release
+  notes do not mention it yet. Stop, tell the user, and ask them not to announce the release.

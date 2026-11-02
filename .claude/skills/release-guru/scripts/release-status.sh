@@ -16,7 +16,7 @@ row() { printf '  %-16s %s\n' "$1" "$2"; }
 
 # An annotated tag lists twice: the tag object, then "<tag>^{}" for the commit
 # it points to. Show the commit.
-remote_sha="$(git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}" 2>/dev/null |
+remote_sha="$(git ls-remote --tags "https://github.com/${RELEASE_REPO}.git" "refs/tags/${tag}" "refs/tags/${tag}^{}" 2>/dev/null |
 	awk '/\^\{\}$/ { peeled = substr($1, 1, 7) } !/\^\{\}$/ { plain = substr($1, 1, 7) } END { print (peeled != "" ? peeled : plain) }')"
 
 run_line() {
@@ -34,6 +34,22 @@ row "tag on origin" "${remote_sha:-none}"
 row "release run" "$(run_line "$RELEASE_WORKFLOW")"
 row "GitHub release" "$rel"
 row "npm run" "$(run_line "$NPM_WORKFLOW")"
+row "image run" "$(run_line "$IMAGE_WORKFLOW")"
+
+# The digest a tag points at, through the anonymous registry API: none when the
+# tag does not exist, unknown on a registry error or a private package.
+image_sh="$(git rev-parse --show-toplevel 2>/dev/null || true)/scripts/image.sh"
+image_tag() {
+	local d status=0
+	[ -x "$image_sh" ] || { echo unknown; return; }
+	d="$("$image_sh" digest "${IMAGE_REPO}:$1" 2>/dev/null)" || status=$?
+	case "$status" in
+	0) d="${d#sha256:}" && echo "${d:0:12}" ;;
+	1) echo none ;;
+	*) echo unknown ;;
+	esac
+}
+row "image tags" "${ver}=$(image_tag "$ver") latest=$(image_tag latest) next=$(image_tag next)"
 
 if have npm; then
 	published=0

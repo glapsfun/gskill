@@ -21,6 +21,7 @@ weakens, or lets you bypass that gate.
 | `codeql` | CodeQL (Go, security-extended) | PR + push + weekly | **required** (high-severity blocks) |
 | `pr-title` | semantic-pull-request | PR | **required** |
 | `site` | `scripts/site.sh check` | PR + push + merge queue | **required** (docs site builds, links valid, README install region in sync, landing example runs) |
+| `image (amd64)`, `image (arm64)` | `scripts/image.sh check` | PR + push + merge queue | not required yet (both platforms build with ko; the runner's platform passes the smoke suite) |
 | `scorecard` | OpenSSF Scorecard | push-to-`main` + weekly | **informational** (grade/trend, not a merge gate) |
 | `example-vs-release` (`landing-example.yml`) | `scripts/check-landing-example.sh --release` | each site publish + each release | **informational** (never blocks or undoes a deploy) |
 
@@ -46,6 +47,10 @@ Rules:
   rewrites the comment on update only when the version sits at the end of the line.
 - **Local actions** (`uses: ./...`) and same-repo reusable workflows are exempt from SHA
   pinning (they are version-controlled here) but are still audited.
+- **Reuse an existing pin** when a workflow needs an action another workflow already uses.
+  The image pipeline reuses the cosign, syft, and `actions/attest-build-provenance` pins from
+  `release.yml`, and adds one: `actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2`
+  for the SBOM attestations.
 
 Enforced by the `workflow-audit` gate (see below). To pin a new action, resolve its tag to a
 SHA:
@@ -144,7 +149,8 @@ No overlap between updaters — each source has exactly one owner:
 |--------|-------|-------|
 | `go.mod` / `go.sum` | **Dependabot** (`gomod`) | grouped minor/patch |
 | `.github/workflows/*` `uses:` SHAs | **Dependabot** (`github-actions`) | bumps the SHA **and** the trailing `# vX.Y.Z` comment; all `github/codeql-action/*` components are grouped into one PR and must remain on the same version |
-| `.config/tool-versions` | **Renovate** (one custom manager) | the only manager Renovate runs |
+| `.config/tool-versions` | **Renovate** (custom regex manager) | includes the `KO` and `CRANE` pins for the image pipeline |
+| `.ko.yaml` base image digest | **Renovate** (custom regex manager, `docker` datasource) | weekly, before 6am on Monday; Dependabot cannot read `.ko.yaml` |
 
 Every Dependabot/Renovate PR triggers the full CI gate before it can merge.
 
@@ -156,11 +162,12 @@ GSKILL uses the hosted **Mend Renovate GitHub App**:
 1. Install the **Renovate** app from the GitHub Marketplace
    (<https://github.com/apps/renovate>) onto the `glapsfun/gskill` repository (a one-time
    repo-admin action; no secrets, no self-hosted runner).
-2. Renovate reads `renovate.json`, which restricts `enabledManagers` to a single custom
-   regex manager scoped to `.config/tool-versions` (so it never overlaps Dependabot's gomod
-   / github-actions scope).
+2. Renovate reads `renovate.json`, which restricts `enabledManagers` to two custom regex
+   managers, one for `.config/tool-versions` and one for the `.ko.yaml` base image digest (so
+   it never overlaps Dependabot's gomod / github-actions scope).
 3. On its schedule, Renovate opens PRs that bump each tool pin while preserving the
-   `NAME=version` format.
+   `NAME=version` format, and a weekly PR that moves the base image to the current digest of
+   `cgr.dev/chainguard/git:latest`.
 
 > Alternative (not used): a self-hosted SHA-pinned `renovate.yml` workflow running
 > `renovatebot/github-action`. Documented for completeness; the Mend App is the chosen path.
@@ -175,6 +182,8 @@ These gates only block merges when branch protection requires them. Configure on
   `build-test (macos-latest)`, `release-dryrun`, `workflow-audit`, `codeql`, `pr-title`, `site`.
   `main` merges through a merge queue, so a required check must also run on `merge_group`
   (`ci.yml` does); one that does not leaves queued merges waiting until they time out.
+- `image (amd64)` and `image (arm64)` also run on `merge_group`, so they can be made required.
+  They are not required yet; that is the maintainer's choice.
 - **Do not** mark `scorecard` required (it is informational).
 - Require a pull request with at least one review; dismiss stale approvals on new commits.
 - Disallow force-pushes and deletions on `main`.
@@ -210,6 +219,46 @@ a release).
 
 ---
 
+## Container image release
+
+`.github/workflows/image-release.yml` publishes the image `ghcr.io/glapsfun/gskill` for each
+release tag. It is a separate workflow, like `npm-release.yml`: a registry failure never
+turns the release run red after the GitHub Release exists, and it can be re-run on its own.
+`release.yml` dispatches it as its last step, on the tag ref. Each tag has its own concurrency
+group, so runs for different tags never cancel each other.
+
+**Tag-ref rule**: the only trigger is `workflow_dispatch` with a `tag` input, and the
+`publish` job refuses any run whose ref is not `refs/tags/<tag>`. The image is always built
+from the tag's own `.ko.yaml`, tool pins, and workflow, and the cosign signer identity always
+ends in `@refs/tags/<tag>`.
+
+Workflow-level `permissions: {}`; each job asks for what it needs:
+
+| Job | Runner | Permissions | Does |
+| --- | --- | --- | --- |
+| `publish` | `ubuntu-latest` | `contents: read`, `packages: write`, `id-token: write`, `attestations: write` | guards, then `scripts/image.sh publish` (build once with ko, digest guard, push the build with crane), cosign signature, SBOM and provenance attestations; no build cache |
+| `verify` | `ubuntu-latest`, `ubuntu-24.04-arm` | `contents: read`, `attestations: read` | anonymous pull by digest, platforms and size, tags, signature, provenance, `version --json` against the release archive, `scripts/image.sh smoke` |
+| `record` | `ubuntu-latest` | `contents: write` | after `verify` passes, writes the "Container image" section of the release notes |
+
+Registry write is confined to `publish`, which logs in with the workflow's `GITHUB_TOKEN`;
+there is no registry secret. `verify` never logs in, so a private package fails there before
+the release notes point anyone at it.
+
+**Re-run safety**: `scripts/image.sh publish` builds the image once, into an OCI layout, and
+compares its digest with the one the version tag already points at. A different digest stops
+the run before anything is pushed, so a version tag never moves. Otherwise crane pushes that
+layout, the exact bytes the guard compared; when the digest is already there the push is a
+no-op, so a re-run completes a failed sign, attest, or record step, and `record` replaces its
+section instead of adding a second one. Re-run with
+`gh workflow run image-release.yml --ref vX.Y.Z -f tag=vX.Y.Z`.
+
+**Channel tags**: `latest` goes to a stable release and `next` to a prerelease, each only when
+it is the highest tag of its kind on origin, read right before the push. A backport or a re-run
+for an older release candidate never moves a channel back, and a run that overlaps a newer
+release's run cannot either.
+
+---
+
 ## Forked-PR safety
 
 - Required security gates (`workflow-audit`, `codeql`) run on the standard `pull_request`
@@ -217,5 +266,8 @@ a release).
 - Privileged, secret-touching workflows (`scorecard` publish, `release`) run only on
   default-branch / tag / schedule contexts — they never execute forked-PR code with elevated
   scopes.
+- The `image` job builds and smoke-tests the image with only `contents: read`: no secrets, no
+  registry login, and nothing pushed. Only `image-release.yml`, dispatched on a release tag,
+  publishes images.
 - `pr-title.yml` uses `pull_request_target` with only `pull-requests: read` (it reads the PR
   title and runs no untrusted checkout) — the documented safe use of that trigger.

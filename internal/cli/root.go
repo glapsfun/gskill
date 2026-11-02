@@ -87,10 +87,10 @@ func (versionCmd) Help() string {
 	)
 }
 
-// Run prints the version line (human) or a {"version": ...} object (JSON).
+// Run prints the version line (human) or a {"version": ..., "commit": ...} object (JSON).
 func (versionCmd) Run(out *Output) error {
 	if out.JSON() {
-		return out.Result("", map[string]string{"version": version.Version()})
+		return out.Result("", map[string]string{"version": version.Version(), "commit": version.Commit()})
 	}
 	human := version.String()
 	if out.Interactive() {

@@ -58,6 +58,41 @@ check_identity() {
 	log_info "identity OK: git user and gh account are both '$gh_user'"
 }
 
+# newest_run_id WORKFLOW REF prints the id of the newest run of WORKFLOW on REF
+# (a tag or branch), or nothing. Run ids only grow, so a bigger id is newer.
+newest_run_id() {
+	gh run list --repo "$RELEASE_REPO" --workflow "$1" --limit 30 \
+		--json databaseId,headBranch \
+		--jq "[.[] | select(.headBranch == \"$2\")] | max_by(.databaseId) | .databaseId // empty" 2>/dev/null || true
+}
+
+# follow_run WORKFLOW REF AFTER NAME waits up to 3 minutes for a run of WORKFLOW
+# on REF with an id above AFTER (0 accepts any), so a re-dispatch never picks up
+# the run it replaces. It watches that run and prints NAME_RUN_URL=<url>, and
+# returns 0 when the run succeeds, 1 when it fails (after printing the failed
+# log), and 2 when no run appears.
+follow_run() {
+	local workflow="$1" ref="$2" after="$3" name="$4" id="" url
+	for _ in $(seq 1 30); do
+		id="$(newest_run_id "$workflow" "$ref")"
+		if [ -n "$id" ] && [ "$id" -gt "$after" ]; then
+			break
+		fi
+		id=""
+		sleep 6
+	done
+	[ -n "$id" ] || return 2
+	url="$(gh run view "$id" --repo "$RELEASE_REPO" --json url --jq .url 2>/dev/null || true)"
+	log_info "watching ${workflow} run ${id}${url:+ ($url)}"
+	if gh run watch "$id" --repo "$RELEASE_REPO" --exit-status --interval 15 >/dev/null; then
+		echo "${name}_RUN_URL=${url}"
+		return 0
+	fi
+	gh run view "$id" --repo "$RELEASE_REPO" --log-failed 2>/dev/null | tail -40 >&2 || true
+	echo "${name}_RUN_URL=${url}"
+	return 1
+}
+
 # Defaults, overridable from the environment (see SKILL.md).
 RELEASE_REPO="${RELEASE_REPO:-glapsfun/gskill}"
 RELEASE_WORKFLOW="${RELEASE_WORKFLOW:-release.yml}"
@@ -69,5 +104,7 @@ TAP_REPO="${TAP_REPO:-glapsfun/homebrew-tap}"
 TAP_CASK_PATH="${TAP_CASK_PATH:-Casks/gskill.rb}"
 NPM_LAUNCHER="${NPM_LAUNCHER:-@glapsfun/gskill}"
 NPM_PACKAGES="${NPM_PACKAGES:-@glapsfun/gskill @glapsfun/gskill-darwin-x64 @glapsfun/gskill-darwin-arm64 @glapsfun/gskill-linux-x64 @glapsfun/gskill-linux-arm64}"
+IMAGE_REPO="${IMAGE_REPO:-ghcr.io/glapsfun/gskill}"
+IMAGE_WORKFLOW="${IMAGE_WORKFLOW:-image-release.yml}"
 export RELEASE_REPO RELEASE_WORKFLOW NPM_WORKFLOW CI_WORKFLOW RELEASE_BINARY RELEASE_BRANCH \
-	TAP_REPO TAP_CASK_PATH NPM_LAUNCHER NPM_PACKAGES
+	TAP_REPO TAP_CASK_PATH NPM_LAUNCHER NPM_PACKAGES IMAGE_REPO IMAGE_WORKFLOW

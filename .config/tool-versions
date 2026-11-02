@@ -12,5 +12,9 @@ GOVULNCHECK=v1.1.4
 GITLEAKS=v8.21.2
 # renovate: datasource=go depName=github.com/rhysd/actionlint
 ACTIONLINT=v1.7.12
+# renovate: datasource=go depName=github.com/google/ko
+KO=v0.19.1
+# renovate: datasource=go depName=github.com/google/go-containerregistry
+CRANE=v0.21.7
 # renovate: datasource=pypi depName=zizmor
 ZIZMOR=1.26.1

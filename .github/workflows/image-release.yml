@@ -1,0 +1,306 @@
+name: Image Release
+
+# Dedicated container image pipeline, separate from the tag-release job so a
+# failed registry operation never forces rebuilding the immutable GitHub
+# Release (the same model as npm-release.yml). It builds the image with ko,
+# pushes it to ghcr.io/glapsfun/gskill, verifies the pulled image on amd64 and
+# arm64, and only then records its digest in the release notes.
+#
+# release.yml dispatches this workflow on the tag ref after the GitHub Release
+# is published; an operator re-runs it the same way. Any other ref is refused,
+# so the build inputs and the signer identity are always the tag's. A re-run
+# never moves a version tag to a different digest (scripts/image.sh publish).
+# See docs/ci-cd.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to (re)publish as an image, e.g. v0.9.0"
+        required: true
+        type: string
+
+permissions: {}
+
+# One group per tag: runs for the same tag queue, and runs for different tags
+# never cancel each other's pending run. Channel tags stay safe when runs
+# overlap because publish decides them from the tags on origin at push time.
+concurrency:
+  group: image-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the tag
+      packages: write # push to ghcr.io/glapsfun/gskill
+      id-token: write # keyless signing and attestation OIDC
+      attestations: write # provenance and SBOM attestations
+    env:
+      TAG: ${{ inputs.tag }}
+    outputs:
+      index: ${{ steps.publish.outputs.index }}
+      amd64: ${{ steps.publish.outputs.amd64 }}
+      arm64: ${{ steps.publish.outputs.arm64 }}
+      version: ${{ steps.publish.outputs.version }}
+      tags: ${{ steps.publish.outputs.tags }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.10"
+          # Disabled: this job publishes the image; a poisonable build cache must
+          # not feed it (zizmor cache-poisoning), the same posture as release.yml.
+          cache: false
+
+      - name: Install ko and crane
+        run: |
+          source scripts/lib.sh
+          go install "github.com/google/ko@$(tool_version KO)"
+          go install "github.com/google/go-containerregistry/cmd/crane@$(tool_version CRANE)"
+
+      - name: Guards
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::invalid release tag '$TAG': expected vX.Y.Z or vX.Y.Z-<prerelease>"
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "::error::dispatched from $GITHUB_REF; dispatch from the tag: gh workflow run image-release.yml --ref $TAG -f tag=$TAG"
+            exit 1
+          fi
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::no GitHub Release for $TAG; the GitHub Release must be published first"
+            exit 1
+          fi
+          if [ ! -f .ko.yaml ]; then
+            echo "::error::$TAG has no .ko.yaml: the tag predates the image channel, and older tags are not back-filled"
+            exit 1
+          fi
+
+      - name: Log in to ghcr.io
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./bin/ko login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GHCR_TOKEN"
+
+      # GHCR_TOKEN also authenticates the digest guard, which must work while
+      # the package is still private.
+      - name: Build, guard, and push
+        id: publish
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/image.sh publish "$TAG"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # --recursive also signs each platform image, so a platform digest verifies too.
+      - name: Sign the image (cosign keyless)
+        env:
+          INDEX: ${{ steps.publish.outputs.index }}
+        run: cosign sign --yes --recursive "ghcr.io/glapsfun/gskill@${INDEX}"
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+
+      - name: Generate an SPDX SBOM for each platform
+        env:
+          AMD64: ${{ steps.publish.outputs.amd64 }}
+          ARM64: ${{ steps.publish.outputs.arm64 }}
+        run: |
+          syft "registry:ghcr.io/glapsfun/gskill@${AMD64}" -o spdx-json=sbom-amd64.spdx.json
+          syft "registry:ghcr.io/glapsfun/gskill@${ARM64}" -o spdx-json=sbom-arm64.spdx.json
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/glapsfun/gskill
+          subject-digest: ${{ steps.publish.outputs.index }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the linux/amd64 SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/glapsfun/gskill
+          subject-digest: ${{ steps.publish.outputs.amd64 }}
+          sbom-path: sbom-amd64.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the linux/arm64 SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/glapsfun/gskill
+          subject-digest: ${{ steps.publish.outputs.arm64 }}
+          sbom-path: sbom-arm64.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+  verify:
+    name: verify (${{ matrix.arch }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the tag and download the release archive
+      attestations: read # verify the provenance and SBOM attestations
+    # No registry login anywhere in this job: a package that is not public
+    # fails here, before the release notes point anyone at it.
+    env:
+      TAG: ${{ inputs.tag }}
+      IMAGE: ghcr.io/glapsfun/gskill
+      INDEX: ${{ needs.publish.outputs.index }}
+      VERSION: ${{ needs.publish.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Pull by digest
+        run: docker pull "${IMAGE}@${INDEX}"
+
+      # The tags are recomputed rather than read from publish: if a newer
+      # release's run has moved a channel on since, that is not a failure here.
+      - name: Check platforms, sizes, and tags
+        run: |
+          set -euo pipefail
+          ./scripts/image.sh platforms "${IMAGE}@${INDEX}" | tee platforms.txt
+          if [ "$(awk '{ print $1 }' platforms.txt | paste -sd' ')" != "linux/amd64 linux/arm64" ]; then
+            echo "::error::the index must hold exactly linux/amd64 and linux/arm64"
+            exit 1
+          fi
+          awk '$3 > 62914560 { print "::error::" $1 " is " $3 " bytes compressed, over 60 MiB"; bad = 1 } END { exit bad }' platforms.txt
+          tags="$(./scripts/image.sh tags "$TAG")"
+          for t in ${tags//,/ }; do
+            got="$(./scripts/image.sh digest "${IMAGE}:${t}")"
+            if [ "$got" != "$INDEX" ]; then
+              echo "::error::${IMAGE}:${t} is ${got}, want ${INDEX}"
+              exit 1
+            fi
+          done
+
+      - name: Compare version --json with the release archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --dir archive --pattern "gskill_${VERSION}_linux_${ARCH}.tar.gz"
+          tar -xzf "archive/gskill_${VERSION}_linux_${ARCH}.tar.gz" -C archive gskill
+          diff <(archive/gskill version --json | jq -S .) <(docker run --rm "${IMAGE}@${INDEX}" version --json | jq -S .)
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # CI checks the exact identity of this tag's run; the docs use a regexp.
+      - name: Verify the signature
+        run: |
+          cosign verify "${IMAGE}@${INDEX}" \
+            --certificate-identity "https://github.com/glapsfun/gskill/.github/workflows/image-release.yml@refs/tags/${TAG}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
+
+      - name: Verify the build provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh attestation verify "oci://${IMAGE}@${INDEX}" -R glapsfun/gskill
+
+      - name: Verify this platform's SBOM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLATFORM_DIGEST: ${{ needs.publish.outputs[matrix.arch] }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://${IMAGE}@${PLATFORM_DIGEST}" -R glapsfun/gskill \
+            --predicate-type https://spdx.dev/Document/v2.3 --format json >sbom.json
+          # The SBOM must list the Go modules in gskill and the base image's git package.
+          jq -e '[.[].verificationResult.statement.predicate.packages[]] |
+            any(.[].externalRefs[]?; .referenceLocator | startswith("pkg:golang/")) and any(.[]; .name == "git")' sbom.json
+
+      # Negative control: an image this pipeline never signed must fail the same
+      # check, and only with a signature error. Without the issuer flag, cosign
+      # stops on a usage error, which would pass this step for the wrong reason.
+      - name: An image this pipeline did not sign fails verification
+        run: |
+          set -euo pipefail
+          base="$(sed -n 's/^defaultBaseImage: *//p' .ko.yaml)"
+          base="${base%%:*}@${base#*@}"
+          if cosign verify "$base" \
+            --certificate-identity-regexp '^https://github\.com/glapsfun/gskill/' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null 2>cosign.err; then
+            echo "::error::cosign verify accepted ${base}, which this pipeline never signed"
+            exit 1
+          fi
+          if ! grep -Eq 'no matching signatures|no signatures found' cosign.err; then
+            echo "::error::cosign verify of ${base} failed, but not on its signature:"
+            cat cosign.err
+            exit 1
+          fi
+
+      - name: Smoke tests as the runner user
+        run: ./scripts/image.sh smoke "${IMAGE}@${INDEX}" --version "$VERSION"
+
+  # Runs only after verify passes, so the release notes never point at an
+  # image that failed verification or that anonymous users cannot pull yet.
+  record:
+    name: record
+    needs: [publish, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # edit the release notes
+    env:
+      TAG: ${{ inputs.tag }}
+      INDEX: ${{ needs.publish.outputs.index }}
+      VERSION: ${{ needs.publish.outputs.version }}
+      TAGS: ${{ needs.publish.outputs.tags }}
+    steps:
+      - name: Record the image in the release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json body -q .body >body.md
+          also=""
+          case ",${TAGS}," in
+          *,latest,*) also=" (also \`latest\`)" ;;
+          *,next,*) also=" (also \`next\`)" ;;
+          esac
+          # Drop the previous block and the blank lines that trail the body, so
+          # a re-run replaces the block instead of adding a second one.
+          awk '
+            /<!-- container-image:start -->/ { skip = 1 }
+            !skip { if ($0 == "") { blank++ } else { while (blank > 0) { print ""; blank-- } print } }
+            /<!-- container-image:end -->/ { skip = 0 }
+          ' body.md >notes.md
+          {
+            printf '\n<!-- container-image:start -->\n## Container image\n\n'
+            printf "\`ghcr.io/glapsfun/gskill:%s\`%s\n\n" "$VERSION" "$also"
+            printf '    docker pull ghcr.io/glapsfun/gskill@%s\n\n' "$INDEX"
+            printf 'Verify: see https://glapsfun.github.io/gskill/how-to/releasing/#verify-a-published-release\n'
+            printf '<!-- container-image:end -->\n'
+          } >>notes.md
+          gh release edit "$TAG" --notes-file notes.md

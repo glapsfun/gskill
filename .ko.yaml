@@ -1,0 +1,17 @@
+# The build settings mirror the gskill build in .goreleaser.yaml (test/image checks it).
+# scripts/image.sh sets GSKILL_VERSION; a bare `ko build` fails on the missing variable.
+defaultBaseImage: cgr.dev/chainguard/git:latest@sha256:899fde72e1a9154de9781bced225e9a1fc114c7b5526cd2407f18601c93a69a0
+defaultPlatforms:
+  - linux/amd64
+  - linux/arm64
+builds:
+  - id: gskill
+    main: ./cmd/gskill
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/glapsfun/gskill/internal/version.version={{.Env.GSKILL_VERSION}}
+      - -X github.com/glapsfun/gskill/internal/version.commit={{.Git.ShortCommit}}

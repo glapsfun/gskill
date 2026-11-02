@@ -20,6 +20,7 @@ have cosign || log_warn "cosign is not installed: the release signature will NOT
 gh attestation verify --help >/dev/null 2>&1 ||
 	log_warn "gh $(gh --version | head -1 | awk '{print $3}') has no 'gh attestation': provenance will NOT be verified (upgrade gh to >= 2.49)"
 have npm || log_warn "npm is not installed: the npm channel cannot be verified"
+have docker || log_warn "docker is not installed: the version the released image reports will NOT be checked"
 
 # On the release branch.
 branch="$(git rev-parse --abbrev-ref HEAD)"
