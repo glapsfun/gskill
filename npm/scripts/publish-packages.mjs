@@ -107,10 +107,11 @@ export function publishPackages({
   exec = registryExec,
   dryRun = false,
   log = console.error,
-  // Registry read replicas can lag right after a publish; re-check with
-  // patience before declaring a partial state.
-  verifyAttempts = 5,
-  verifyDelayMs = 10_000,
+  // npm processes a publish asynchronously ("may take a few minutes to become
+  // available"), so keep re-checking for about ten minutes before declaring a
+  // partial state.
+  verifyAttempts = 30,
+  verifyDelayMs = 20_000,
   sleep = sleepMs,
 }) {
   const channel = channelFor(version);

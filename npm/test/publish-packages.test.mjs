@@ -173,6 +173,25 @@ test("post-run verification tolerates registry replication lag", () => {
   assert.equal(result.outcomes.filter((o) => o.action === "published").length, 5);
 });
 
+test("default verification waits out minutes of registry processing", () => {
+  const dist = makeDist("1.2.3");
+  const { exec } = fakeExec();
+  const realExists = exec.exists;
+  let now = 0;
+  // v0.7.2 to v0.8.0 versions appeared up to 3m09s after npm publish returned.
+  exec.exists = (name, version) => now >= 5 * 60_000 && realExists(name, version);
+  const result = publishPackages({
+    version: "1.2.3",
+    distDir: dist,
+    exec,
+    log: () => {},
+    sleep: (ms) => {
+      now += ms;
+    },
+  });
+  assert.equal(result.outcomes.filter((o) => o.action === "published").length, 5);
+});
+
 test("dist manifests at a different version are refused", () => {
   const dist = makeDist("1.2.2");
   const { exec, calls } = fakeExec();
