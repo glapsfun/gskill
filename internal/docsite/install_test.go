@@ -18,7 +18,10 @@ const installRegion = "### Install script\n\n" +
 	"```sh\nnpm install --global @glapsfun/gskill\n```\n\n" +
 	"### npx\n\nRun without installing. Requires Node.js 20 or newer.\n\n" +
 	"```sh\nnpx @glapsfun/gskill version\n```\n\n" +
-	"```sh\nnpx @glapsfun/gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude\n```\n"
+	"```sh\nnpx @glapsfun/gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude\n```\n\n" +
+	"### Container\n\nLinux images for amd64 and arm64. Requires Docker, Podman, or another container runtime.\n\n" +
+	"```sh\ndocker run --rm ghcr.io/glapsfun/gskill:latest version\n```\n\n" +
+	"```sh\ndocker run --rm --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD:/workspace\" -w /workspace ghcr.io/glapsfun/gskill:latest add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude\n```\n"
 
 // installDoc wraps a region in a minimal installation page.
 func installDoc(region string) string {
@@ -40,7 +43,7 @@ func TestParseInstall(t *testing.T) {
 	if got, want := strings.Join(labels, ","), strings.Join(InstallLabels, ","); got != want {
 		t.Errorf("labels = %s, want %s", got, want)
 	}
-	if got, want := strings.Join(ids, ","), "install-script,homebrew,go,npm,npx"; got != want {
+	if got, want := strings.Join(ids, ","), "install-script,homebrew,go,npm,npx,container"; got != want {
 		t.Errorf("ids = %s, want %s", got, want)
 	}
 	if got := methods[2].Prerequisites; got != "Requires a Go toolchain." {
@@ -63,7 +66,7 @@ func TestParseInstall_Errors(t *testing.T) {
 		{
 			name: "methods out of order",
 			old:  "### Homebrew", new: "### Brew",
-			want: "install region: methods must be exactly: Install script, Homebrew, Go, npm, npx",
+			want: "install region: methods must be exactly: Install script, Homebrew, Go, npm, npx, Container",
 		},
 		{
 			name: "comment inside a block",
@@ -94,6 +97,11 @@ func TestParseInstall_Errors(t *testing.T) {
 			name: "add without the example skill",
 			old:  "github.com/glapsfun/gskill/examples/skills/hello-gskill", new: "github.com/someone/skills",
 			want: `install method "npx": add command must use github.com/glapsfun/gskill/examples/skills/hello-gskill`,
+		},
+		{
+			name: "container add without the example skill",
+			old:  "gskill:latest add github.com/glapsfun/gskill/examples/skills/hello-gskill", new: "gskill:latest add github.com/someone/skills",
+			want: `install method "Container": add command must use github.com/glapsfun/gskill/examples/skills/hello-gskill`,
 		},
 		{
 			name: "text after a code block",
@@ -220,8 +228,8 @@ func TestRenderInstallJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(got) != 5 {
-		t.Fatalf("got %d methods, want 5", len(got))
+	if len(got) != 6 {
+		t.Fatalf("got %d methods, want 6", len(got))
 	}
 	first := got[0]
 	for _, key := range []string{"id", "label", "prerequisites", "blocks"} {

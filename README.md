@@ -120,6 +120,18 @@ npx @glapsfun/gskill version
 ```sh
 npx @glapsfun/gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude
 ```
+
+### Container
+
+Linux images for amd64 and arm64. Requires Docker, Podman, or another container runtime.
+
+```sh
+docker run --rm ghcr.io/glapsfun/gskill:latest version
+```
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" -w /workspace ghcr.io/glapsfun/gskill:latest add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude
+```
 <!-- install-methods:end -->
 
 ## Quick start

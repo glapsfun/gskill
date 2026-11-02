@@ -79,8 +79,7 @@ highest tag of its kind on origin at push time (a backport or an older rc never 
 back); the cosign signature; an SPDX SBOM attestation per platform; a
 provenance attestation on the index. Publishing uses the workflow's `GITHUB_TOKEN`; there is no
 registry secret. Re-runs converge: the rebuild has the same digest, the push changes nothing, and
-`record` replaces its block. The block's verification link points at the releasing guide until the
-container how-to is published.
+`record` replaces its block.
 
 ## One-time prerequisites (maintainer setup, not runbook steps)
 
