@@ -13,7 +13,7 @@ permissions:
   contents: write # create the GitHub Release
   id-token: write # cosign keyless + provenance OIDC
   attestations: write # GitHub build-provenance attestations
-  actions: write # dispatch the npm-release workflow after publishing
+  actions: write # dispatch the npm, site, landing example, and image workflows after publishing
 
 concurrency:
   group: release
@@ -105,3 +105,10 @@ jobs:
         run: |
           gh workflow run pages.yml --ref main -f "reason=release ${GITHUB_REF_NAME}"
           gh workflow run landing-example.yml --ref main -f "version=${GITHUB_REF_NAME}"
+
+      # Publish the container image (image-release.yml) on the tag ref, like
+      # npm. Last, so a failed dispatch here cannot skip the dispatches above.
+      - name: Trigger image publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run image-release.yml --ref "${GITHUB_REF_NAME}" -f "tag=${GITHUB_REF_NAME}"

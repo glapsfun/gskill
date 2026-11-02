@@ -61,6 +61,7 @@ tools from `./bin` first.
 | `scripts/vuln.sh` | `govulncheck` | — |
 | `scripts/secrets.sh` | `gitleaks` secret scan | — |
 | `scripts/npm-test.sh` | npm distribution channel tests (`node --test npm/test/*.test.mjs`) | — |
+| `scripts/image.sh` | Build and smoke-test the container image with ko; the release image's tag policy and publish step | `build --all`, `check`, `smoke REF` |
 
 ## TDD workflow (red → green → refactor)
 
@@ -83,6 +84,8 @@ both `bootstrap.sh` and CI:
 | `golangci-lint` (v2) | Lint + bundled formatters (gofmt, gofumpt) |
 | `govulncheck` | Known-vulnerability scanning |
 | `gitleaks` | Secret detection |
+| `ko` | Builds the container image (`scripts/image.sh`) |
+| `crane` | Pushes the release image in `image-release.yml`; CI only, not installed by `bootstrap.sh` |
 
 `shellcheck` is provided by the pre-commit hook, not installed into `./bin`.
 
@@ -119,6 +122,7 @@ bin/                      # gitignored; pinned tools land here after bootstrap
 - **Go 1.26+**
 - **[pre-commit](https://pre-commit.com)** (for git hooks)
 - A `git` binary
+- Docker or Podman, only to run the container image and for `scripts/image.sh check`
 
 ## Building
 
@@ -126,6 +130,24 @@ bin/                      # gitignored; pinned tools land here after bootstrap
 go build ./...       # build everything
 go run ./cmd/gskill   # print the dev build marker
 ```
+
+### Build the container image
+
+ko builds the image from the Go module, so building needs no Docker daemon. ko comes from
+`scripts/bootstrap.sh`.
+
+```bash
+./scripts/image.sh build                   # this machine's platform, to dist/image/gskill.tar
+docker load -i dist/image/gskill.tar       # or: podman load -i dist/image/gskill.tar
+docker run --rm gskill.test/gskill:dev version
+./scripts/image.sh build --all             # linux/amd64 and linux/arm64, to the OCI layout dist/image/oci
+./scripts/image.sh check                   # needs Docker; what the CI image job runs
+```
+
+A local image reports the version `dev` and the commit it was built from. Its name,
+`gskill.test/gskill`, is under the reserved `.test` domain, so it cannot be pushed anywhere by
+mistake. `check` builds both platforms, loads this machine's into Docker, and runs the smoke
+suite (`scripts/image.sh smoke`) as your user.
 
 ## See also
 

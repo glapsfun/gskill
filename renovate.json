@@ -10,6 +10,21 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\w+=(?<currentValue>\\S+)"
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Keep the .ko.yaml base image digest current.",
+      "managerFilePatterns": ["/(^|/)\\.ko\\.yaml$/"],
+      "matchStrings": [
+        "defaultBaseImage: (?<depName>[^:\\s]+):(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchFileNames": [".ko.yaml"],
+      "schedule": ["before 6am on monday"]
     }
   ]
 }

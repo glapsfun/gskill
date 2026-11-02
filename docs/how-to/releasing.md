@@ -5,6 +5,7 @@ Releases are **tag-triggered**: pushing a `vX.Y.Z` tag runs the quality gate and
 publishes everything via GoReleaser (`.github/workflows/release.yml`). After publishing
 the GitHub Release, the release job dispatches the separate npm pipeline
 (`.github/workflows/npm-release.yml`) — see [npm distribution](#npm-distribution).
+Its last step dispatches the container image pipeline (`.github/workflows/image-release.yml`).
 
 ## Prerequisites (one-time)
 
@@ -14,6 +15,13 @@ the GitHub Release, the release job dispatches the separate npm pipeline
 - Branch protection: make **`verify`** (CI) and **`Validate PR title`** required status
   checks, and enable squash-merge with "Default to PR title for squash merge commits" so
   the grouped release notes stay clean.
+- **Public container packages**: the `glapsfun` organization must allow public packages.
+  After the first image publish, set `ghcr.io/glapsfun/gskill` to public in its package
+  settings and confirm it is linked to the `glapsfun/gskill` repository. Until then, the
+  image pipeline's `verify` job fails on its anonymous pull.
+- Image publishing authenticates with the workflow's own `GITHUB_TOKEN`. Only the
+  `publish` job of `image-release.yml` gets `packages: write`, and no registry secret is
+  stored.
 
 ## Cut a stable release
 
@@ -44,7 +52,7 @@ git push origin v0.4.0-rc.1
 
 Prereleases are flagged as GitHub pre-releases and are **excluded from the stable
 channels**: the `install.sh` default and Homebrew stable are not updated (GoReleaser
-`prerelease: auto` + `skip_upload: auto`).
+`prerelease: auto` + `skip_upload: auto`), and the image's `latest` tag does not move.
 
 ## Release artifacts
 
@@ -54,6 +62,17 @@ Each release carries, for `linux`/`darwin` × `amd64`/`arm64`:
 - `checksums.txt` and `checksums.txt.sigstore.json` (cosign bundle, cert embedded)
 - `gskill_<version>_<os>_<arch>.tar.gz.sbom.spdx.json`
 - a build-provenance attestation over `checksums.txt`
+
+The image pipeline adds the container image `ghcr.io/glapsfun/gskill`, one index for
+`linux/amd64` and `linux/arm64`:
+
+- tags: the bare version (`0.9.0`), plus `latest` for a stable release or `next` for a
+  prerelease, each only when it is the highest version of its kind, so a backport or a re-run
+  for an older release candidate never moves a channel back;
+- a cosign keyless signature, a build-provenance attestation, and an SPDX SBOM attestation
+  for each platform;
+- a "Container image" section in the GitHub Release notes, with the index digest and a
+  `docker pull` command by digest, written only after the image passed verification.
 
 ## Verify a published release
 
@@ -73,6 +92,32 @@ gh attestation verify --owner glapsfun checksums.txt
 
 The `install.sh` script performs the checksum verification automatically and refuses to
 install on any mismatch.
+
+The container image is verified against its index digest, the one in the release notes'
+"Container image" section. `scripts/image.sh` reads it, and the platform digests, from the
+registry:
+
+```bash
+index="$(./scripts/image.sh digest ghcr.io/glapsfun/gskill:0.9.0)"
+
+# signature (cosign keyless, signed by image-release.yml on a v* tag)
+cosign verify "ghcr.io/glapsfun/gskill@${index}" \
+  --certificate-identity-regexp '^https://github\.com/glapsfun/gskill/\.github/workflows/image-release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# provenance (gh 2.49 or newer)
+gh attestation verify "oci://ghcr.io/glapsfun/gskill@${index}" -R glapsfun/gskill
+
+# SBOM of one platform image, listing its packages
+amd64="$(./scripts/image.sh platforms "ghcr.io/glapsfun/gskill@${index}" | awk '$1 == "linux/amd64" { print $2 }')"
+gh attestation verify "oci://ghcr.io/glapsfun/gskill@${amd64}" -R glapsfun/gskill \
+  --predicate-type https://spdx.dev/Document/v2.3 --format json |
+  jq -r '.[].verificationResult.statement.predicate.packages[].name'
+```
+
+The release-guru check `.claude/skills/release-guru/scripts/verify-channels.sh` runs the
+signature and provenance checks for each release, with the signer identity pinned to the
+release tag.
 
 ## npm distribution
 
@@ -150,3 +195,13 @@ Subsequent releases publish to npm automatically when the GitHub Release is publ
   secret and the GoReleaser `homebrew_casks` step logs, then re-run.
 - **`tag already exists`** → the guard refuses to overwrite a published release; bump to a
   new version.
+- **Image `verify` fails on the anonymous pull** (HTTP 401 or 403) → the package is still
+  private. Set `ghcr.io/glapsfun/gskill` to public (see the prerequisites), then re-run the
+  image pipeline.
+- **Image publish refuses to move a version tag** → `ghcr.io/glapsfun/gskill:<version>`
+  already points at a different digest than the rebuild, and nothing was pushed. Never
+  delete or move the tag; investigate why the rebuild differs before anything else.
+- **Re-run the image pipeline** for a release, always from the tag ref (any other ref is
+  refused): `gh workflow run image-release.yml --ref v0.9.0 -f tag=v0.9.0`. A re-run
+  rebuilds the same digest, completes any missing step, and replaces the release notes
+  section instead of adding a second one.

@@ -50,6 +50,31 @@ func TestRun_JSONEmitsSingleObjectOnStdout(t *testing.T) {
 	}
 }
 
+func TestRun_VersionJSONIncludesCommit(t *testing.T) {
+	t.Parallel()
+
+	stdout, _, code := run(t, "version", "--json")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(stdout), &obj); err != nil {
+		t.Fatalf("stdout is not a single JSON object: %v\nstdout: %q", err, stdout)
+	}
+	if len(obj) != 2 {
+		t.Errorf("JSON keys = %v, want exactly version and commit", obj)
+	}
+	v, ok := obj["version"].(string)
+	if !ok || v == "" {
+		t.Errorf("version = %#v, want a non-empty string", obj["version"])
+	}
+	// The commit may be empty under go test, but the key is always present.
+	if _, ok := obj["commit"].(string); !ok {
+		t.Errorf("commit = %#v, want a string", obj["commit"])
+	}
+}
+
 func TestRun_UsageErrorExits2(t *testing.T) {
 	t.Parallel()
 

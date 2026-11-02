@@ -18,6 +18,7 @@ install_tool golangci-lint github.com/golangci/golangci-lint/v2/cmd/golangci-lin
 install_tool govulncheck   golang.org/x/vuln/cmd/govulncheck                       GOVULNCHECK
 install_tool gitleaks      github.com/zricethezav/gitleaks/v8                       GITLEAKS
 install_tool actionlint    github.com/rhysd/actionlint/cmd/actionlint              ACTIONLINT
+install_tool ko            github.com/google/ko                                    KO
 
 # zizmor is a PyPI tool (not go-installable); scripts/audit-workflows.sh runs it via
 # `uvx zizmor==$(tool_version ZIZMOR)`. We only need `uv` present, not a global install.

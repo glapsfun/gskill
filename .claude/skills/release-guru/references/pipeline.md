@@ -2,7 +2,8 @@
 
 Background for the runbook: what each stage does, what it produces, and what must already be set
 up. Sources of truth: `.github/workflows/release.yml`, `.github/workflows/npm-release.yml`,
-`.goreleaser.yaml`, and `docs/how-to/releasing.md`.
+`.github/workflows/image-release.yml`, `.goreleaser.yaml`, `.ko.yaml`, `scripts/image.sh`, and
+`docs/how-to/releasing.md`.
 
 ## Stage 1: release.yml (on push of a `v*` tag)
 
@@ -32,6 +33,10 @@ never run in parallel). Steps, in order:
 8. Build-provenance attestation, with `checksums.txt` as the subject list (covers every archive).
 9. Dispatch `npm-release.yml` on the tag ref with `tag=<tag>`. This is an explicit dispatch
    because releases created with the default `GITHUB_TOKEN` never trigger other workflows.
+10. Dispatch `pages.yml` and `landing-example.yml` on `main` (site publish and the landing
+    example against the release).
+11. Dispatch `image-release.yml` on the tag ref with `tag=<tag>`. It is last, so a failed
+    dispatch here cannot skip the ones above.
 
 Nothing is committed back to `main`; there is no CHANGELOG file.
 
@@ -56,6 +61,27 @@ npm version `X.Y.Z` is exactly tag `vX.Y.Z`. Stable versions get dist-tag `lates
 gets `next`. Already-published versions are validated and skipped, so re-runs converge. Publishing
 uses npm trusted publishing (OIDC) with mandatory provenance; there is no npm token anywhere.
 
+## Stage 3: image-release.yml (dispatched, or manual retry)
+
+Inputs: `tag`. Runs in a concurrency group per tag (`image-release-<tag>`), so runs for
+different tags never cancel each other, with workflow-level `permissions: {}`. It refuses any run not dispatched from `refs/tags/<tag>`, so the build inputs
+and the signer identity are always the tag's. Three jobs:
+
+| Job | Runner | Permissions | Does |
+| --- | --- | --- | --- |
+| `publish` | `ubuntu-latest` | `contents: read`, `packages: write`, `id-token: write`, `attestations: write` | guards (tag shape, tag ref, GitHub Release exists, `.ko.yaml` present); `scripts/image.sh publish` builds both platforms once with ko into an OCI layout, refuses if `<version>` already points at a different digest, then pushes that layout with crane; cosign signs the index (`--recursive`); syft SBOMs per platform as attestations; build provenance on the index |
+| `verify` | `ubuntu-latest` and `ubuntu-24.04-arm` | `contents: read`, `attestations: read` | anonymous pull by digest; exactly two platforms, each at most 60 MiB; the tags point at the index; cosign and provenance verify; `version --json` equals the release archive's; `scripts/image.sh smoke` |
+| `record` | `ubuntu-latest` | `contents: write` | after `verify` passes, replaces the block between `<!-- container-image:start -->` and `<!-- container-image:end -->` in the release notes |
+
+Artifacts in `ghcr.io/glapsfun/gskill`: one index (linux/amd64, linux/arm64) tagged with the bare
+version, plus `latest` for a stable release or `next` for an rc, each only when it is the
+highest tag of its kind on origin at push time (a backport or an older rc never moves a channel
+back); the cosign signature; an SPDX SBOM attestation per platform; a
+provenance attestation on the index. Publishing uses the workflow's `GITHUB_TOKEN`; there is no
+registry secret. Re-runs converge: the rebuild has the same digest, the push changes nothing, and
+`record` replaces its block. The block's verification link points at the releasing guide until the
+container how-to is published.
+
 ## One-time prerequisites (maintainer setup, not runbook steps)
 
 - Secret `TAP_GITHUB_TOKEN` with `contents: write` on `glapsfun/homebrew-tap`.
@@ -63,6 +89,9 @@ uses npm trusted publishing (OIDC) with mandatory provenance; there is no npm to
 - npm: the `@glapsfun` org owns all five packages, each with a Trusted Publisher of repository
   `glapsfun/gskill` and workflow `npm-release.yml`, token publishing disallowed, 2FA for
   maintainers.
+- ghcr.io: the organization allows public packages, and after the first image publish the
+  `ghcr.io/glapsfun/gskill` package is set to public in its package settings (once; until then
+  `verify` fails on the anonymous pull).
 
 If a run fails on one of these, the fix belongs to a maintainer; report it rather than working
 around it.
@@ -84,4 +113,8 @@ cosign verify-blob --bundle checksums.txt.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
 gh attestation verify gskill_X.Y.Z_linux_amd64.tar.gz --repo glapsfun/gskill   # gh >= 2.49
 npm view @glapsfun/gskill@X.Y.Z dist.attestations.provenance.predicateType
+cosign verify ghcr.io/glapsfun/gskill:X.Y.Z \
+  --certificate-identity 'https://github.com/glapsfun/gskill/.github/workflows/image-release.yml@refs/tags/vX.Y.Z' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/glapsfun/gskill:X.Y.Z --repo glapsfun/gskill   # gh >= 2.49
 ```

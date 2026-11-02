@@ -11,20 +11,20 @@ description: >-
   quality gate and leaves an unsigned, unverifiable release with no SBOMs, provenance, Homebrew
   update, or npm packages. It picks the semver version from merged PR titles, runs preflight
   (identity, branch, CI green on the exact commit, local gate), gets the user's one go-ahead,
-  pushes the tag, watches the GitHub Release and npm pipelines, verifies every install channel
-  (GitHub assets, cosign, provenance, npm, Homebrew, install.sh), and has a failure playbook for
-  each stage. Skip it only for work that merely mentions releases: editing release.yml or
+  pushes the tag, watches the GitHub Release, npm, and image pipelines, verifies every install
+  channel (GitHub assets, cosign, provenance, npm, Homebrew, the container image, install.sh),
+  and has a failure playbook for each stage. Skip it only for work that merely mentions releases: editing release.yml or
   .goreleaser.yaml, hand-writing a changelog, bumping a go.mod dependency, a local-only git tag,
   scaffolding GoReleaser for another project, or checking a pull request's CI.
-compatibility: Requires git, bash, curl, and the GitHub CLI (gh, authenticated). npm/npx verify the npm channel; cosign and gh >= 2.49 (gh attestation) complete signature and provenance checks, and their absence is reported, not hidden.
+compatibility: Requires git, bash, curl, jq, and the GitHub CLI (gh, authenticated). npm/npx verify the npm channel; cosign and gh >= 2.49 (gh attestation) complete signature and provenance checks, docker runs the released image, and their absence is reported, not hidden.
 ---
 
 # release-guru: the gskill release runbook
 
 You are about to publish software to everyone who installs gskill. A release is **public and
 irreversible**: pushing a `vX.Y.Z` tag starts a pipeline that publishes signed binaries, a
-GitHub Release, a Homebrew cask, and five npm packages, and none of it can be cleanly taken
-back. This runbook keeps exactly one decision with the human (which version, from which
+GitHub Release, a Homebrew cask, five npm packages, and a container image, and none of it can
+be cleanly taken back. This runbook keeps exactly one decision with the human (which version, from which
 commit) and makes everything else scripted, watched, and verified.
 
 Run the scripts from this skill's `scripts/` directory; they find the repo through git.
@@ -39,14 +39,23 @@ git tag vX.Y.Z (pushed)                         ← point of no return
        cosign bundle, 4 SBOMs, GitHub Release with grouped notes,
        Homebrew cask in glapsfun/homebrew-tap (stable only)
      → build-provenance attestation → dispatch npm-release.yml on the tag
+     → dispatch the site publish → dispatch image-release.yml on the tag (last)
  └─ npm-release.yml (1-3 min)
      verify cosign + checksums of the release assets → build 5 packages
      → publish platforms first, launcher last, with provenance
        (stable → dist-tag latest, -rc.N → dist-tag next)
+ └─ image-release.yml (publish, verify, record; about 10 min)
+     publish: ko builds linux/amd64 + linux/arm64 → refuse to move a version tag
+       → push ghcr.io/glapsfun/gskill → cosign sign → SBOM + provenance attestations
+       (stable → X.Y.Z + latest, -rc.N → X.Y.Z + next, each only when it is the highest
+       tag of its kind, so a backport or an older rc never moves a channel back)
+     verify (amd64 and arm64 runners): anonymous pull, tags, signature, provenance,
+       version parity with the archive, smoke tests
+     record: the "Container image" block in the release notes, only after verify
 ```
 
-Prereleases (`-rc.N`) become GitHub pre-releases, go to npm `next`, and never touch Homebrew or
-the `install.sh` default. Details, prerequisites, and artifact names: `references/pipeline.md`.
+Prereleases (`-rc.N`) become GitHub pre-releases, move npm and image `next` (never `latest`), and
+never touch Homebrew or the `install.sh` default. Details, prerequisites, and artifact names: `references/pipeline.md`.
 
 ## Ground rules
 
@@ -54,7 +63,8 @@ the `install.sh` default. Details, prerequisites, and artifact names: `reference
   that explicit yes, and never treat an earlier "ship it" as approval for a version they have not
   seen.
 - **Only the scripts touch the release.** Don't hand-run `git tag`/`git push` of tags,
-  `gh release create|edit|delete`, `npm publish|unpublish|dist-tag`, or edit the Homebrew tap.
+  `gh release create|edit|delete`, `npm publish|unpublish|dist-tag`, push or re-tag images in
+  ghcr.io, or edit the Homebrew tap.
   The scripts encode the guards; a manual step skips them.
 - **Tags and releases are immutable.** Never delete, move, or force-push a tag that reached
   origin, and never re-run the Release workflow once a GitHub Release exists (its guard refuses,
@@ -79,11 +89,12 @@ than for one, start with the read-only status board:
 scripts/release-status.sh vX.Y.Z
 ```
 
-It shows the tag, the Release run, the GitHub Release, the npm run, npm packages and dist-tags,
-the Homebrew cask, and which release GitHub marks latest. Resume at the first stage that is not
-done: tag missing → step 1; Release run running → step 5; Release run failed → playbook;
-GitHub Release exists but npm incomplete → step 6; everything published → step 7. For "is it
-healthy?" questions, step 7 alone is the answer.
+It shows the tag, the Release run, the GitHub Release, the npm run, the image run and image
+tags, npm packages and dist-tags, the Homebrew cask, and which release GitHub marks latest.
+Resume at the first stage that is not done: tag missing → step 1; Release run running → step 5;
+Release run failed → playbook; GitHub Release exists but npm incomplete → step 6; image run
+incomplete → step 7; everything published → step 8. For "is it healthy?" questions, step 8
+alone is the answer.
 
 ### 1. Choose the version
 
@@ -114,7 +125,8 @@ It checks, failing closed: gh identity matches git; on `main`, clean, in sync wi
 release don't exist yet; no Release run in progress; **CI green for this exact commit** (CI
 includes `release-dryrun`, a GoReleaser snapshot of what would ship); and the local
 `./scripts/verify.sh` gate (several minutes). It also warns early when cosign, a gh with
-`gh attestation`, or npm is missing, because step 7 would then report those checks as skipped.
+`gh attestation`, npm, or docker is missing, because step 8 would then report those checks as
+skipped.
 
 Typical fixes: not on `main` → the work must be merged first (open PRs are not releasable); CI
 still running → wait for it; out of sync → `git pull --ff-only`. Re-run preflight after any fix.
@@ -126,10 +138,11 @@ Present this and wait for an explicit yes:
 ```
 Release vX.Y.Z from main @ <short sha> (<commit subject>)
 Bump: <level>, because <the PR titles that drove it>
-Publishes: GitHub Release + signed archives, Homebrew cask, npm @glapsfun/gskill (latest)
-           [for -rc: GitHub pre-release, npm next only; no Homebrew]
+Publishes: GitHub Release + signed archives, Homebrew cask, npm @glapsfun/gskill (latest),
+           image ghcr.io/glapsfun/gskill (X.Y.Z + latest)
+           [for -rc: GitHub pre-release, npm next, image X.Y.Z + next; no Homebrew]
 Notes preview: <Features / Bug Fixes items from the PR titles>
-Verification gaps on this machine: <none | cosign missing | gh too old for provenance>
+Verification gaps on this machine: <none | cosign missing | gh too old for provenance | docker missing>
 Tagging is irreversible. Go ahead?
 ```
 
@@ -165,25 +178,41 @@ On failure it prints the registry state. A red npm run does not by itself mean n
 v0.7.2's run failed after all five packages were already published. Decide from the registry
 state using the playbook's npm section.
 
-### 7. Verify every channel
+### 7. Watch the image run
+
+```bash
+scripts/watch-image.sh vX.Y.Z
+```
+
+About 10 minutes: `publish` builds, pushes, and signs the image, `verify` pulls it anonymously
+and smoke-tests it on amd64 and arm64, and only then `record` adds the "Container image" block to
+the release notes. A failed image run never touches the GitHub Release assets, Homebrew, or npm.
+Classify a failure with the playbook's image section before re-dispatching with
+`scripts/watch-image.sh vX.Y.Z --redispatch`, which follows the new run, never the failed one. On
+the first publish, `verify` fails until the package is made public.
+
+### 8. Verify every channel
 
 ```bash
 scripts/verify-artifacts.sh vX.Y.Z   # GitHub assets: set, checksum, cosign, provenance, binary
-scripts/verify-channels.sh vX.Y.Z    # npm (5 pkgs, provenance, dist-tag, npx), Homebrew, install.sh
+scripts/verify-channels.sh vX.Y.Z    # npm (5 pkgs, provenance, dist-tag, npx), Homebrew,
+                                     # image (tags, platforms, notes digest, cosign,
+                                     # provenance, version), install.sh
 ```
 
 Both are read-only. A failure here after green runs is serious (see playbook section H): stop and
 tell the user before anyone announces the release. A check reported as `skipped` is not a pass;
 name it in the report.
 
-### 8. Report
+### 9. Report
 
 ```
 Released vX.Y.Z  <GitHub Release URL>
 Commit:      <short sha> on main
-Pipelines:   Release run <url> (success) · npm run <url> (success | failed, see note)
+Pipelines:   Release run <url> (success) · npm run <url> (success | failed, see note) · image run <url> (success)
 GitHub:      4 archives + SBOMs · checksum ok · signature <ok|skipped> · provenance <ok|skipped> · binary reports X.Y.Z
 npm:         5/5 packages with provenance · dist-tag <latest|next> = X.Y.Z · npx smoke ok
+Image:       ghcr.io/glapsfun/gskill:X.Y.Z (+ latest | next) @ sha256:<12 hex> · linux/amd64 + linux/arm64 · signature <ok|skipped> · provenance <ok|skipped> · reports X.Y.Z <ok|skipped>
 Homebrew:    cask at X.Y.Z  [rc: untouched, by design]
 install.sh:  pinned install ok · default install resolves to X.Y.Z  [stable only]
 Notes:       <Features / Bug Fixes headlines>
@@ -199,15 +228,17 @@ Follow-ups:  <anything skipped or retried, and why>
 | Preflight | `scripts/preflight.sh <tag>` | identity, branch, dirty, sync, tag exists, release in flight, CI not green, gate red |
 | Tag | `scripts/cut-release.sh <tag> <sha>` | identity, main moved, tag appeared, push rejected |
 | Release run | `scripts/watch-release.sh <tag>` | run fails |
-| npm run | `scripts/watch-npm.sh <tag>` | run fails (prints registry state) |
+| npm run | `scripts/watch-npm.sh <tag> [--redispatch]` | run fails (prints registry state) |
+| Image run | `scripts/watch-image.sh <tag> [--redispatch]` | run fails (prints the failed log and status) |
 | Verify GitHub | `scripts/verify-artifacts.sh <tag>` | asset set, checksum, signature, provenance, version mismatch |
-| Verify channels | `scripts/verify-channels.sh <tag>` | any channel wrong (reports all) |
+| Verify channels | `scripts/verify-channels.sh <tag>` | any channel wrong, image included (reports all) |
 
 ## Configuration (environment overrides)
 
 `RELEASE_BRANCH` (default `main`), `RELEASE_REPO` (`glapsfun/gskill`), `RELEASE_WORKFLOW`
 (`release.yml`), `NPM_WORKFLOW` (`npm-release.yml`), `CI_WORKFLOW` (`ci.yml`), `TAP_REPO`
-(`glapsfun/homebrew-tap`), `NPM_PACKAGES`, and `RELEASE_GURU_SKIP_GATE=1` (skip the local gate in
+(`glapsfun/homebrew-tap`), `NPM_PACKAGES`, `IMAGE_REPO` (`ghcr.io/glapsfun/gskill`),
+`IMAGE_WORKFLOW` (`image-release.yml`), and `RELEASE_GURU_SKIP_GATE=1` (skip the local gate in
 preflight; only when the gate already passed on this exact commit, and say so in the report).
 
 ## Rehearsing
