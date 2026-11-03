@@ -73,6 +73,40 @@ If your shell cannot find `gskill`, add the install location to your `PATH`:
   `INSTALL_DIR` before running the script to choose another directory.
 - Go: `$(go env GOPATH)/bin`.
 
+## Upgrade GSKILL
+
+Move the gskill you are running to the latest stable release:
+
+```sh
+gskill self upgrade
+```
+
+Preview what it would do, or choose an exact release:
+
+```sh
+gskill --dry-run self upgrade
+gskill self upgrade --to 0.10.0
+```
+
+What it does depends on how you installed gskill:
+
+| Install method | What `gskill self upgrade` does |
+| --- | --- |
+| Install script or release archive | Downloads the release archive, checks its signature and checksum, and replaces the binary in place. |
+| Homebrew, npm, npx, Go, container image | Changes nothing. It prints the command that upgrades your install and exits with code 8. |
+
+A binary in `/usr/bin`, `/usr/sbin`, `/bin`, or `/sbin` belongs to your system's package
+manager, so gskill prints the commands instead of replacing it.
+
+It never downgrades, and it picks a prerelease only when you name one with `--to`. In a script
+or CI job, pass `--yes`: without a terminal it does not proceed otherwise.
+
+It needs HTTPS access to `api.github.com`, `github.com`, `objects.githubusercontent.com`, and
+`tuf-repo-cdn.sigstore.dev`.
+
+Releases without this command (0.9.0 and earlier) upgrade once with the method you installed
+them with.
+
 ## Verify a release
 
 Every release archive is checksummed, cosign-signed, and ships with SBOMs and build-provenance

@@ -31,6 +31,9 @@ npx --yes @glapsfun/gskill@0.5.0 install --frozen-lockfile
 The package version pins the native binary version. `--frozen-lockfile` governs your project's
 skills; it does not select the CLI version.
 
+`gskill self upgrade` recognizes an npm install and prints the npm command to run; it does not
+replace the bundled binary.
+
 `npx @glapsfun/gskill` is the only supported spelling — there is no unscoped alias, so
 `npx glapsfungskill` and `npx glapsfun/gskill` do not work.
 
