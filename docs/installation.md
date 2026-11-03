@@ -47,6 +47,18 @@ npx @glapsfun/gskill version
 ```sh
 npx @glapsfun/gskill add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude
 ```
+
+### Container
+
+Linux images for amd64 and arm64. Requires Docker, Podman, or another container runtime.
+
+```sh
+docker run --rm ghcr.io/glapsfun/gskill:latest version
+```
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" -w /workspace ghcr.io/glapsfun/gskill:latest add github.com/glapsfun/gskill/examples/skills/hello-gskill --agent claude
+```
 <!-- install-methods:end -->
 
 ## Check the install
@@ -67,6 +79,8 @@ Every release archive is checksummed, cosign-signed, and ships with SBOMs and bu
 attestations. To check them yourself, see [Cut and verify a release](how-to/releasing.md).
 
 ## Next steps
+
+To run GSKILL from the container image, see [Run GSKILL in a container](how-to/run-in-a-container.md).
 
 - [Getting started](tutorials/getting-started.md): from an empty directory to a committed,
   reproducible skill environment.

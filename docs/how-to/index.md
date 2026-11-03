@@ -40,6 +40,7 @@ GSKILL? Start with the [tutorial](../tutorials/getting-started.md) first.
 - [Set up shell completion](shell-completion.md).
 - [Run doctor](run-doctor.md).
 - [Use the TUI dashboard](use-the-tui.md).
+- [Run GSKILL in a container](run-in-a-container.md): pull the image, mount a project, keep the cache.
 
 ## Scripting
 

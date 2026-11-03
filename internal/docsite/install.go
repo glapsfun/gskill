@@ -28,7 +28,7 @@ const installTabsImport = "import InstallTabs from '../../components/InstallTabs
 
 // InstallLabels are the install methods, in tab order. The first is the
 // default tab.
-var InstallLabels = []string{"Install script", "Homebrew", "Go", "npm", "npx"}
+var InstallLabels = []string{"Install script", "Homebrew", "Go", "npm", "npx", "Container"}
 
 // placeholders must never appear in a command a visitor will paste.
 var placeholders = []string{"<", ">", "owner/repo", "example/skills"}
@@ -237,12 +237,18 @@ func validateCommand(label, line string) []error {
 	return errs
 }
 
-// isAddCommand reports whether a command runs `gskill add`, directly or via
-// npx.
+// isAddCommand reports whether a command runs `gskill add`, directly, via
+// npx, or from the container image (ghcr.io/glapsfun/gskill:latest add ...).
 func isAddCommand(cmd string) bool {
 	fields := strings.Fields(cmd)
 	for i := 1; i < len(fields); i++ {
 		prev := fields[i-1]
+		// Drop an image tag or digest, or an npm version, after the last "/".
+		if j := strings.LastIndex(prev, "/"); j >= 0 {
+			if k := strings.IndexAny(prev[j:], ":@"); k > 0 {
+				prev = prev[:j+k]
+			}
+		}
 		if fields[i] == "add" && (prev == "gskill" || strings.HasSuffix(prev, "/gskill")) {
 			return true
 		}

@@ -300,7 +300,7 @@ jobs:
             printf '\n<!-- container-image:start -->\n## Container image\n\n'
             printf "\`ghcr.io/glapsfun/gskill:%s\`%s\n\n" "$VERSION" "$also"
             printf '    docker pull ghcr.io/glapsfun/gskill@%s\n\n' "$INDEX"
-            printf 'Verify: see https://glapsfun.github.io/gskill/how-to/releasing/#verify-a-published-release\n'
+            printf 'Verify: see https://glapsfun.github.io/gskill/how-to/run-in-a-container/#verify-the-image\n'
             printf '<!-- container-image:end -->\n'
           } >>notes.md
           gh release edit "$TAG" --notes-file notes.md

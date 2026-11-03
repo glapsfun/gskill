@@ -183,7 +183,8 @@ These gates only block merges when branch protection requires them. Configure on
   `main` merges through a merge queue, so a required check must also run on `merge_group`
   (`ci.yml` does); one that does not leaves queued merges waiting until they time out.
 - `image (amd64)` and `image (arm64)` also run on `merge_group`, so they can be made required.
-  They are not required yet; that is the maintainer's choice.
+  They are not required yet: the maintainers plan to require them once the first release
+  candidate has run the image pipeline end to end.
 - **Do not** mark `scorecard` required (it is informational).
 - Require a pull request with at least one review; dismiss stale approvals on new commits.
 - Disallow force-pushes and deletions on `main`.
