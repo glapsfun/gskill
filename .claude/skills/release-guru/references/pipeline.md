@@ -16,8 +16,11 @@ never run in parallel). Steps, in order:
 4. Quality gate: `./scripts/bootstrap.sh` then `./scripts/verify.sh` on the tagged commit.
 5. Guard: refuse if a GitHub Release for the tag already exists.
 6. Install cosign and syft.
-7. GoReleaser `release --clean`, with `GORELEASER_CURRENT_TAG` pinned to the tag (so a stable
-   tag and an rc on the same commit can't be confused):
+7. Pick the previous tag for the notes: the last stable tag for a stable release (so v0.9.0's
+   notes cover everything since v0.8.0, not just since v0.9.0-rc.1), the last tag of any kind
+   for an rc.
+8. GoReleaser `release --clean`, with `GORELEASER_CURRENT_TAG` pinned to the tag (so a stable
+   tag and an rc on the same commit can't be confused) and `GORELEASER_PREVIOUS_TAG` from step 7:
    - builds `gskill` for linux/darwin × amd64/arm64 (CGO off, `-trimpath`, version and commit
      stamped through ldflags);
    - archives `gskill_<version>_<os>_<arch>.tar.gz` (binary, LICENSE, README). This name is a
@@ -30,12 +33,12 @@ never run in parallel). Steps, in order:
      `prerelease: auto` flags `-rc` tags;
    - the Homebrew cask `Casks/gskill.rb` in `glapsfun/homebrew-tap`, pushed with
      `TAP_GITHUB_TOKEN` (`skip_upload: auto` keeps prereleases out).
-8. Build-provenance attestation, with `checksums.txt` as the subject list (covers every archive).
-9. Dispatch `npm-release.yml` on the tag ref with `tag=<tag>`. This is an explicit dispatch
-   because releases created with the default `GITHUB_TOKEN` never trigger other workflows.
-10. Dispatch `pages.yml` and `landing-example.yml` on `main` (site publish and the landing
+9. Build-provenance attestation, with `checksums.txt` as the subject list (covers every archive).
+10. Dispatch `npm-release.yml` on the tag ref with `tag=<tag>`. This is an explicit dispatch
+    because releases created with the default `GITHUB_TOKEN` never trigger other workflows.
+11. Dispatch `pages.yml` and `landing-example.yml` on `main` (site publish and the landing
     example against the release).
-11. Dispatch `image-release.yml` on the tag ref with `tag=<tag>`. It is last, so a failed
+12. Dispatch `image-release.yml` on the tag ref with `tag=<tag>`. It is last, so a failed
     dispatch here cannot skip the ones above.
 
 Nothing is committed back to `main`; there is no CHANGELOG file.

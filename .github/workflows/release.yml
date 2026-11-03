@@ -67,6 +67,21 @@ jobs:
       - name: Install syft
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
 
+      # GoReleaser would take the previous tag from `git describe`, which finds a
+      # release candidate when one exists. A stable release's notes must cover
+      # everything since the last stable release, so they skip -rc tags.
+      - name: Pick the previous tag for release notes
+        id: previous
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          case "$TAG" in
+          *-*) prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${TAG}^")" ;;
+          *) prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' "${TAG}^")" ;;
+          esac
+          echo "notes cover ${prev}..${TAG}"
+          echo "tag=${prev}" >> "$GITHUB_OUTPUT"
+
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
@@ -81,6 +96,7 @@ jobs:
           # same commit, `git describe` may resolve to the prerelease and GoReleaser
           # would target the wrong release.
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+          GORELEASER_PREVIOUS_TAG: ${{ steps.previous.outputs.tag }}
 
       - name: Attest binary provenance (covers all archives via checksums)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
