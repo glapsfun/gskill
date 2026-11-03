@@ -167,8 +167,12 @@ if [ "$status" = 0 ]; then
 	fi
 
 	if have docker && docker info >/dev/null 2>&1; then
-		out="$(docker run --rm "${IMAGE_REPO}@${index}" version 2>&1 | head -1 || true)"
-		if [ "$out" = "gskill ${ver}" ]; then
+		# Pull first: an implicit pull inside docker run prints "Unable to find
+		# image" to stderr, which would be the first line read below.
+		if ! docker pull -q "${IMAGE_REPO}@${index}" >/dev/null 2>"$tmp/image.err"; then
+			fail "image: docker pull ${IMAGE_REPO}@${index} failed ($(tail -n1 "$tmp/image.err"))"
+		elif out="$(docker run --rm "${IMAGE_REPO}@${index}" version 2>&1 | head -1 || true)" &&
+			[ "$out" = "gskill ${ver}" ]; then
 			log_info "image: reports ${out}"
 		else
 			fail "image: reports '${out}', expected gskill ${ver}"
