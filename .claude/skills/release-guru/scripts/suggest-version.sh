@@ -15,8 +15,10 @@ source "$here/lib.sh"
 need git
 git fetch --quiet --tags origin 2>/dev/null || log_warn "git fetch failed; using local tags"
 
-last="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "origin/${RELEASE_BRANCH}" 2>/dev/null ||
-	git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+# Count from the last stable tag: after vX.Y.Z-rc.N the next stable is vX.Y.Z,
+# with the bump earned by everything since the previous stable release.
+last="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' "origin/${RELEASE_BRANCH}" 2>/dev/null ||
+	git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' 2>/dev/null || true)"
 if [ -z "$last" ]; then
 	log_info "no prior version tag found; suggesting the first release"
 	echo "LAST="
