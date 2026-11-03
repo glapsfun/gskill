@@ -52,6 +52,7 @@ type rootCLI struct {
 	Doctor     doctorCmd     `cmd:"" group:"more" help:"Check the environment and declared requirements."`
 	Dashboard  tuiCmd        `cmd:"" name:"dashboard" group:"more" aliases:"tui" help:"Launch the interactive dashboard."`
 	Completion completionCmd `cmd:"" group:"more" help:"Print a shell completion script."`
+	Self       selfCmd       `cmd:"" group:"more" help:"Manage the gskill installation itself."`
 	Version    versionCmd    `cmd:"" group:"more" help:"Print the gskill version."`
 }
 
@@ -138,8 +139,20 @@ func parseErrorNode(err error) *kong.Node {
 // no leaf was chosen. Missing positional arguments produce `expected "<arg>"`
 // instead, so they keep failing as usage errors.
 func isMissingSubcommand(err error, selected *kong.Node) bool {
-	return selected != nil && len(selected.Children) > 0 &&
-		strings.HasPrefix(err.Error(), "expected one of ")
+	if selected == nil || len(selected.Children) == 0 {
+		return false
+	}
+	msg := err.Error()
+	if strings.HasPrefix(msg, "expected one of ") {
+		return true
+	}
+	// A group with a single subcommand (`gskill self`) gets `expected "<name>"`.
+	for _, child := range selected.Children {
+		if msg == fmt.Sprintf("expected %q", child.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // styledUsageError renders a kong usage-error message and its follow-up

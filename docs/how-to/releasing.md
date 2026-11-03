@@ -63,6 +63,11 @@ Each release carries, for `linux`/`darwin` × `amd64`/`arm64`:
 - `gskill_<version>_<os>_<arch>.tar.gz.sbom.spdx.json`
 - a build-provenance attestation over `checksums.txt`
 
+`gskill self upgrade` installs an archive only after `checksums.txt` verifies as signed by
+`.github/workflows/release.yml` at the release's own `vX.Y.Z` tag. That path and tag format
+are part of the contract: renaming or moving the workflow, or tagging differently, makes every
+installed gskill refuse every later release.
+
 The image pipeline adds the container image `ghcr.io/glapsfun/gskill`, one index for
 `linux/amd64` and `linux/arm64`:
 

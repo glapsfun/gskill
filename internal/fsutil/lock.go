@@ -2,7 +2,9 @@ package fsutil
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -39,10 +41,23 @@ func Acquire(ctx context.Context, path string, mode LockMode, timeout time.Durat
 		return &Lock{mode: LockNone}, nil
 	}
 
+	return acquire(ctx, flock.New(path), path, mode, timeout)
+}
+
+// AcquireDir takes an exclusive lock on the directory itself, retrying until
+// timeout, with the same exit-code mapping as Acquire. Locking the directory
+// leaves no lock file behind in places like /usr/local/bin, and the lock keeps
+// holding while files inside the directory are renamed.
+func AcquireDir(ctx context.Context, dir string, timeout time.Duration) (*Lock, error) {
+	return acquire(ctx, flock.New(dir, flock.SetFlag(os.O_RDONLY)), dir, LockExclusive, timeout)
+}
+
+// acquire retries fl until timeout. A timeout keeps the "within" message;
+// any other failure (the path cannot be opened, the filesystem has no locks)
+// is reported with its own cause. Both map to exit code 12.
+func acquire(ctx context.Context, fl *flock.Flock, path string, mode LockMode, timeout time.Duration) (*Lock, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	fl := flock.New(path)
 
 	var (
 		locked bool
@@ -51,15 +66,17 @@ func Acquire(ctx context.Context, path string, mode LockMode, timeout time.Durat
 	switch mode {
 	case LockShared:
 		locked, err = fl.TryRLockContext(ctx, retryInterval)
-	case LockExclusive, LockNone: // LockNone returns above; listed for exhaustiveness.
+	case LockExclusive, LockNone: // LockNone never reaches here; listed for exhaustiveness.
 		locked, err = fl.TryLockContext(ctx, retryInterval)
 	}
-
-	if err != nil || !locked {
-		return nil, errs.Wrap(errs.CodeCacheLock,
-			fmt.Sprintf("acquire lock %s within %s", path, timeout), err)
+	switch {
+	case locked && err == nil:
+		return &Lock{fl: fl, mode: mode}, nil
+	case err == nil || errors.Is(err, context.DeadlineExceeded):
+		return nil, errs.Wrap(errs.CodeCacheLock, fmt.Sprintf("acquire lock %s within %s", path, timeout), err)
+	default:
+		return nil, errs.Wrap(errs.CodeCacheLock, "acquire lock "+path, err)
 	}
-	return &Lock{fl: fl, mode: mode}, nil
 }
 
 // Release frees the lock. It is safe to call on a LockNone lock.

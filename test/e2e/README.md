@@ -45,3 +45,4 @@ go test ./...        # test/e2e excluded; no network contacted for it
 | `TestE2E_TwoSkillsMultipleAgents` | two skills for two agents; one store entry per skill |
 | `TestE2E_SyncFromManifest` | reconcile from a declared manifest; second sync is a no-op |
 | `TestE2E_InstallFromManifest` | install from a manifest; re-run reports no change |
+| `TestE2E_SelfUpgradeToLatestStable` | a build of this checkout, injected as release 0.8.0, upgrades itself to the live latest release (real archive, Sigstore signature, and TUF root; needs no git) |
