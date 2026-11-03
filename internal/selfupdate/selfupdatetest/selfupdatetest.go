@@ -394,6 +394,18 @@ func Copy(tb testing.TB, src, dst string, mode os.FileMode) {
 	}
 }
 
+// TempDir is tb.TempDir with symlinks resolved. self upgrade reports the
+// resolved path of the executable, and on macOS the temp dir is under /var,
+// a symlink to /private/var.
+func TempDir(tb testing.TB) string {
+	tb.Helper()
+	dir, err := filepath.EvalSymlinks(tb.TempDir())
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return dir
+}
+
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])

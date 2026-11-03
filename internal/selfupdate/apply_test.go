@@ -29,7 +29,7 @@ type upgradeFixture struct {
 
 func newUpgradeFixture(t *testing.T, opts selfupdatetest.ServerOptions, archiveBinary []byte) upgradeFixture {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "bin")
+	dir := filepath.Join(selfupdatetest.TempDir(t), "bin")
 	exe := filepath.Join(dir, "gskill")
 	selfupdatetest.Copy(t, selfupdatetest.BuildFake(t, "0.9.0", "ok"), exe, 0o755)
 

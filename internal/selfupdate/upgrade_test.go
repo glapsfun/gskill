@@ -49,7 +49,7 @@ func (fakeSource) Open(context.Context, selfupdate.Asset) (io.ReadCloser, error)
 // layout creates an executable at <tmp>/<rel> and returns its path.
 func layout(t *testing.T, rel string) string {
 	t.Helper()
-	exe := filepath.Join(t.TempDir(), filepath.FromSlash(rel))
+	exe := filepath.Join(selfupdatetest.TempDir(t), filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(exe), 0o750); err != nil {
 		t.Fatal(err)
 	}

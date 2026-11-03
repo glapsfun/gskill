@@ -32,7 +32,7 @@ func newSelfFixture(t *testing.T, rel, current string) selfFixture {
 // newSelfFixtureWith lets a test adjust the environment, such as PATH lookups.
 func newSelfFixtureWith(t *testing.T, rel, current string, adjust func(*selfupdate.Env)) selfFixture {
 	t.Helper()
-	exe := filepath.Join(t.TempDir(), filepath.FromSlash(rel))
+	exe := filepath.Join(selfupdatetest.TempDir(t), filepath.FromSlash(rel))
 	selfupdatetest.Copy(t, selfupdatetest.BuildFake(t, current, "ok"), exe, 0o755)
 	srv := selfupdatetest.NewServer(t, selfupdatetest.ServerOptions{
 		Releases: []selfupdatetest.ReleaseSpec{selfupdatetest.Release(t, "0.10.0")},

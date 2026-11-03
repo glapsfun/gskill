@@ -26,7 +26,7 @@ import (
 // <current> at <tmp>/<rel>, against a fake server publishing the releases.
 func selfUpgradeApp(t *testing.T, rel, current string, opts selfupdatetest.ServerOptions) (*app.App, string, *selfupdatetest.Server) {
 	t.Helper()
-	exe := filepath.Join(t.TempDir(), filepath.FromSlash(rel))
+	exe := filepath.Join(selfupdatetest.TempDir(t), filepath.FromSlash(rel))
 	selfupdatetest.Copy(t, selfupdatetest.BuildFake(t, current, "ok"), exe, 0o755)
 	if len(opts.Releases) == 0 {
 		opts.Releases = []selfupdatetest.ReleaseSpec{selfupdatetest.Release(t, "0.10.0")}
