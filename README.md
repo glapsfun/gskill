@@ -134,6 +134,8 @@ docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" -w 
 ```
 <!-- install-methods:end -->
 
+Upgrade later with `gskill self upgrade`. See [Upgrade GSKILL](docs/installation.md#upgrade-gskill).
+
 ## Quick start
 
 ```bash
