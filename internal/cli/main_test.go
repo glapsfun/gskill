@@ -7,6 +7,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/config"
 	"github.com/glapsfun/gskill/internal/home"
+	"github.com/glapsfun/gskill/internal/selfupdate/selfupdatetest"
 )
 
 // TestMain isolates the CLI test process from the user's real gskill home.
@@ -26,6 +27,7 @@ func TestMain(m *testing.M) {
 		_ = os.Setenv(config.EnvConfigDir, filepath.Join(dir, "config"))
 	}
 	code := m.Run()
+	selfupdatetest.Cleanup()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }

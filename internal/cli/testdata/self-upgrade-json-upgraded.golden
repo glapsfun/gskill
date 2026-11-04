@@ -1,0 +1,15 @@
+{
+  "outcome": "upgraded",
+  "upgraded": true,
+  "previous_version": "0.9.0",
+  "target_version": "0.10.0",
+  "installed_version": "0.10.0",
+  "executable": "/usr/local/bin/gskill",
+  "platform": "linux/amd64",
+  "invoked_as": null,
+  "channel": "standalone",
+  "evidence": "release build outside any package-managed location",
+  "next_command": [],
+  "path_shadow": null,
+  "error": null
+}

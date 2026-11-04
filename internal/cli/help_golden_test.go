@@ -45,11 +45,13 @@ var helpPages = []struct {
 	{"doctor", []string{"doctor"}},
 	{"dashboard", []string{"dashboard"}},
 	{"completion", []string{"completion"}},
+	{"self", []string{"self"}},
+	{"self-upgrade", []string{"self", "upgrade"}},
 	{"version", []string{"version"}},
 }
 
-// visibleTopLevel is the canonical 17-entry command surface (spec 010 FR-001
-// + spec 011 onboard + spec 024 upgrade, minus the commands retired by spec
+// visibleTopLevel is the canonical 18-entry command surface (spec 010 FR-001
+// + spec 011 onboard + spec 024 upgrade + spec 031 self, minus the commands retired by spec
 // 021, the store/migrate/projects trees retired by spec 022, and the hidden
 // flat aliases retired by spec 025). It is spelled out on purpose, so it
 // locks the contract independently of the grammar the help is rendered from,
@@ -61,7 +63,7 @@ var visibleTopLevel = []string{
 	"list", "info", "search", "outdated",
 	"project",
 	"cache", "config", "doctor",
-	"dashboard", "completion", "version",
+	"dashboard", "completion", "self", "version",
 }
 
 // topLevelEntryRE matches one command entry in the root help: a name at
@@ -224,7 +226,7 @@ func TestEveryCommandHelp_HasUsageAndExamples(t *testing.T) {
 	t.Parallel()
 
 	for _, page := range helpPages {
-		if page.name == "root" || page.name == "project" {
+		if page.name == "root" || page.name == "project" || page.name == "self" {
 			continue // branch pages: usage locked by goldens, examples optional
 		}
 		t.Run(page.name, func(t *testing.T) {

@@ -182,3 +182,15 @@ func TestRun_UnknownCommandExitsNonZero(t *testing.T) {
 		t.Error("stderr empty on unknown command, want a diagnostic")
 	}
 }
+
+func TestRun_SelfShowsGroupHelp(t *testing.T) {
+	t.Parallel()
+
+	stdout, stderr, code := run(t, "self")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if !strings.Contains(stdout, "upgrade") {
+		t.Errorf("stdout = %q, want the self group help listing upgrade", stdout)
+	}
+}

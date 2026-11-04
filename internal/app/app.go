@@ -18,6 +18,7 @@ import (
 	"github.com/glapsfun/gskill/internal/logging"
 	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/registry"
+	"github.com/glapsfun/gskill/internal/selfupdate"
 )
 
 // RepoLister lists a GitHub owner's repositories, so `find --owner` can fan out
@@ -43,6 +44,9 @@ type App struct {
 	// scans memoizes repo scans per immutable commit across the per-call
 	// installer instances (spec: Layer C).
 	scans *installer.ScanCache
+	// selfUpdate replaces the self-upgrade environment; nil means the real
+	// process, GitHub, and Sigstore.
+	selfUpdate *selfupdate.Env
 }
 
 // Options configures New. Nil dependencies are replaced with safe defaults.
@@ -58,6 +62,10 @@ type Options struct {
 	// Notice receives one-line user notices (the auto-migration summary,
 	// spec 022 FR-013). Defaults to os.Stderr.
 	Notice io.Writer
+	// SelfUpdate lets tests inject the release source, the verifier, and the
+	// executable `gskill self upgrade` works on. There is deliberately no flag,
+	// environment variable, or config key for this (spec 031).
+	SelfUpdate *selfupdate.Env
 }
 
 // New builds an App from opts, filling in defaults for any nil dependency.
@@ -98,6 +106,7 @@ func New(opts Options) *App {
 		gskillHome: opts.GskillHome,
 		notice:     notice,
 		scans:      installer.NewScanCache(),
+		selfUpdate: opts.SelfUpdate,
 	}
 }
 

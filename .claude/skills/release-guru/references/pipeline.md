@@ -26,7 +26,8 @@ never run in parallel). Steps, in order:
    - archives `gskill_<version>_<os>_<arch>.tar.gz` (binary, LICENSE, README). This name is a
      hard contract with `scripts/install.sh` and the Homebrew cask;
    - `checksums.txt` (sha256) and `checksums.txt.sigstore.json` (cosign keyless bundle; the
-     signing certificate is embedded, identity `release.yml@refs/tags/<tag>`);
+     signing certificate is embedded, identity `release.yml@refs/tags/<tag>`). `gskill self
+     upgrade` trusts only that identity, so never rename `release.yml` or change the tag format;
    - one SPDX SBOM per archive (`<archive>.sbom.spdx.json`);
    - the GitHub Release with notes grouped into Features (`feat`), Bug Fixes (`fix`), and
      Others; subjects starting `docs:`, `test:`, `chore:`, `ci:`, or `Merge ` are dropped.

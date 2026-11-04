@@ -21,7 +21,7 @@ const (
 	CodeSourceUnavailable Code = 5  // source unavailable / network
 	CodeIntegrity         Code = 6  // integrity failure (checksum mismatch)
 	CodeDrift             Code = 7  // drift detected (--fail-on-drift)
-	CodeUpdateAvailable   Code = 8  // update available (outdated --exit-code)
+	CodeUpdateAvailable   Code = 8  // update available (outdated --exit-code, or self upgrade that can only print the upgrade command)
 	CodeUnsupportedAgent  Code = 9  // unsupported / undetected agent
 	CodePartialInstall    Code = 10 // partial installation
 	CodeAuth              Code = 11 // authentication failure

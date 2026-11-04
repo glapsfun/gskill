@@ -1,0 +1,8 @@
+48f69644ca04dfcf49411f879c4c7882ac28f82040c4722a73d21b0b75ceca2c  gskill_0.9.0_darwin_amd64.tar.gz
+420c3eb13cb92106befa5fa532aead4c906ed26472ac0e98e7b0476d0646179a  gskill_0.9.0_darwin_amd64.tar.gz.sbom.spdx.json
+f9f9bd3f1b7102627b8383932ed343d09b0a37d059c6bf5853cb4bed33d91ffd  gskill_0.9.0_darwin_arm64.tar.gz
+1b01523c7b000a2ab13297e64043c7d002678ceee964be1d2b1995b4371af860  gskill_0.9.0_darwin_arm64.tar.gz.sbom.spdx.json
+99c59babcec411d7b0d2910872be7406c2fd10ab987c4dbf516c52da2a98f50e  gskill_0.9.0_linux_amd64.tar.gz
+c1906744317bf52dda636997900d8df096d56ca6a3652e3cee48785477542090  gskill_0.9.0_linux_amd64.tar.gz.sbom.spdx.json
+681cf84e54d20d3cadb4dfb4f5602fb75eca530a33a1ea52d9660c893925586f  gskill_0.9.0_linux_arm64.tar.gz
+287aecab8d2da0262c58bd8523877dab5b61bbb847d58be3a904c8d0ed43e33e  gskill_0.9.0_linux_arm64.tar.gz.sbom.spdx.json

@@ -19,7 +19,7 @@ func completionWords() []string {
 		"project", "sync", "repair", "verify", "check",
 		"cache", "stats", "clean",
 		"config", "get",
-		"doctor", "dashboard", "completion", "version",
+		"doctor", "dashboard", "completion", "self", "version",
 	}
 	for _, m := range aliasTable {
 		if m.Kind == aliasKindCommand {

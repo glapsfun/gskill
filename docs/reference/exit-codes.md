@@ -14,7 +14,7 @@ Every `gskill` command exits with one of these codes. Scripts and CI can branch 
 | 5 | source unavailable or network failure |
 | 6 | integrity failure (checksum mismatch) |
 | 7 | drift detected (`--fail-on-drift`) |
-| 8 | update available (`outdated --exit-code`) |
+| 8 | update available (`outdated --exit-code`, or `self upgrade` that can only print the upgrade command) |
 | 9 | unsupported or undetected agent |
 | 10 | partial installation |
 | 11 | authentication failure |

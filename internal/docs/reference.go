@@ -179,7 +179,7 @@ func RenderExitCodes() string {
 		{errs.CodeSourceUnavailable, "source unavailable or network failure"},
 		{errs.CodeIntegrity, "integrity failure (checksum mismatch)"},
 		{errs.CodeDrift, "drift detected (`--fail-on-drift`)"},
-		{errs.CodeUpdateAvailable, "update available (`outdated --exit-code`)"},
+		{errs.CodeUpdateAvailable, "update available (`outdated --exit-code`, or `self upgrade` that can only print the upgrade command)"},
 		{errs.CodeUnsupportedAgent, "unsupported or undetected agent"},
 		{errs.CodePartialInstall, "partial installation"},
 		{errs.CodeAuth, "authentication failure"},

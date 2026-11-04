@@ -75,6 +75,14 @@ func (o *Output) Result(human string, v any) error {
 	return nil
 }
 
+// canPrompt reports whether a confirmation prompt can be answered: the session
+// is interactive and replies come from a terminal (or a test's reader).
+// Confirm itself says yes when it cannot prompt, so commands that must not
+// proceed unattended check this first.
+func (o *Output) canPrompt() bool {
+	return o.interactive && (o.stdin != nil || stdinIsTTY())
+}
+
 // Confirm prompts on stderr for a yes/no answer read from stdin, defaulting
 // to No. It returns true without prompting when assumeYes is set or the
 // session is non-interactive, so unattended and CI runs never block (FR-012).

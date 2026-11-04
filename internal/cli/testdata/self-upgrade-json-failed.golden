@@ -1,0 +1,19 @@
+{
+  "outcome": "failed",
+  "upgraded": false,
+  "previous_version": "0.9.0",
+  "target_version": "0.10.0",
+  "installed_version": "0.9.0",
+  "executable": "/usr/local/bin/gskill",
+  "platform": "linux/amd64",
+  "invoked_as": null,
+  "channel": "standalone",
+  "evidence": "release build outside any package-managed location",
+  "next_command": [],
+  "path_shadow": null,
+  "error": {
+    "code": 6,
+    "message": "gskill_0.10.0_linux_amd64.tar.gz does not match checksums.txt",
+    "hint": "nothing was changed; retry, and report it if it happens again"
+  }
+}

@@ -4,6 +4,11 @@ name: Release
 # quality gate against the tagged commit, then publishes binaries, archives, checksums,
 # cosign signatures, SBOMs, grouped release notes, the Homebrew cask, and a provenance
 # attestation via GoReleaser. See specs/003-release-distribution/contracts/release-workflow.md.
+#
+# Trust contract: `gskill self upgrade` installs a release only when its checksums.txt is
+# signed, keyless, by this workflow file at refs/tags/vX.Y.Z. Renaming or moving this file,
+# or changing the tag format, makes every deployed gskill refuse every later release
+# (spec 031).
 
 on:
   push:

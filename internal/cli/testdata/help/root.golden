@@ -71,6 +71,9 @@ MORE
   completion <shell> [flags]
     Print a shell completion script.
 
+  self <command> [flags]
+    Manage the gskill installation itself.
+
   version [flags]
     Print the gskill version.
 

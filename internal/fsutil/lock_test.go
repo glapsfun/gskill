@@ -2,6 +2,7 @@ package fsutil_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -91,5 +92,43 @@ func TestAcquire_SharedAllowsConcurrentReaders(t *testing.T) {
 	}
 	if err := r2.Release(); err != nil {
 		t.Errorf("Release r2: %v", err)
+	}
+}
+
+func TestAcquireDir_ExcludesAndLeavesNoFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	held, err := fsutil.AcquireDir(context.Background(), dir, time.Second)
+	if err != nil {
+		t.Fatalf("first AcquireDir: %v", err)
+	}
+
+	_, err = fsutil.AcquireDir(context.Background(), dir, 200*time.Millisecond)
+	if err == nil {
+		t.Fatal("second AcquireDir succeeded while the directory was locked, want timeout error")
+	}
+	if got := errs.ExitCode(err); got != 12 {
+		t.Errorf("timeout ExitCode = %d, want 12 (cache/lock failure)", got)
+	}
+
+	if err := held.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	again, err := fsutil.AcquireDir(context.Background(), dir, time.Second)
+	if err != nil {
+		t.Fatalf("AcquireDir after Release: %v", err)
+	}
+	if err := again.Release(); err != nil {
+		t.Fatalf("second Release: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("directory holds %d entries after locking, want 0", len(entries))
 	}
 }

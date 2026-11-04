@@ -213,6 +213,20 @@ Search for skills in a source, a GitHub owner, or configured repositories.
 | `--source` | string | Search within one source. |
 
 
+## `self`
+
+Manage the gskill installation itself.
+
+
+## `self upgrade`
+
+Upgrade this gskill executable to the latest stable release, or show how its package manager upgrades it.
+
+| Flag | Type | Description |
+| --- | --- | --- |
+| `--to` | string | Upgrade to this exact published release instead of the latest stable one. |
+
+
 ## `update`
 
 Re-resolve declared skills to the newest revision their skills.toml constraint allows. Never edits skills.toml.
