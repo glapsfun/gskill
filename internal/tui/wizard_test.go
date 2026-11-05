@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1080,34 +1081,49 @@ func TestWizard_ViewsNeverLeakEscapeSequences(t *testing.T) {
 
 // ---- Polish: SC-005 quantified responsiveness (spec 011 T040) -------------------
 
+// The budgets are wall clock, and CI runs go test -race over every package at once, so
+// one slow sample can be machine load. The test runs alone and checks the fastest of
+// several attempts: load only adds time, while a real slowdown is slow in every attempt.
+//
+//nolint:paralleltest // wall-clock budgets; parallel tests in this package would skew them
 func TestWizardSelect_ResponsiveAt200PlusSkills(t *testing.T) {
-	t.Parallel()
+	const attempts = 5
+	const query = "skill-1"
 
 	ids := make([]string, 250)
 	for i := range ids {
 		ids[i] = fmt.Sprintf("skill-%03d-%s", i, strings.Repeat("x", i%7))
 	}
-	var calls phaseCalls
-	m := newWizardModel(context.Background(), WizardConfig{
-		Session: Session{Source: "example/repo", SourceAnswered: true},
-		Phases:  fakePhases(&calls, fakeSkills(ids...), nil),
-	})
-	m = start(t, m)
-	m = drive(t, m, win(80, 24))
+	var opens []time.Duration
+	keystrokes := make([][]time.Duration, len(query))
+	for range attempts {
+		var calls phaseCalls
+		m := newWizardModel(context.Background(), WizardConfig{
+			Session: Session{Source: "example/repo", SourceAnswered: true},
+			Phases:  fakePhases(&calls, fakeSkills(ids...), nil),
+		})
+		m = start(t, m)
+		m = drive(t, m, win(80, 24))
 
-	startRender := time.Now()
-	m = drive(t, m, key("enter")) // enter select: list built and rendered
-	_ = m.View()
-	if d := time.Since(startRender); d > 500*time.Millisecond {
-		t.Errorf("selection list took %v to open at 250 skills, SC-005 requires < 500ms", d)
+		startRender := time.Now()
+		m = drive(t, m, key("enter")) // enter select: list built and rendered
+		_ = m.View()
+		opens = append(opens, time.Since(startRender))
+
+		m = drive(t, m, key("/"))
+		for i, r := range query {
+			startKey := time.Now()
+			m = drive(t, m, key(string(r)))
+			_ = m.View()
+			keystrokes[i] = append(keystrokes[i], time.Since(startKey))
+		}
 	}
 
-	m = drive(t, m, key("/"))
-	for _, r := range "skill-1" {
-		startKey := time.Now()
-		m = drive(t, m, key(string(r)))
-		_ = m.View()
-		if d := time.Since(startKey); d > 50*time.Millisecond {
+	if d := slices.Min(opens); d > 500*time.Millisecond {
+		t.Errorf("selection list took %v to open at 250 skills, SC-005 requires < 500ms", d)
+	}
+	for i, r := range query {
+		if d := slices.Min(keystrokes[i]); d > 50*time.Millisecond {
 			t.Errorf("filter keystroke %q took %v at 250 skills, SC-005 requires < 50ms", r, d)
 		}
 	}
