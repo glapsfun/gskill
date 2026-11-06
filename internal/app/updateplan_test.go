@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/agent"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/skillslock"
 )
@@ -20,10 +22,12 @@ type planStubGit struct {
 	refs  map[string]map[string]string
 	errs  map[string]error
 	calls atomic.Int64
+	urls  sync.Map // every URL asked about
 }
 
 func (s *planStubGit) LsRemoteTags(_ context.Context, url string) ([]git.TagRef, error) {
 	s.calls.Add(1)
+	s.urls.Store(url, true)
 	if err := s.errs[url]; err != nil {
 		return nil, err
 	}
@@ -267,5 +271,210 @@ func TestPlanUpdate_OfflineSkipsRemoteLookups(t *testing.T) {
 	}
 	if plan.AnyAvailable() {
 		t.Error("offline plan must not claim actionable updates")
+	}
+}
+
+// groupedProject writes a lock with skills from two remote repositories and a
+// local directory, and returns the root plus a stub runner wired for it.
+func groupedProject(t *testing.T) (string, *planStubGit) {
+	t.Helper()
+	root := t.TempDir()
+	const acme, gitlab = "https://github.com/acme/skills.git", "https://gitlab.com/acme/skills.git"
+	lf := skillslock.NewState()
+	lf.Skills["kubernetes"] = gitRecord(acme,
+		skillslock.Requested{Version: "^1.2.0"},
+		skillslock.Resolved{RefKind: "semver", Version: "1.2.0", Tag: "v1.2.0", Commit: "aaaa"})
+	lf.Skills["code-review"] = gitRecord(acme,
+		skillslock.Requested{Ref: "v1.2.0"},
+		skillslock.Resolved{RefKind: "tag", Tag: "v1.2.0", Commit: "aaaa"})
+	lf.Skills["security"] = gitRecord(acme,
+		skillslock.Requested{Version: "^1.0.0"},
+		skillslock.Resolved{RefKind: "semver", Version: "1.4.1", Tag: "v1.4.1", Commit: "aaa2"})
+	lf.Skills["gl"] = gitRecord(gitlab,
+		skillslock.Requested{Version: "^1.0.0"},
+		skillslock.Resolved{RefKind: "semver", Version: "1.0.0", Tag: "v1.0.0", Commit: "bbbb"})
+	lf.Skills["notes"] = skillslock.Record{
+		Source:   skillslock.Source{Type: "local", Original: "../tools"},
+		Resolved: skillslock.Resolved{RefKind: "local", LocalPathHash: "x"},
+	}
+	if err := saveLock(filepath.Join(root, skillslock.FileName), lf); err != nil {
+		t.Fatalf("save lock: %v", err)
+	}
+	stub := &planStubGit{
+		tags: map[string][]git.TagRef{
+			acme:   {{Name: "v1.2.0", Commit: "aaaa"}, {Name: "v1.4.1", Commit: "aaa2"}},
+			gitlab: {{Name: "v1.0.0", Commit: "bbbb"}, {Name: "v1.1.0", Commit: "bbb2"}},
+		},
+		errs: map[string]error{},
+	}
+	return root, stub
+}
+
+type groupCounts struct{ total, available, failed, notChecked int }
+
+func countsByLabel(plan UpdatePlan) map[string]groupCounts {
+	out := map[string]groupCounts{}
+	for _, g := range plan.Groups() {
+		out[g.Repo.Label] = groupCounts{g.Total(), g.Available(), g.Failed(), g.NotChecked()}
+	}
+	return out
+}
+
+// checkPartition asserts the groups' order and that every plan item sits in
+// exactly one group that has its repository.
+func checkPartition(t *testing.T, plan UpdatePlan, groups []UpdateGroup) {
+	t.Helper()
+	var labels []string
+	seen := map[string]int{}
+	for _, g := range groups {
+		labels = append(labels, g.Repo.Label)
+		for _, it := range g.Items {
+			seen[it.Name]++
+			if !it.Repo.Equal(g.Repo) {
+				t.Errorf("%s is in group %q but has repository %q", it.Name, g.Repo.Key, it.Repo.Key)
+			}
+		}
+	}
+	if want := []string{"../tools", "github.com/acme/skills", "gitlab.com/acme/skills"}; !reflect.DeepEqual(labels, want) {
+		t.Errorf("group order = %v, want %v", labels, want)
+	}
+	if len(seen) != len(plan.Items) {
+		t.Errorf("groups hold %d skills, plan has %d", len(seen), len(plan.Items))
+	}
+	for name, n := range seen {
+		if n != 1 {
+			t.Errorf("%s appears in %d groups, want 1", name, n)
+		}
+	}
+}
+
+// Every plan item carries the repository it is grouped under, and the groups
+// partition the plan (spec 032 FR-005, FR-007, SC-006).
+func TestPlanUpdate_GroupsPartitionThePlan(t *testing.T) {
+	t.Parallel()
+
+	root, stub := groupedProject(t)
+	plan, err := planApp(stub).PlanUpdate(context.Background(), UpdatePlanRequest{Root: root})
+	if err != nil {
+		t.Fatalf("PlanUpdate: %v", err)
+	}
+	for _, it := range plan.Items {
+		if it.Repo.Kind == "" || it.Repo.Key == "" {
+			t.Errorf("%s has no repository: %+v", it.Name, it.Repo)
+		}
+	}
+
+	groups := plan.Groups()
+	checkPartition(t, plan, groups)
+	if names := []string{groups[1].Items[0].Name, groups[1].Items[1].Name, groups[1].Items[2].Name}; !reflect.DeepEqual(names, []string{"code-review", "kubernetes", "security"}) {
+		t.Errorf("acme group order = %v, want name order", names)
+	}
+
+	want := map[string]groupCounts{
+		"../tools":               {1, 0, 0, 0},
+		"github.com/acme/skills": {3, 1, 0, 0},
+		"gitlab.com/acme/skills": {1, 1, 0, 0},
+	}
+	if got := countsByLabel(plan); !reflect.DeepEqual(got, want) {
+		t.Errorf("counts = %+v, want %+v", got, want)
+	}
+}
+
+// A failed lookup counts as failed and an offline skip as not checked, and
+// both items still carry their repository.
+func TestPlanUpdate_GroupCountsFailedAndNotChecked(t *testing.T) {
+	t.Parallel()
+
+	root, stub := groupedProject(t)
+	stub.errs["https://gitlab.com/acme/skills.git"] = errors.New("unreachable")
+	plan, err := planApp(stub).PlanUpdate(context.Background(), UpdatePlanRequest{Root: root})
+	if err != nil {
+		t.Fatalf("PlanUpdate: %v", err)
+	}
+	if got := countsByLabel(plan)["gitlab.com/acme/skills"]; got != (groupCounts{1, 0, 1, 0}) {
+		t.Errorf("failed group counts = %+v, want 1 total, 1 failed", got)
+	}
+
+	offline, err := planApp(stub).PlanUpdate(context.Background(), UpdatePlanRequest{Root: root, Offline: true})
+	if err != nil {
+		t.Fatalf("PlanUpdate offline: %v", err)
+	}
+	want := map[string]groupCounts{
+		"../tools":               {1, 0, 0, 0},
+		"github.com/acme/skills": {3, 0, 0, 2},
+		"gitlab.com/acme/skills": {1, 0, 0, 1},
+	}
+	if got := countsByLabel(offline); !reflect.DeepEqual(got, want) {
+		t.Errorf("offline counts = %+v, want %+v", got, want)
+	}
+	for _, it := range offline.Items {
+		if it.Repo.Key == "" {
+			t.Errorf("offline item %s has no repository", it.Name)
+		}
+	}
+}
+
+// An invalid declaration is reported as failed under its repository, never
+// dropped from the inventory.
+func TestPlanUpdate_InvalidDeclarationKeepsItsRepository(t *testing.T) {
+	t.Parallel()
+
+	root, stub := groupedProject(t)
+	lf, err := loadOrNewLock(filepath.Join(root, skillslock.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf.Skills["broken"] = gitRecord("https://github.com/acme/skills.git",
+		skillslock.Requested{Version: ">>>bad"},
+		skillslock.Resolved{RefKind: "semver", Version: "1.0.0", Commit: "aaaa"})
+	if err := saveLock(filepath.Join(root, skillslock.FileName), lf); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planApp(stub).PlanUpdate(context.Background(), UpdatePlanRequest{Root: root})
+	if err != nil {
+		t.Fatalf("PlanUpdate: %v", err)
+	}
+	it := itemByName(t, plan, "broken")
+	if it.Status != StatusLookupFailed || it.Repo.Key != "github.com/acme/skills" {
+		t.Errorf("broken = %s under %q, want lookup failed under github.com/acme/skills", it.Status, it.Repo.Key)
+	}
+	if got := countsByLabel(plan)["github.com/acme/skills"]; got.failed != 1 {
+		t.Errorf("acme failed count = %d, want 1", got.failed)
+	}
+}
+
+// --repo narrows discovery to the selected group: no other remote is asked
+// (spec 032 FR-027, research R4).
+func TestPlanUpdate_ReposLimitDiscovery(t *testing.T) {
+	t.Parallel()
+
+	root, stub := groupedProject(t)
+	plan, err := planApp(stub).PlanUpdate(context.Background(), UpdatePlanRequest{Root: root, Repos: []string{"acme/skills"}})
+	if err != nil {
+		t.Fatalf("PlanUpdate: %v", err)
+	}
+	var names []string
+	for _, it := range plan.Items {
+		names = append(names, it.Name)
+	}
+	if strings.Join(names, ",") != "code-review,kubernetes,security" {
+		t.Errorf("plan items = %v, want only the acme group", names)
+	}
+	if _, asked := stub.urls.Load("https://gitlab.com/acme/skills.git"); asked {
+		t.Error("discovery asked a remote outside the selected group")
+	}
+}
+
+// An unknown --repo fails before any remote is asked.
+func TestPlanUpdate_UnknownRepoAsksNoRemote(t *testing.T) {
+	t.Parallel()
+
+	root, stub := groupedProject(t)
+	_, err := planApp(stub).PlanUpdate(context.Background(), UpdatePlanRequest{Root: root, Repos: []string{"github.com/nobody/nothing"}})
+	if errs.ExitCode(err) != int(errs.CodeUsage) {
+		t.Fatalf("err = %v, want a usage error", err)
+	}
+	if n := stub.calls.Load(); n != 0 {
+		t.Errorf("%d remote calls before the usage error, want 0", n)
 	}
 }

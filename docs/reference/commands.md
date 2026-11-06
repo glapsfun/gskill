@@ -239,6 +239,7 @@ Re-resolve declared skills to the newest revision their skills.toml constraint a
 | --- | --- | --- |
 | `--all` | bool | With --list: also report up-to-date, pinned, and local skills. |
 | `--list` | bool | List available updates without applying them. |
+| `--repo` | []string | Update the skills installed from this repository (repeatable). |
 
 
 ## `upgrade`

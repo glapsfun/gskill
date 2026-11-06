@@ -5,6 +5,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/source"
 )
 
 // outdatedCmd reports available updates. It renders the same shared update
@@ -49,6 +50,7 @@ func (c outdatedCmd) Run(ctx context.Context, out *Output, a *app.App, root proj
 // latest, available, any_available) and adds the plan's candidate/status
 // detail additively (spec 018 FR-016).
 func OutdatedJSON(plan app.UpdatePlan) map[string]any {
+	repos := planRepos(plan)
 	skills := make([]map[string]any, 0, len(plan.Items))
 	for _, it := range plan.Items {
 		latest := it.Candidate
@@ -57,6 +59,8 @@ func OutdatedJSON(plan app.UpdatePlan) map[string]any {
 		}
 		skills = append(skills, map[string]any{
 			"name":        it.Name,
+			"repository":  repos[it.Name].Label,
+			"local":       repos[it.Name].Kind == source.RepoLocal,
 			"current":     it.Current,
 			"latest":      latest,
 			"available":   it.Actionable(),

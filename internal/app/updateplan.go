@@ -8,6 +8,7 @@ import (
 	"github.com/glapsfun/gskill/internal/manifest"
 	"github.com/glapsfun/gskill/internal/resolver"
 	"github.com/glapsfun/gskill/internal/skillslock"
+	"github.com/glapsfun/gskill/internal/source"
 )
 
 // UpdateStatus classifies one skill's update eligibility in an update plan
@@ -58,6 +59,10 @@ type UpdatePlanItem struct {
 	// real error (Status is StatusLookupFailed) from an offline skip, and a
 	// pin whose informational lookup failed keeps its pinned status.
 	DiscoveryErr string
+	// Repo is the repository the skill is grouped under, and Path its
+	// location inside it when that is not the skill's own name (spec 032).
+	Repo source.Repo
+	Path string
 }
 
 // Actionable reports whether a normal update can apply this item without
@@ -82,6 +87,60 @@ func (p UpdatePlan) Actionable() []UpdatePlanItem {
 	return out
 }
 
+// UpdateGroup is the plan items that share one repository (spec 032),
+// name-sorted and never empty.
+type UpdateGroup struct {
+	Repo  source.Repo
+	Items []UpdatePlanItem
+}
+
+// Total is the number of skills in the group.
+func (g UpdateGroup) Total() int { return len(g.Items) }
+
+// Available counts the group's actionable skills.
+func (g UpdateGroup) Available() int {
+	return g.count(func(it UpdatePlanItem) bool { return it.Actionable() })
+}
+
+// Failed counts the skills whose eligibility a discovery failure left unknown.
+func (g UpdateGroup) Failed() int {
+	return g.count(func(it UpdatePlanItem) bool { return it.Status == StatusLookupFailed && it.DiscoveryErr != "" })
+}
+
+// NotChecked counts the skills an offline run did not look up.
+func (g UpdateGroup) NotChecked() int {
+	return g.count(func(it UpdatePlanItem) bool { return it.Status == StatusLookupFailed && it.DiscoveryErr == "" })
+}
+
+func (g UpdateGroup) count(match func(UpdatePlanItem) bool) int {
+	n := 0
+	for _, it := range g.Items {
+		if match(it) {
+			n++
+		}
+	}
+	return n
+}
+
+// Groups partitions the plan by repository, in display order (spec 032
+// FR-007). Every item lands in exactly one group.
+func (p UpdatePlan) Groups() []UpdateGroup {
+	repos := make([]source.Repo, len(p.Items))
+	for i, it := range p.Items {
+		repos[i] = it.Repo
+	}
+	order := groupOrder(repos)
+	groups := make([]UpdateGroup, len(order))
+	for i, r := range order {
+		groups[i].Repo = r
+	}
+	for _, it := range p.Items {
+		g := &groups[indexOfRepo(order, it.Repo)]
+		g.Items = append(g.Items, it)
+	}
+	return groups
+}
+
 // AnyAvailable reports whether at least one item is actionable; it drives the
 // `outdated --exit-code` contract (FR-008).
 func (p UpdatePlan) AnyAvailable() bool {
@@ -101,7 +160,9 @@ func WithDiscoveryMemo(ctx context.Context) context.Context { return git.WithMem
 
 // UpdatePlanRequest configures update discovery.
 type UpdatePlanRequest struct {
-	Root    string
+	Root string
+	// Repos narrows the plan to the skills of these --repo groups (spec 032).
+	Repos   []string
 	Offline bool
 	NoCache bool
 }
@@ -119,8 +180,12 @@ func (a *App) PlanUpdate(ctx context.Context, req UpdatePlanRequest) (UpdatePlan
 		return UpdatePlan{}, err
 	}
 
+	names, err := selectSkills(req.Root, lf, a.manifestOrNil(req.Root), req.Repos, nil)
+	if err != nil {
+		return UpdatePlan{}, err
+	}
 	var plan UpdatePlan
-	for _, name := range sortedKeys(lf.Skills) {
+	for _, name := range names {
 		plan.Items = append(plan.Items, a.planOne(ctx, name, lf.Skills[name], req))
 		// A cancelled context must abort the run, not surface as fabricated
 		// per-skill "discovery failed" items.
@@ -136,10 +201,13 @@ func (a *App) PlanUpdate(ctx context.Context, req UpdatePlanRequest) (UpdatePlan
 // would be generated from.
 func (a *App) planOne(ctx context.Context, name string, rec skillslock.Record, req UpdatePlanRequest) UpdatePlanItem {
 	decl, declared := a.declarationFor(req.Root, name, rec)
+	repo, path := repoFor(req.Root, decl, rec)
 	item := UpdatePlanItem{
 		Name:   name,
 		Source: effectiveSourceLabel(decl, rec.Source),
 		Policy: policyLabel(declaredRequested(decl), rec),
+		Repo:   repo,
+		Path:   path,
 	}
 	rev := revFromLock(rec.Resolved)
 	shape, err := resolver.ClassifyDeclaration(resolverDeclaration(decl, rec), rev.RefKind)

@@ -14,6 +14,7 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/skillslock"
+	"github.com/glapsfun/gskill/internal/source"
 	"github.com/glapsfun/gskill/internal/testutil"
 )
 
@@ -275,5 +276,73 @@ func TestUpdate_PreservesRequestedIntent(t *testing.T) {
 		if rec.Resolved.Version != "1.1.0" {
 			t.Errorf("%s resolved = %q, want 1.1.0", name, rec.Resolved.Version)
 		}
+	}
+}
+
+// Each update result names the repository its skill is grouped under, and the
+// result groups follow the plan's group order (spec 032 FR-014).
+func TestUpdate_ResultsCarryTheirRepository(t *testing.T) {
+	t.Parallel()
+
+	a, root, repoA, repoB := updateProject(t)
+	plan, err := a.PlanUpdate(context.Background(), app.UpdatePlanRequest{Root: root})
+	if err != nil {
+		t.Fatalf("PlanUpdate: %v", err)
+	}
+	res, err := a.Update(context.Background(), app.UpdateRequest{Root: root})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	wantRepo := map[string]string{"alpha": repoA, "beta": repoB}
+	for _, s := range res.Skills {
+		if s.Repo.Kind != source.RepoLocal || s.Repo.Key != filepath.Clean(wantRepo[s.Name]) {
+			t.Errorf("%s repo = %s %q, want local %q", s.Name, s.Repo.Kind, s.Repo.Key, wantRepo[s.Name])
+		}
+	}
+
+	planGroups, resGroups := plan.Groups(), res.Groups()
+	if len(resGroups) != len(planGroups) {
+		t.Fatalf("result groups = %d, plan groups = %d", len(resGroups), len(planGroups))
+	}
+	for i := range planGroups {
+		if !resGroups[i].Repo.Equal(planGroups[i].Repo) {
+			t.Errorf("result group %d = %q, plan group = %q", i, resGroups[i].Repo.Key, planGroups[i].Repo.Key)
+		}
+		if len(resGroups[i].Skills) != 1 || resGroups[i].Skills[0].Name != planGroups[i].Items[0].Name {
+			t.Errorf("result group %d skills = %+v, want %s", i, resGroups[i].Skills, planGroups[i].Items[0].Name)
+		}
+	}
+}
+
+// A usage error from --repo writes nothing, even in a project whose next run
+// would migrate it: the selection is checked before migration (spec 032
+// SC-004).
+func TestUpdate_UnknownRepoWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	a, root, _, _ := updateProject(t)
+	manifestFile := filepath.Join(root, "skills.toml")
+	if err := os.Remove(manifestFile); err != nil {
+		t.Fatal(err)
+	}
+	lockFile := filepath.Join(root, skillslock.FileName)
+	before, err := os.ReadFile(lockFile) //nolint:gosec // test path
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = a.Update(context.Background(), app.UpdateRequest{Root: root, Repos: []string{"github.com/nobody/nothing"}})
+	if errs.ExitCode(err) != int(errs.CodeUsage) {
+		t.Fatalf("err = %v, want a usage error", err)
+	}
+	after, err := os.ReadFile(lockFile) //nolint:gosec // test path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Error("skills-lock.json changed")
+	}
+	if _, err := os.Stat(manifestFile); !os.IsNotExist(err) {
+		t.Errorf("skills.toml was written (stat err %v)", err)
 	}
 }

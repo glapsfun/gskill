@@ -283,30 +283,80 @@ func renderUpdateList(out *Output, plan app.UpdatePlan, all bool) string {
 	if len(plan.Items) == 0 {
 		return noSkillsDeclared
 	}
-	items := plan.Actionable()
-	if all {
-		items = plan.Items
-	}
 	summary := updateListSummary(out, plan, all)
-	if len(items) == 0 {
-		return summary
-	}
-
 	headers := []string{"NAME", "CURRENT", "AVAILABLE", "POLICY"}
 	if all {
 		headers = append(headers, "STATUS")
 	}
-	rows := make([][]string, 0, len(items))
-	details := make([]string, 0, len(items))
-	for _, it := range items {
-		rows = append(rows, updateListRow(out, it, all))
-		if all {
-			details = append(details, updateListDetail(it))
-		} else {
-			details = append(details, "")
+
+	// One section per repository, in the table's group order (spec 032
+	// FR-031). Without --all a group with nothing actionable is left out; the
+	// summary still counts its skills.
+	var sections []string
+	for _, g := range plan.Groups() {
+		var rows [][]string
+		var details []string
+		for _, it := range g.Items {
+			if !all && !it.Actionable() {
+				continue
+			}
+			rows = append(rows, updateListRow(out, it, all))
+			if all {
+				details = append(details, updateListDetail(it))
+			} else {
+				details = append(details, "")
+			}
 		}
+		if len(rows) == 0 {
+			continue
+		}
+		heading := out.groupHeading(groupLine(g.Repo.Label, g.Available(), g.Total(), g.Failed(), g.NotChecked()))
+		sections = append(sections, heading+"\n"+interleaveDetails(renderAligned(tui.DefaultTheme(), headers, rows), details))
 	}
-	return interleaveDetails(renderAligned(tui.DefaultTheme(), headers, rows), details) + "\n\n" + summary
+	if len(sections) == 0 {
+		return summary
+	}
+	return strings.Join(sections, "\n\n") + "\n\n" + summary
+}
+
+// groupLine is the heading of one repository's section in the update
+// report, and of its group in the interactive table.
+func groupLine(label string, available, total, failed, notChecked int) string {
+	line := fmt.Sprintf("%s · %d update%s available / %s", label, available, plural(available), pluralSkills(total))
+	if failed > 0 {
+		line += fmt.Sprintf(" · %d failed", failed)
+	}
+	if notChecked > 0 {
+		line += fmt.Sprintf(" · %d not checked", notChecked)
+	}
+	return line
+}
+
+// resultGroupLine is the heading of one repository's section in an update
+// result. It counts outcomes, since a finished run has nothing "available"
+// left, and names no update count when nothing moved, so a no-op never reads
+// as an update.
+func resultGroupLine(label string, updated, total, failed int, dryRun bool) string {
+	line := label + " · " + pluralSkills(total)
+	if updated > 0 {
+		verb := "updated"
+		if dryRun {
+			verb = "would update"
+		}
+		line = fmt.Sprintf("%s · %d %s / %s", label, updated, verb, pluralSkills(total))
+	}
+	if failed > 0 {
+		line += fmt.Sprintf(" · %d failed", failed)
+	}
+	return line
+}
+
+// groupHeading styles a repository section heading for a TTY.
+func (o *Output) groupHeading(text string) string {
+	if !o.interactive {
+		return text
+	}
+	return tui.DefaultTheme().Title.Render(text)
 }
 
 // interleaveDetails places each row's guidance line directly beneath it. The
@@ -392,9 +442,10 @@ func plural(n int) string {
 	return "s"
 }
 
-// updateListRow renders one plan item's table cells.
-func updateListRow(out *Output, it app.UpdatePlanItem, all bool) []string {
-	name, policy, status := it.Name, it.Policy, updateStatusText(it.Status)
+// updateStatusCell is a plan item's full STATUS text, shared by the report
+// and the interactive table.
+func updateStatusCell(it app.UpdatePlanItem) string {
+	status := updateStatusText(it.Status)
 	switch {
 	case it.Status == app.StatusNoCompatibleUpdate && it.Informational != "":
 		// A newer release the policy forbids is named right in the status
@@ -404,6 +455,12 @@ func updateListRow(out *Output, it app.UpdatePlanItem, all bool) []string {
 	case it.Status == app.StatusLookupFailed && it.DiscoveryErr == "":
 		status += " (offline)"
 	}
+	return status
+}
+
+// updateListRow renders one plan item's table cells.
+func updateListRow(out *Output, it app.UpdatePlanItem, all bool) []string {
+	name, policy, status := it.Name, it.Policy, updateStatusCell(it)
 	if out.Interactive() {
 		st := tui.DefaultTheme()
 		name = st.Accent.Render(name)
@@ -450,14 +507,28 @@ func renderUpdateResult(out *Output, res app.UpdateResult) string {
 	}
 
 	st := tui.DefaultTheme()
-	rows := make([][]string, 0, len(res.Skills))
-	for _, s := range res.Skills {
-		rows = append(rows, updateResultRow(st, out.Interactive(), s))
+	sections := make([]string, 0, len(res.Skills))
+	for _, g := range res.Groups() {
+		rows := make([][]string, 0, len(g.Skills))
+		updated, failed := 0, 0
+		for _, s := range g.Skills {
+			rows = append(rows, updateResultRow(st, out.Interactive(), s))
+			switch s.Outcome {
+			case app.UpdateOutcomeUpdated, app.UpdateOutcomeWould:
+				updated++
+			case app.UpdateOutcomeFailed:
+				failed++
+			case app.UpdateOutcomeNoChange:
+			}
+		}
+		heading := out.groupHeading(resultGroupLine(g.Repo.Label, updated, len(g.Skills), failed, res.DryRun))
+		section := heading + "\n" + renderAligned(st, []string{"NAME", "FROM", "TO", "RESULT"}, rows)
+		if details := updateResultDetails(g.Skills); len(details) > 0 {
+			section += "\n\n" + strings.Join(details, "\n")
+		}
+		sections = append(sections, section)
 	}
-	table := renderAligned(st, []string{"NAME", "FROM", "TO", "RESULT"}, rows)
-	if details := updateResultDetails(res); len(details) > 0 {
-		table += "\n\n" + strings.Join(details, "\n")
-	}
+	table := strings.Join(sections, "\n\n")
 
 	if res.Failed > 0 {
 		summary = out.errSummary(summary)
@@ -494,9 +565,9 @@ func updateResultRow(st tui.Theme, styled bool, s app.UpdateSkillResult) []strin
 // reason (a bare "failed" cell would force the user into --json to learn
 // why), and for a pinned row the declaration that pins it and the command
 // that moves it (spec 024 FR-008).
-func updateResultDetails(res app.UpdateResult) []string {
+func updateResultDetails(skills []app.UpdateSkillResult) []string {
 	var details []string
-	for _, s := range res.Skills {
+	for _, s := range skills {
 		switch {
 		case s.Outcome == app.UpdateOutcomeFailed && s.Reason != "":
 			details = append(details, "  "+s.Name+": "+s.Reason)
