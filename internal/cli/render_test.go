@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/app"
+	"github.com/glapsfun/gskill/internal/source"
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
@@ -191,5 +193,195 @@ func TestRenderPlanTextStyled_KeepsText(t *testing.T) {
 	// Without color the styled rendering must equal the plain one exactly.
 	if got, want := renderPlanTextStyled(plan), renderPlanText(plan); got != want {
 		t.Errorf("styled plan text diverges without color:\n%q\n%q", got, want)
+	}
+}
+
+var (
+	acmeRepo   = source.Repo{Kind: source.RepoRemote, Key: "github.com/acme/skills", Label: "github.com/acme/skills"}
+	devopsRepo = source.Repo{Kind: source.RepoRemote, Key: "github.com/example/devops", Label: "github.com/example/devops"}
+)
+
+// groupedPlan is a two-repository plan: acme holds an update, a pin, and an
+// up-to-date skill; devops holds one update.
+func groupedPlan() app.UpdatePlan {
+	return app.UpdatePlan{Items: []app.UpdatePlanItem{
+		{
+			Name: "code-review", Current: "1.2.0", Policy: "1.2.0", Status: app.StatusPinnedVersion, Pinned: true,
+			Reason: `pinned by skills.toml (version = "1.2.0")`, Informational: "2.1.0",
+			NextAction: "gskill upgrade code-review", Repo: acmeRepo,
+		},
+		{Name: "deploy", Current: "0.3.0", Candidate: "0.4.0", Policy: "latest", Status: app.StatusUpdateAvailable, Repo: devopsRepo},
+		{Name: "kubernetes", Current: "1.2.0", Candidate: "1.4.1", Policy: "^1.2.0", Status: app.StatusUpdateAvailable, Repo: acmeRepo},
+		{Name: "security", Current: "2.3.2", Policy: "^2.0.0", Status: app.StatusUpToDate, Reason: "already the newest revision the policy allows", Repo: acmeRepo},
+	}}
+}
+
+func plainOutput() *Output {
+	var out, errb bytes.Buffer
+	return &Output{stdout: &out, stderr: &errb}
+}
+
+func TestGroupLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		available, total, failed, notChecked int
+		want                                 string
+	}{
+		{1, 3, 0, 0, "github.com/acme/skills · 1 update available / 3 skills"},
+		{2, 1, 0, 0, "github.com/acme/skills · 2 updates available / 1 skill"},
+		{0, 2, 1, 0, "github.com/acme/skills · 0 updates available / 2 skills · 1 failed"},
+		{0, 2, 0, 2, "github.com/acme/skills · 0 updates available / 2 skills · 2 not checked"},
+	}
+	for _, tt := range tests {
+		if got := groupLine("github.com/acme/skills", tt.available, tt.total, tt.failed, tt.notChecked); got != tt.want {
+			t.Errorf("groupLine(%d, %d, %d, %d) = %q, want %q", tt.available, tt.total, tt.failed, tt.notChecked, got, tt.want)
+		}
+	}
+}
+
+func TestResultGroupLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		updated, total, failed int
+		dryRun                 bool
+		want                   string
+	}{
+		{1, 3, 0, false, "github.com/acme/skills · 1 updated / 3 skills"},
+		{1, 1, 0, true, "github.com/acme/skills · 1 would update / 1 skill"},
+		{0, 2, 1, false, "github.com/acme/skills · 2 skills · 1 failed"},
+		{0, 1, 0, false, "github.com/acme/skills · 1 skill"},
+	}
+	for _, tt := range tests {
+		if got := resultGroupLine("github.com/acme/skills", tt.updated, tt.total, tt.failed, tt.dryRun); got != tt.want {
+			t.Errorf("resultGroupLine(%d, %d, %d, %v) = %q, want %q", tt.updated, tt.total, tt.failed, tt.dryRun, got, tt.want)
+		}
+	}
+}
+
+// The report prints one section per repository: its line, then its own
+// aligned table (spec 032 FR-031).
+func TestRenderUpdateList_GroupedSections(t *testing.T) {
+	t.Parallel()
+
+	got := stripAnsi(renderUpdateList(plainOutput(), groupedPlan(), false))
+	want := strings.Join([]string{
+		"github.com/acme/skills · 1 update available / 3 skills",
+		"NAME        CURRENT  AVAILABLE  POLICY",
+		"kubernetes  1.2.0    1.4.1      ^1.2.0",
+		"",
+		"github.com/example/devops · 1 update available / 1 skill",
+		"NAME    CURRENT  AVAILABLE  POLICY",
+		"deploy  0.3.0    0.4.0      latest",
+		"",
+		"2 updates available · 1 up to date · 1 pinned (--all shows them)",
+	}, "\n")
+	if got != want {
+		t.Errorf("renderUpdateList =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Without --all a group with nothing actionable is left out; its skills are
+// still counted in the summary.
+func TestRenderUpdateList_OmitsGroupsWithNothingToShow(t *testing.T) {
+	t.Parallel()
+
+	plan := groupedPlan()
+	plan.Items[1].Status, plan.Items[1].Candidate = app.StatusUpToDate, ""
+	got := stripAnsi(renderUpdateList(plainOutput(), plan, false))
+	if strings.Contains(got, "github.com/example/devops") {
+		t.Errorf("group with no actionable row was rendered:\n%s", got)
+	}
+	if !strings.Contains(got, "1 update available · 2 up to date · 1 pinned") {
+		t.Errorf("summary does not count the hidden group:\n%s", got)
+	}
+}
+
+// With --all every skill shows in its group, each guidance line under its row.
+func TestRenderUpdateList_AllKeepsGuidanceUnderItsRow(t *testing.T) {
+	t.Parallel()
+
+	lines := strings.Split(stripAnsi(renderUpdateList(plainOutput(), groupedPlan(), true)), "\n")
+	want := []string{
+		"github.com/acme/skills · 1 update available / 3 skills",
+		"NAME         CURRENT  AVAILABLE  POLICY  STATUS",
+		"code-review  1.2.0    --         1.2.0   pinned version",
+		`  pinned by skills.toml (version = "1.2.0"); newest 2.1.0. Run 'gskill upgrade code-review' or edit skills.toml to move it.`,
+		"kubernetes   1.2.0    1.4.1      ^1.2.0  update available",
+		"security     2.3.2    --         ^2.0.0  up to date",
+		"",
+		"github.com/example/devops · 1 update available / 1 skill",
+	}
+	if len(lines) < len(want) {
+		t.Fatalf("too few lines:\n%s", strings.Join(lines, "\n"))
+	}
+	for i, w := range want {
+		if lines[i] != w {
+			t.Errorf("line %d = %q, want %q", i, lines[i], w)
+		}
+	}
+}
+
+func groupedResult(dryRun bool) app.UpdateResult {
+	res := app.UpdateResult{DryRun: dryRun, Skills: []app.UpdateSkillResult{
+		{
+			Name: "code-review", From: "1.2.0", To: "1.2.0", Outcome: app.UpdateOutcomeNoChange, Status: app.StatusPinnedVersion,
+			Reason: `pinned by skills.toml (version = "1.2.0")`, Informational: "2.1.0", NextAction: "gskill upgrade code-review", Repo: acmeRepo,
+		},
+		{Name: "deploy", From: "0.3.0", To: "0.3.0", Outcome: app.UpdateOutcomeFailed, Reason: "discovery failed: unreachable", Repo: devopsRepo},
+		{Name: "kubernetes", From: "1.2.0", To: "1.4.1", Outcome: app.UpdateOutcomeUpdated, Repo: acmeRepo},
+	}}
+	if dryRun {
+		res.Skills[2].Outcome = app.UpdateOutcomeWould
+	}
+	res.Updated, res.Failed, res.NoChange, res.Pinned = 1, 1, 1, 1
+	return res
+}
+
+// Results print per repository, each group's detail lines after its table,
+// then the run summary (spec 032 FR-014, FR-031).
+func TestRenderUpdateResult_GroupedSections(t *testing.T) {
+	t.Parallel()
+
+	got := stripAnsi(renderUpdateResult(plainOutput(), groupedResult(false)))
+	want := strings.Join([]string{
+		"github.com/acme/skills · 1 updated / 2 skills",
+		"NAME         FROM   TO     RESULT",
+		"code-review  1.2.0  1.2.0  pinned version",
+		"kubernetes   1.2.0  1.4.1  updated",
+		"",
+		`  code-review: pinned by skills.toml (version = "1.2.0"); newest 2.1.0. Run 'gskill upgrade code-review' or edit skills.toml to move it.`,
+		"",
+		"github.com/example/devops · 1 skill · 1 failed",
+		"NAME    FROM   TO     RESULT",
+		"deploy  0.3.0  0.3.0  failed",
+		"",
+		"  deploy: discovery failed: unreachable",
+		"",
+		"Updated 1 skill · 1 pinned · 1 skill failed",
+	}, "\n")
+	if got != want {
+		t.Errorf("renderUpdateResult =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRenderUpdateResult_DryRunKeepsItsNotice(t *testing.T) {
+	t.Parallel()
+
+	got := stripAnsi(renderUpdateResult(plainOutput(), groupedResult(true)))
+	if !strings.Contains(got, "github.com/acme/skills · 1 would update / 2 skills") {
+		t.Errorf("dry-run group line missing:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "\nDry run: no changes made.") {
+		t.Errorf("dry-run notice missing:\n%s", got)
+	}
+}
+
+func TestRenderUpdateList_EmptyPlan(t *testing.T) {
+	t.Parallel()
+
+	if got := renderUpdateList(plainOutput(), app.UpdatePlan{}, true); got != noSkillsDeclared {
+		t.Errorf("empty plan = %q, want %q", got, noSkillsDeclared)
 	}
 }

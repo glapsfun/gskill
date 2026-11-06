@@ -2,22 +2,25 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/source"
 	"github.com/glapsfun/gskill/internal/tui"
 )
 
-// runUpdateSelectorFn indirects the interactive selector so tests can stub
-// the TUI (the runWizardFn pattern).
-var runUpdateSelectorFn = tui.SelectUpdates
+// runUpdateTableFn indirects the grouped update table so tests can stub the
+// TUI (the runWizardFn pattern).
+var runUpdateTableFn = tui.SelectGroupedUpdates
 
 // updateCmd advances skills to the newest version within their constraints.
 type updateCmd struct {
 	Skills []string `arg:"" optional:"" help:"Skills to update (default: all with available updates)."`
+	Repo   []string `name:"repo" sep:"none" placeholder:"REPOSITORY" help:"Update the skills installed from this repository (repeatable)."`
 	List   bool     `help:"List available updates without applying them."`
 	All    bool     `help:"With --list: also report up-to-date, pinned, and local skills."`
 }
@@ -29,6 +32,8 @@ func (updateCmd) Help() string {
 		"gskill update --list",
 		"gskill update --list --all",
 		"gskill update my-skill",
+		"gskill update --repo acme/skills",
+		"gskill update --list --repo acme/skills",
 	)
 }
 
@@ -38,7 +43,7 @@ func (c updateCmd) Run(ctx context.Context, out *Output, a *app.App, root projec
 		return errs.New(errs.CodeUsage, "--all requires --list")
 	}
 	if c.List && len(c.Skills) > 0 {
-		return errs.New(errs.CodeUsage, "--list reports the whole project and does not take skill names")
+		return errs.New(errs.CodeUsage, "--list reports the whole project or the --repo groups and does not take skill names")
 	}
 	if c.List {
 		return c.runList(ctx, out, a, root, g)
@@ -46,7 +51,8 @@ func (c updateCmd) Run(ctx context.Context, out *Output, a *app.App, root projec
 	if c.selectorEligible(out, g) {
 		return c.runInteractive(ctx, out, a, root, g)
 	}
-	return c.execute(ctx, out, a, root, g, c.Skills)
+	_, err := c.execute(ctx, out, a, root, g, c.Skills)
+	return err
 }
 
 // selectorEligible reports whether the guided selection flow may open:
@@ -56,67 +62,132 @@ func (c updateCmd) Run(ctx context.Context, out *Output, a *app.App, root projec
 // (clarification #3).
 func (c updateCmd) selectorEligible(out *Output, g Globals) bool {
 	return out.Interactive() && !out.JSON() && stdinIsTTY() &&
-		len(c.Skills) == 0 && !c.List && !g.Yes
+		len(c.Skills) == 0 && len(c.Repo) == 0 && !c.List && !g.Yes
 }
 
-// runInteractive discovers the plan, opens the selector over the actionable
-// items, and applies exactly the confirmed selection (spec 018 US3). The
-// application layer computed everything; the TUI only chooses names.
+// runInteractive runs the grouped update table as a session of rounds (spec
+// 032 US1). Each round plans, lets the user pick in the table and confirm in
+// its review, and applies exactly that selection through execute, outside the
+// TUI, so the run keeps the fetch progress, safe cancellation, and grouped
+// results of an unattended update. The table then reopens on the refreshed
+// plan with the selection that is still eligible.
 func (c updateCmd) runInteractive(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals) error {
-	// One discovery memo for discovery and the post-confirm execution, so
-	// the selected skills' remote lookups are not repeated after confirm.
+	// One discovery memo for the whole session: a refresh re-reads the
+	// project files but asks no remote again, and failures stay failures.
 	ctx = app.WithDiscoveryMemo(ctx)
-	pctx, done := out.withFetchProgress(ctx)
-	plan, err := a.PlanUpdate(pctx, app.UpdatePlanRequest{
-		Root: string(root), Offline: g.Offline, NoCache: g.NoCache,
-	})
-	done()
-	if err != nil {
-		return err
-	}
-
-	// Discovery failures must be as loud here as in the unattended path:
-	// route the unchecked skills through execution so they surface as failed
-	// rows with the partial exit code, exactly like a piped run.
-	unchecked := uncheckedNames(plan)
-	if len(unchecked) > 0 {
-		out.Warn("%d skill(s) could not be checked and will be reported as failed: %s",
-			len(unchecked), strings.Join(unchecked, ", "))
-	}
-	actionable := plan.Actionable()
-	if len(actionable) == 0 {
-		if len(unchecked) > 0 {
-			return c.execute(ctx, out, a, root, g, unchecked)
-		}
-		// Nothing to choose from: report the terminal state instead of an
-		// empty selector.
-		return out.Result(renderUpdateList(out, plan, false), UpdateListJSON(plan, false))
-	}
-
-	items := make([]tui.UpdateItem, 0, len(actionable))
-	for _, it := range actionable {
-		items = append(items, tui.UpdateItem{
-			Name: it.Name, Current: it.Current, Candidate: it.Candidate, Policy: it.Policy,
+	var (
+		selected       []string
+		cursor, banner string
+		sessionErr     error
+		ran            bool
+	)
+	for round := 0; ; round++ {
+		pctx, done := out.withFetchProgress(ctx)
+		plan, err := a.PlanUpdate(pctx, app.UpdatePlanRequest{
+			Root: string(root), Offline: g.Offline, NoCache: g.NoCache,
 		})
+		done()
+		if err != nil {
+			return err
+		}
+		if len(plan.Items) == 0 {
+			return out.Result(renderUpdateList(out, plan, false), UpdateListJSON(plan, false))
+		}
+		// Discovery failures must be as loud here as in the unattended path:
+		// the table shows them as failed, and every round runs them so they
+		// surface as failed rows with the partial exit code.
+		unchecked := uncheckedNames(plan)
+		if round == 0 && len(unchecked) > 0 {
+			out.Warn("%d skill(s) could not be checked and will be reported as failed: %s",
+				len(unchecked), strings.Join(unchecked, ", "))
+		}
+
+		// The fetch-progress renderer was shut down above: bubbletea owns the
+		// terminal from here until the round returns.
+		sel, err := runUpdateTableFn(updateTableFor(plan, selected, cursor, banner, g.DryRun), true)
+		if err != nil {
+			return err
+		}
+		if end, endErr := sessionEnd(out, sel, ran, sessionErr); end {
+			return endErr
+		}
+
+		res, err := c.execute(ctx, out, a, root, g, append(sel.Names, unchecked...))
+		ran = true
+		if err != nil {
+			// A partial round is reported and the session goes on; anything
+			// else (nothing ran, or the run was cancelled) ends it.
+			if len(res.Skills) == 0 || !errors.Is(err, errs.ErrPartialInstall) {
+				return err
+			}
+			if sessionErr == nil {
+				sessionErr = err
+			}
+		}
+		selected, cursor, banner = sel.Names, sel.Cursor, updateSummary(res)
 	}
-	// The fetch-progress renderer was shut down above: bubbletea owns the
-	// terminal from here until the selection returns.
-	sel, err := runUpdateSelectorFn(items, true)
-	if err != nil {
-		return err
-	}
+}
+
+// sessionEnd reports whether a table round ends the session, and with what:
+// ctrl-c exits 130, and leaving the table (esc, q, or enter with nothing
+// selected) returns the first failed round's error, or nil (spec 032 R6).
+func sessionEnd(out *Output, sel tui.UpdateTableResult, ran bool, sessionErr error) (bool, error) {
 	switch {
+	case sel.Interrupted && !ran:
+		return true, errs.WithHint(errs.ErrCancelled, "no updates were applied")
 	case sel.Interrupted:
-		return errs.WithHint(errs.ErrCancelled, "no updates were applied")
-	case sel.Cancelled || len(sel.Names) == 0:
+		return true, errs.ErrCancelled
+	case sel.Cancelled:
+		return true, sessionErr
+	case len(sel.Names) == 0:
 		out.Info("Nothing selected; no updates applied.")
-		return nil
+		return true, sessionErr
+	default:
+		return false, nil
 	}
-	if !out.Confirm(pluralSkills(len(sel.Names))+" selected. Continue?", g.Yes) {
-		out.Info("No updates applied.")
-		return nil
+}
+
+// updateTableFor maps the plan onto one table round. Groups, counts, and
+// status words come from the same helpers as the text report, so the table
+// and `update --list --all` say the same thing (spec 032 FR-005).
+func updateTableFor(plan app.UpdatePlan, selected []string, cursor, banner string, dryRun bool) tui.UpdateTable {
+	tbl := tui.UpdateTable{Selected: selected, Cursor: cursor, Banner: banner, DryRun: dryRun}
+	for _, grp := range plan.Groups() {
+		tg := tui.TableGroup{
+			Key:     string(grp.Repo.Kind) + "\x00" + grp.Repo.Key,
+			Label:   grp.Repo.Label,
+			Local:   grp.Repo.Kind == source.RepoLocal,
+			Summary: groupLine(grp.Repo.Label, grp.Available(), grp.Total(), grp.Failed(), grp.NotChecked()),
+		}
+		for _, it := range grp.Items {
+			tg.Rows = append(tg.Rows, tui.TableRow{
+				Name: it.Name, Path: it.Path, Current: it.Current, Candidate: it.Candidate, Policy: it.Policy,
+				Status: updateStatusCell(it), Detail: tableDetail(it), Eligible: it.Actionable(),
+			})
+		}
+		tbl.Groups = append(tbl.Groups, tg)
 	}
-	return c.execute(ctx, out, a, root, g, append(sel.Names, unchecked...))
+	return tbl
+}
+
+// tableDetail is the table's line for the row under the cursor: the report's
+// guidance, else the transition or the reason, plus the in-repository path.
+func tableDetail(it app.UpdatePlanItem) string {
+	d := updateListDetail(it)
+	switch {
+	case d != "":
+	case it.Actionable():
+		d = it.Current + " → " + it.Candidate + " within " + it.Policy
+	default:
+		d = it.Reason
+	}
+	if it.Path == "" {
+		return d
+	}
+	if d == "" {
+		return "path: " + it.Path
+	}
+	return d + " (path: " + it.Path + ")"
 }
 
 // runList renders the read-only update report (spec 018 FR-006/FR-007): the
@@ -125,7 +196,7 @@ func (c updateCmd) runList(ctx context.Context, out *Output, a *app.App, root pr
 	ctx, done := out.withFetchProgress(ctx)
 	defer done()
 	plan, err := a.PlanUpdate(ctx, app.UpdatePlanRequest{
-		Root: string(root), Offline: g.Offline, NoCache: g.NoCache,
+		Root: string(root), Repos: c.Repo, Offline: g.Offline, NoCache: g.NoCache,
 	})
 	done()
 	if err != nil {
@@ -169,25 +240,25 @@ func uncheckedNames(plan app.UpdatePlan) []string {
 }
 
 // execute runs the update for names (command arguments, a confirmed
-// interactive selection, or empty for every actionable skill) and renders the
-// per-skill result.
-func (c updateCmd) execute(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals, names []string) error {
+// interactive selection, or empty for every actionable skill), renders the
+// per-skill result, and returns it for the interactive session's next round.
+func (c updateCmd) execute(ctx context.Context, out *Output, a *app.App, root projectRoot, g Globals, names []string) (app.UpdateResult, error) {
 	ctx, done := out.withFetchProgress(ctx)
 	defer done()
 	res, err := a.Update(ctx, app.UpdateRequest{
-		Root: string(root), Names: names,
+		Root: string(root), Names: names, Repos: c.Repo,
 		Offline: g.Offline, NoCache: g.NoCache, DryRun: g.DryRun,
 	})
 	done()
 	if err != nil && len(res.Skills) == 0 {
 		// Nothing ran (missing lock, unknown name): the error alone tells the
 		// story better than an empty summary would.
-		return err
+		return res, err
 	}
 	if rErr := out.Result(renderUpdateResult(out, res), UpdateResultJSON(res)); rErr != nil {
-		return rErr
+		return res, rErr
 	}
-	return err
+	return res, err
 }
 
 // UpdateListJSON builds the --json object for an update report: one item per
@@ -197,10 +268,13 @@ func UpdateListJSON(plan app.UpdatePlan, all bool) map[string]any {
 	if all {
 		items = plan.Items
 	}
+	repos := planRepos(plan)
 	skills := make([]map[string]any, 0, len(items))
 	for _, it := range items {
 		skills = append(skills, map[string]any{
 			"name":          it.Name,
+			"repository":    repos[it.Name].Label,
+			"local":         repos[it.Name].Kind == source.RepoLocal,
 			"source":        it.Source,
 			"current":       it.Current,
 			"candidate":     it.Candidate,
@@ -224,6 +298,19 @@ func UpdateListJSON(plan app.UpdatePlan, all bool) map[string]any {
 	}
 }
 
+// planRepos maps each skill to its group's repository, so JSON names the
+// group's label and equal strings always mean the same group (spec 032
+// FR-030).
+func planRepos(plan app.UpdatePlan) map[string]source.Repo {
+	repos := make(map[string]source.Repo, len(plan.Items))
+	for _, g := range plan.Groups() {
+		for _, it := range g.Items {
+			repos[it.Name] = g.Repo
+		}
+	}
+	return repos
+}
+
 // countPinned counts the items only a change of declared intent can move.
 func countPinned(plan app.UpdatePlan) int {
 	n := 0
@@ -239,10 +326,18 @@ func countPinned(plan app.UpdatePlan) int {
 // historical fields (`changed`, `skills[].{name,content_hash,changed}`) are
 // retained; from/to/status/outcome detail is additive (FR-016).
 func UpdateResultJSON(res app.UpdateResult) map[string]any {
+	repos := map[string]source.Repo{}
+	for _, g := range res.Groups() {
+		for _, s := range g.Skills {
+			repos[s.Name] = g.Repo
+		}
+	}
 	skills := make([]map[string]any, 0, len(res.Skills))
 	for _, s := range res.Skills {
 		skills = append(skills, map[string]any{
 			"name":         s.Name,
+			"repository":   repos[s.Name].Label,
+			"local":        repos[s.Name].Kind == source.RepoLocal,
 			"content_hash": s.ContentHash,
 			"changed":      s.Outcome == app.UpdateOutcomeUpdated,
 			"from":         s.From,

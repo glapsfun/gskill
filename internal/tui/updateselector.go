@@ -10,9 +10,8 @@ import (
 	"github.com/glapsfun/gskill/internal/errs"
 )
 
-// UpdateItem is one actionable update candidate in the interactive update
-// selector (spec 018 US3). All items offered for selection are actionable by
-// construction — pins and up-to-date skills never reach the selector.
+// UpdateItem is one candidate in the interactive upgrade selector (spec 024
+// US3). All items offered for selection are actionable by construction.
 type UpdateItem struct {
 	Name      string
 	Current   string
@@ -32,15 +31,10 @@ type UpdateSelection struct {
 	Interrupted bool
 }
 
-// SelectUpdates runs the interactive multi-select over actionable updates and
-// returns the confirmed names. It refuses to start without a TTY: the CLI's
-// interactivity gate decides when a selector may open, never this package.
-func SelectUpdates(items []UpdateItem, isTTY bool) (UpdateSelection, error) {
-	return selectItems(items, isTTY, "Select updates (space toggles, enter confirms):", "update")
-}
-
-// SelectUpgrades runs the same multi-select over upgrade candidates (spec 024
+// SelectUpgrades runs the multi-select over upgrade candidates (spec 024
 // US3): each row shows the declaration move instead of the tracking policy.
+// It refuses to start without a TTY: the CLI's interactivity gate decides
+// when a selector may open, never this package.
 func SelectUpgrades(items []UpdateItem, isTTY bool) (UpdateSelection, error) {
 	return selectItems(items, isTTY, "Select upgrades (space toggles, enter confirms):", "upgrade")
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/git"
 	"github.com/glapsfun/gskill/internal/resolver"
+	"github.com/glapsfun/gskill/internal/source"
 )
 
 // UpdateRequest configures an update execution run (spec 018).
@@ -20,7 +21,10 @@ type UpdateRequest struct {
 	Root string
 	// Names selects the skills to update: command arguments or a confirmed
 	// interactive selection. Empty means every actionable skill.
-	Names   []string
+	Names []string
+	// Repos narrows the run to the skills of these --repo groups; with Names,
+	// every name must belong to one of them (spec 032).
+	Repos   []string
 	Offline bool
 	NoCache bool
 	// DryRun reports the would-be transitions and writes nothing (FR-014).
@@ -54,6 +58,8 @@ type UpdateSkillResult struct {
 	// could not move, so the result can say how to move it (spec 024 FR-008).
 	Informational string
 	NextAction    string
+	// Repo is the repository the skill is grouped under (spec 032).
+	Repo source.Repo
 }
 
 // UpdateResult aggregates an update run, name-sorted.
@@ -69,6 +75,31 @@ type UpdateResult struct {
 	Local    int
 	Changed  bool
 	DryRun   bool
+}
+
+// UpdateResultGroup is the results that share one repository (spec 032).
+type UpdateResultGroup struct {
+	Repo   source.Repo
+	Skills []UpdateSkillResult
+}
+
+// Groups partitions the results by repository, in the same order as
+// UpdatePlan.Groups.
+func (r UpdateResult) Groups() []UpdateResultGroup {
+	repos := make([]source.Repo, len(r.Skills))
+	for i, s := range r.Skills {
+		repos[i] = s.Repo
+	}
+	order := groupOrder(repos)
+	groups := make([]UpdateResultGroup, len(order))
+	for i, repo := range order {
+		groups[i].Repo = repo
+	}
+	for _, s := range r.Skills {
+		g := &groups[indexOfRepo(order, s.Repo)]
+		g.Skills = append(g.Skills, s)
+	}
+	return groups
 }
 
 // Update advances the selected skills to the newest revision their declared
@@ -110,14 +141,16 @@ func (a *App) runUpdate(ctx context.Context, p *project, req UpdateRequest, out 
 	if err != nil {
 		return err
 	}
+	// The selection is checked before migration, which can write files: a
+	// usage error must leave the project byte-identical (spec 032 SC-004).
+	names, err := selectSkills(req.Root, lf, a.manifestOrNil(req.Root), req.Repos, req.Names)
+	if err != nil {
+		return err
+	}
 	if !req.DryRun {
 		if mErr := a.autoMigrate(ctx, p, lf, migrateRunOptions{offline: req.Offline}); mErr != nil {
 			return mErr
 		}
-	}
-	names, err := updateNames(lf, req.Names)
-	if err != nil {
-		return err
 	}
 	for k, name := range names {
 		out.Skills = append(out.Skills,
@@ -209,6 +242,7 @@ func (a *App) updateOne(ctx context.Context, p *project, lf *skillslock.State, n
 		ContentHash:   rec.Resolved.ContentHash,
 		Informational: item.Informational,
 		NextAction:    item.NextAction,
+		Repo:          item.Repo,
 	}
 	switch {
 	case item.Status == StatusLookupFailed && item.DiscoveryErr != "":

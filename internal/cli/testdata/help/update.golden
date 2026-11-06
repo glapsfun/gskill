@@ -9,24 +9,28 @@ Examples:
     gskill update --list
     gskill update --list --all
     gskill update my-skill
+    gskill update --repo acme/skills
+    gskill update --list --repo acme/skills
 
 Arguments:
   [<skills> ...]    Skills to update (default: all with available updates).
 
 Flags:
-  -h, --help              Show context-sensitive help.
-      --json              Emit machine-readable JSON on stdout.
-      --quiet             Suppress diagnostics on stderr.
-      --no-interactive    Disable prompts and colored output.
-      --yes               Assume yes for confirmation prompts.
-      --offline           Operate without network access.
-      --no-cache          Bypass the content cache.
-      --dry-run           Report actions without applying them.
-      --config=STRING     Path to a TOML config file; overrides the user config
-                          file. Must exist.
-  -v, --verbose           Enable verbose diagnostics.
-  -C, --dir=STRING        Run as if gskill started in this directory.
+  -h, --help               Show context-sensitive help.
+      --json               Emit machine-readable JSON on stdout.
+      --quiet              Suppress diagnostics on stderr.
+      --no-interactive     Disable prompts and colored output.
+      --yes                Assume yes for confirmation prompts.
+      --offline            Operate without network access.
+      --no-cache           Bypass the content cache.
+      --dry-run            Report actions without applying them.
+      --config=STRING      Path to a TOML config file; overrides the user config
+                           file. Must exist.
+  -v, --verbose            Enable verbose diagnostics.
+  -C, --dir=STRING         Run as if gskill started in this directory.
 
-      --list              List available updates without applying them.
-      --all               With --list: also report up-to-date, pinned, and local
-                          skills.
+      --repo=REPOSITORY    Update the skills installed from this repository
+                           (repeatable).
+      --list               List available updates without applying them.
+      --all                With --list: also report up-to-date, pinned,
+                           and local skills.
