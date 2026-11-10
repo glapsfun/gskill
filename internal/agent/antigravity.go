@@ -9,6 +9,6 @@ func NewAntigravity() Agent {
 	return sharedAgent{
 		id:        "antigravity",
 		name:      "Antigravity CLI",
-		globalDir: []string{".gemini", "antigravity-cli", "skills"},
+		globalDir: []string{".gemini", "antigravity-cli", skillsDirName},
 	}
 }

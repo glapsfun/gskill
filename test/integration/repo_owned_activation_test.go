@@ -91,7 +91,7 @@ func TestRepoOwned_AddLeavesSkillCommittable(t *testing.T) {
 		t.Fatalf("add exit %d: %s", code, stderr)
 	}
 
-	out, err := exec.CommandContext(t.Context(), "git", "-C", proj, "status", "--porcelain", "-uall").Output() //nolint:gosec // test-controlled path
+	out, err := exec.CommandContext(t.Context(), "git", "-C", proj, "status", "--porcelain", "-uall").Output()
 	if err != nil {
 		t.Fatalf("git status: %v", err)
 	}

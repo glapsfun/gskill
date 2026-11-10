@@ -127,7 +127,7 @@ func CopyDir(src, dst string) error {
 			if err != nil {
 				return fmt.Errorf("read link %s: %w", path, err)
 			}
-			if err := os.Symlink(link, target); err != nil {
+			if err := os.Symlink(link, target); err != nil { //nolint:gosec // walking a caller-provided tree; links are recreated, never followed
 				return fmt.Errorf("recreate link %s: %w", target, err)
 			}
 			return nil

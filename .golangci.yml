@@ -60,6 +60,9 @@ linters:
     goconst:
       min-len: 3
       min-occurrences: 4
+      ignore-tests: true
+      # JSON output keys read best as literals at the point they are written.
+      ignore-map-keys: true
     gocyclo:
       min-complexity: 13
     nolintlint:
@@ -68,6 +71,12 @@ linters:
   exclusions:
     paths:
       - vendor$
+    rules:
+      # Tests run git and touch files in their own temp dirs; these taint and
+      # race rules only report those fixtures.
+      - path: _test\.go
+        linters: [gosec]
+        text: "G(122|204|703):"
 
 formatters:
   enable:
@@ -75,4 +84,5 @@ formatters:
     - gofumpt
   settings:
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true

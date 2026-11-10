@@ -386,7 +386,7 @@ func Copy(tb testing.TB, src, dst string, mode os.FileMode) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		tb.Fatal(err)
 	}
-	if err := os.WriteFile(dst, data, mode); err != nil {
+	if err := os.WriteFile(dst, data, mode); err != nil { //nolint:gosec // test-controlled path
 		tb.Fatal(err)
 	}
 	if err := os.Chmod(dst, mode); err != nil {

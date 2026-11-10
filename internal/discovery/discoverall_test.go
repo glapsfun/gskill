@@ -3,6 +3,7 @@ package discovery_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/glapsfun/gskill/internal/discovery"
@@ -26,15 +27,7 @@ func find(r discovery.Result, id string) (discovery.DiscoveredSkill, bool) {
 }
 
 func eq(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func TestDiscoverAll_SingleRootSkill(t *testing.T) {

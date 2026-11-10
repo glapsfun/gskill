@@ -38,7 +38,7 @@ func TestImageTags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := exec.CommandContext(t.Context(), "bash", append([]string{"scripts/image.sh", "tags"}, tt.args...)...) //nolint:gosec // the test table's own arguments
+			cmd := exec.CommandContext(t.Context(), "bash", append([]string{"scripts/image.sh", "tags"}, tt.args...)...)
 			cmd.Dir = repoRoot
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr

@@ -72,7 +72,7 @@ func GitOutput(t *testing.T, dir string, args ...string) string {
 }
 
 func gitCmd(dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(context.Background(), "git", args...)
+	cmd := exec.CommandContext(context.Background(), "git", args...) //nolint:gosec // test fixture git with the test's own arguments
 	cmd.Dir = dir
 	cmd.Env = GitEnv(
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
