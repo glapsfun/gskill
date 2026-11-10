@@ -12,7 +12,7 @@ never run in parallel). Steps, in order:
 
 1. Checkout with full history and tags.
 2. Guard: clean working tree.
-3. Set up Go 1.26 with caching disabled (a publish job must not consume a poisonable cache).
+3. Set up Go 1.27 with caching disabled (a publish job must not consume a poisonable cache).
 4. Quality gate: `./scripts/bootstrap.sh` then `./scripts/verify.sh` on the tagged commit.
 5. Guard: refuse if a GitHub Release for the tag already exists.
 6. Install cosign and syft.

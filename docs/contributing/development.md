@@ -119,7 +119,7 @@ bin/                      # gitignored; pinned tools land here after bootstrap
 
 ## Requirements
 
-- **Go 1.26+**
+- **Go 1.27+**
 - **[pre-commit](https://pre-commit.com)** (for git hooks)
 - A `git` binary
 - Docker or Podman, only to run the container image and for `scripts/image.sh check`
