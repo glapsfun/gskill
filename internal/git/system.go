@@ -20,6 +20,9 @@ func NewSystemRunner() SystemRunner { return SystemRunner{} }
 // LsRemoteTags lists tags via "git ls-remote --tags", preferring the peeled
 // (^{}) commit for annotated tags.
 func (SystemRunner) LsRemoteTags(ctx context.Context, url string) ([]TagRef, error) {
+	if err := checkOperands(url); err != nil {
+		return nil, err
+	}
 	out, err := runGit(ctx, "", "ls-remote", "--tags", url)
 	if err != nil {
 		return nil, err
@@ -57,6 +60,9 @@ func (SystemRunner) LsRemoteTags(ctx context.Context, url string) ([]TagRef, err
 
 // LsRemoteHeads lists branch heads via "git ls-remote --heads".
 func (SystemRunner) LsRemoteHeads(ctx context.Context, url string) ([]BranchRef, error) {
+	if err := checkOperands(url); err != nil {
+		return nil, err
+	}
 	out, err := runGit(ctx, "", "ls-remote", "--heads", url)
 	if err != nil {
 		return nil, err
@@ -82,6 +88,9 @@ func (SystemRunner) LsRemoteHeads(ctx context.Context, url string) ([]BranchRef,
 func (SystemRunner) ResolveRef(ctx context.Context, url, ref string) (string, error) {
 	if shaRE.MatchString(ref) {
 		return ref, nil
+	}
+	if err := checkOperands(url, ref); err != nil {
+		return "", err
 	}
 
 	out, err := runGit(ctx, "", "ls-remote", url, ref)
@@ -142,6 +151,12 @@ func pickRef(out, ref string) string {
 
 // FetchCommit materializes the tree at commit into dest with no .git directory.
 func (SystemRunner) FetchCommit(ctx context.Context, url, commit, dest string) error {
+	if err := CheckCommit(commit); err != nil {
+		return err
+	}
+	if err := checkOperands(url); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dest, 0o750); err != nil {
 		return fmt.Errorf("create fetch dir: %w", err)
 	}

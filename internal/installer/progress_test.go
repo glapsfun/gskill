@@ -129,3 +129,27 @@ func TestMaterialize_OfflineUncachedEmitsNothing(t *testing.T) {
 		t.Errorf("offline error path emitted %+v, want nothing", events)
 	}
 }
+
+// TestMaterialize_RejectsNonHexCommit: the commit is also a clone-cache path,
+// so a lock or manifest commit like "../outside" must not turn a directory
+// outside the cache into the source tree.
+func TestMaterialize_RejectsNonHexCommit(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(outside, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: planted\ndescription: not from the cache\n---\n# planted\n"
+	if err := os.WriteFile(filepath.Join(outside, "SKILL.md"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inst := installer.New(skillWriterRunner{}, cache.New(filepath.Join(root, "cache")))
+
+	req := gitRequest(t, true)
+	req.Revision.Commit = "../outside"
+	if _, err := inst.Discover(context.Background(), req); err == nil || !strings.Contains(err.Error(), "not a hex commit id") {
+		t.Fatalf("err = %v, want the non-hex commit refused", err)
+	}
+}

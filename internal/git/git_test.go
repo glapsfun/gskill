@@ -251,3 +251,66 @@ func TestSystemRunner_FetchCommitWithSink(t *testing.T) {
 		}
 	}
 }
+
+// Values in skills.toml and skills-lock.json come from whoever wrote the
+// project, so an option-like commit, URL, or ref must never reach git's argv:
+// against a local-path remote, --upload-pack runs a command on this machine.
+func TestSystemRunner_RejectsOptionLikeOperands(t *testing.T) {
+	t.Parallel()
+
+	repo, commit := fixtureRepo(t)
+	marker := filepath.Join(t.TempDir(), "pwned")
+	inject := "--upload-pack=touch " + marker + "; git-upload-pack"
+	r := git.NewSystemRunner()
+	ctx := context.Background()
+
+	checks := map[string]func() error{
+		"FetchCommit commit": func() error {
+			return r.FetchCommit(ctx, repo, inject, filepath.Join(t.TempDir(), "out"))
+		},
+		"FetchCommit url": func() error {
+			return r.FetchCommit(ctx, inject, commit, filepath.Join(t.TempDir(), "out"))
+		},
+		"FetchCommit path commit": func() error {
+			return r.FetchCommit(ctx, repo, "../"+commit, filepath.Join(t.TempDir(), "out"))
+		},
+		"LsRemoteTags url": func() error {
+			_, err := r.LsRemoteTags(ctx, inject)
+			return err
+		},
+		"LsRemoteHeads url": func() error {
+			_, err := r.LsRemoteHeads(ctx, inject)
+			return err
+		},
+		"ResolveRef url": func() error {
+			_, err := r.ResolveRef(ctx, inject, "main")
+			return err
+		},
+		"ResolveRef ref": func() error {
+			_, err := r.ResolveRef(ctx, repo, inject)
+			return err
+		},
+	}
+	for name, call := range checks {
+		if err := call(); err == nil {
+			t.Errorf("%s: want an error for an option-like or non-hex operand", name)
+		}
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("git ran the injected command (marker stat err=%v)", err)
+	}
+}
+
+// skills.toml documents short commit pins, so the hex check must keep them.
+func TestSystemRunner_FetchCommitAcceptsAbbreviatedCommit(t *testing.T) {
+	t.Parallel()
+
+	repo, commit := fixtureRepo(t)
+	dest := filepath.Join(t.TempDir(), "out")
+	if err := git.NewSystemRunner().FetchCommit(context.Background(), repo, commit[:12], dest); err != nil {
+		t.Fatalf("FetchCommit(%s): %v", commit[:12], err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "SKILL.md")); err != nil {
+		t.Errorf("SKILL.md not materialized: %v", err)
+	}
+}

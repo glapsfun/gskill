@@ -405,6 +405,10 @@ func (i *Installer) materialize(ctx context.Context, req Request) (string, error
 	if commit == "" {
 		return "", fmt.Errorf("%w: git source resolved without a commit", errs.ErrSourceUnavailable)
 	}
+	// The commit names a clone-cache directory before it ever reaches git.
+	if err := git.CheckCommit(commit); err != nil {
+		return "", err
+	}
 	// The installer knows the repo identity and the cache outcome, so it
 	// stamps both onto every progress event from here down.
 	ctx = progress.Stamp(ctx, func(e *progress.Event) {
