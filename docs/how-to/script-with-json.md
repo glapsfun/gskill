@@ -41,6 +41,27 @@ fi
 - Exit codes are stable and documented — branch on them rather than parsing human text. See
   [exit codes](../reference/exit-codes.md).
 
+## Group skills by repository
+
+Each skill object in `outdated --json`, `update --list --json`, and `update --json` carries
+two fields about where it comes from:
+
+- `repository`: the repository label that `update --list` groups the skill under. Pass it to
+  `gskill update --repo` to act on that repository.
+- `local`: `true` when the source is a local path.
+
+With `--all`, `update --list` reports every tracked skill, not only the ones that can update.
+This lists the available updates per repository:
+
+```bash
+gskill --json update --list --all \
+  | jq -c '.skills | group_by(.repository) | map({repository: .[0].repository, updates: map(select(.status == "update-available") | .name)})'
+```
+
+```json
+[{"repository":"../tools","updates":[]},{"repository":"github.com/acme/skills","updates":["kubernetes"]}]
+```
+
 ## See also
 
 - [Gate CI on drift](gate-ci-on-drift.md)

@@ -199,14 +199,15 @@ edits `skills.toml`; a pinned skill is reported as pinned, with the way to move 
 
 ```bash
 gskill update --list   # read-only report: current vs available, every status counted
-gskill update          # in a terminal: pick updates interactively
+gskill update          # in a terminal: pick updates from a table grouped by repository
 ```
 
 ```text
-NAME          CURRENT   AVAILABLE  POLICY   STATUS
-code-review   1.2.0     --         1.2.0    pinned version
+github.com/acme/skills · 1 update available / 2 skills
+NAME         CURRENT  AVAILABLE  POLICY  STATUS
+code-review  1.2.0    --         1.2.0   pinned version
   pinned by skills.toml (version = "1.2.0"); newest 2.1.0. Run 'gskill upgrade code-review' or edit skills.toml to move it.
-kubernetes    1.2.0     1.4.1      ^1.2.0   update available
+kubernetes   1.2.0    1.4.1      ^1.2.0  update available
 ```
 
 ### 7. Upgrade
@@ -259,6 +260,7 @@ gskill project verify
 ```bash
 gskill update --list             # what would update, and to which version
 gskill update                    # choose interactively in a terminal
+gskill update --repo acme/skills # one repository, no table
 gskill --no-interactive update   # CI-safe: apply every available update
 gskill upgrade my-skill --latest # move the declared version in skills.toml, then install
 ```
