@@ -217,10 +217,11 @@ func TestEvaluateHealth_LegacyDirectStoreLink(t *testing.T) {
 // is the active store itself.
 type sharedTestAgent struct{ id string }
 
-func (s sharedTestAgent) ID() string                                       { return s.id }
-func (s sharedTestAgent) DisplayName() string                              { return s.id }
-func (sharedTestAgent) Detect(context.Context, string) (bool, error)       { return false, nil }
-func (sharedTestAgent) ProjectSkillDir(root string) string                 { return active.Dir(root) }
+func (s sharedTestAgent) ID() string                                 { return s.id }
+func (s sharedTestAgent) DisplayName() string                        { return s.id }
+func (sharedTestAgent) Detect(context.Context, string) (bool, error) { return false, nil }
+func (sharedTestAgent) ProjectSkillDir(root string) string           { return active.Dir(root) }
+
 func (s sharedTestAgent) GlobalSkillDir(home string) string                { return filepath.Join(home, s.id) }
 func (sharedTestAgent) SupportsSymlinks() bool                             { return true }
 func (sharedTestAgent) ValidateInstallation(context.Context, string) error { return nil }

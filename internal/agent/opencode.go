@@ -24,7 +24,7 @@ func NewOpenCode() Agent {
 	return openCode{sharedAgent{
 		id:        "opencode",
 		name:      "OpenCode",
-		globalDir: []string{".config", "opencode", "skills"},
+		globalDir: []string{".config", "opencode", skillsDirName},
 		markers:   []string{".opencode", "opencode.json", "opencode.jsonc"},
 	}}
 }

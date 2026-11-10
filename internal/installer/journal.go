@@ -42,7 +42,7 @@ func cleanupRoot(root string) (int, error) {
 			return nil
 		}
 		if isStaging(d.Name()) {
-			if rmErr := os.RemoveAll(p); rmErr != nil {
+			if rmErr := os.RemoveAll(p); rmErr != nil { //nolint:gosec // walking gskill's own staging roots
 				return fmt.Errorf("remove staging %s: %w", p, rmErr)
 			}
 			removed++

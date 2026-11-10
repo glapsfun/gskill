@@ -7,7 +7,7 @@ func NewHermes() Agent {
 	return hermes{sharedAgent{
 		id:        "hermes",
 		name:      "Hermes Agent",
-		globalDir: []string{".hermes", "skills"},
+		globalDir: []string{".hermes", skillsDirName},
 		markers:   []string{".hermes"},
 	}}
 }

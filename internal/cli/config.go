@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/config"
@@ -70,12 +71,14 @@ func (configListCmd) Run(out *Output, a *app.App) error {
 	}
 	sort.Strings(keys)
 
-	human := "# user config: " + path + "\n"
+	var b strings.Builder
+	b.WriteString("# user config: " + path + "\n")
 	obj := make(map[string]any, len(values))
 	for _, k := range keys {
-		human += fmt.Sprintf("%s = %s\n", k, values[k])
+		fmt.Fprintf(&b, "%s = %s\n", k, values[k])
 		obj[k] = values[k]
 	}
+	human := b.String()
 	if out.Interactive() {
 		human = renderConfigListStyled(path, values)
 	}

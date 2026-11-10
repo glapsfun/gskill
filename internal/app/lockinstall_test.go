@@ -690,7 +690,7 @@ func TestInstallFromLock_ExternalUpdateRefetches(t *testing.T) {
 func gitCommit(t *testing.T, repo, msg string) {
 	t.Helper()
 	for _, args := range [][]string{{"add", "."}, {"commit", "--quiet", "-m", msg}} {
-		cmd := exec.CommandContext(context.Background(), "git", args...) //nolint:gosec // test-controlled fixture args
+		cmd := exec.CommandContext(context.Background(), "git", args...)
 		cmd.Dir = repo
 		cmd.Env = testutil.GitEnv(
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",

@@ -186,7 +186,7 @@ func sanitizedEnv() []string {
 // matches the historical exec path; LC_ALL=C pins git's output to the
 // English the parser and classifier both match on.
 func runGitProgress(ctx context.Context, dir string, onEvent progress.Sink, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // the binary is always git
 	if dir != "" {
 		cmd.Dir = dir
 	}

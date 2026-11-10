@@ -26,7 +26,7 @@ func TestBuildFake_ReportsVersion(t *testing.T) {
 	t.Parallel()
 
 	fake := selfupdatetest.BuildFake(t, "1.2.3", "ok")
-	out, err := exec.CommandContext(context.Background(), fake, "version", "--json").Output() //nolint:gosec // runs the test-built fake
+	out, err := exec.CommandContext(context.Background(), fake, "version", "--json").Output()
 	if err != nil {
 		t.Fatal(err)
 	}

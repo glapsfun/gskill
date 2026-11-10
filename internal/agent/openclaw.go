@@ -8,6 +8,6 @@ func NewOpenClaw() Agent {
 	return sharedAgent{
 		id:        "openclaw",
 		name:      "OpenClaw",
-		globalDir: []string{".openclaw", "skills"},
+		globalDir: []string{".openclaw", skillsDirName},
 	}
 }

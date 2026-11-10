@@ -194,7 +194,7 @@ func applyLayers(staged, skillDir, repoRoot string, spec Spec) error {
 		out = append(out, ensureTrailingNewline(data)...)
 	}
 
-	if err := os.WriteFile(dst, out, 0o600); err != nil {
+	if err := os.WriteFile(dst, out, 0o600); err != nil { //nolint:gosec // dst is confined to the staged skill directory
 		return errs.Wrap(errs.CodeGeneric, "layer onto "+skillFile, err)
 	}
 	return nil

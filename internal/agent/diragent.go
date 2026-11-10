@@ -9,6 +9,9 @@ import (
 	"github.com/glapsfun/gskill/internal/integrity"
 )
 
+// skillsDirName is the directory every agent keeps its skills in.
+const skillsDirName = "skills"
+
 // dirAgent is a convention-based adapter for agents that keep skills under
 // <base>/<markerDir>/skills/<name> and are detected by the presence of
 // <markerDir>. Agents that diverge from this layout get their own type.
@@ -27,12 +30,12 @@ func (a dirAgent) DisplayName() string { return a.name }
 
 // ProjectSkillDir returns the per-project skills container directory.
 func (a dirAgent) ProjectSkillDir(projectRoot string) string {
-	return filepath.Join(projectRoot, a.markerDir, "skills")
+	return filepath.Join(projectRoot, a.markerDir, skillsDirName)
 }
 
 // GlobalSkillDir returns the user-global skills container directory.
 func (a dirAgent) GlobalSkillDir(home string) string {
-	return filepath.Join(home, a.markerDir, "skills")
+	return filepath.Join(home, a.markerDir, skillsDirName)
 }
 
 // SupportsSymlinks reports whether the agent tolerates symlinked skills.

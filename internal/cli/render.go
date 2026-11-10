@@ -75,7 +75,7 @@ func renderListStyled(skills []app.ListedSkill) string {
 			st.HealthCell(s.Active), agentHealthCellStyled(st, s.AgentHealth),
 		})
 	}
-	return renderAligned(st, []string{"NAME", "VERSION", "SOURCE", "STATUS", "ACTIVE", "AGENTS"}, rows)
+	return renderAligned(st, []string{"NAME", "VERSION", "SOURCE", "STATUS", "ACTIVE", "AGENTS"}, rows) //nolint:goconst // table headers read best as literals
 }
 
 // agentHealthCellStyled renders one row's AGENTS cell: each agent as

@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	gskillBin = filepath.Join(dir, "gskill")
-	build := exec.CommandContext(context.Background(), "go", "build", "-trimpath", "-tags", "testseams", "-o", gskillBin, "./cmd/gskill") //nolint:gosec // builds the binary under test
+	build := exec.CommandContext(context.Background(), "go", "build", "-trimpath", "-tags", "testseams", "-o", gskillBin, "./cmd/gskill")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e/cli: build gskill: %v\n%s", err, out)

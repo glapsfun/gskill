@@ -45,7 +45,7 @@ func TestCloneAndGo_OverriddenSkill(t *testing.T) {
 	gitRun(t, proj, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "--quiet", "-m", "skills")
 
 	clone := filepath.Join(t.TempDir(), "clone")
-	cloneCmd := exec.CommandContext(t.Context(), "git", "clone", "--quiet", proj, clone) //nolint:gosec // both paths are test-owned temp dirs
+	cloneCmd := exec.CommandContext(t.Context(), "git", "clone", "--quiet", proj, clone)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
 		t.Fatalf("clone: %v: %s", err, out)
 	}
