@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 func TestRun_RefusesWithoutTTY(t *testing.T) {
 	t.Parallel()
 
-	err := tui.Run([]tui.SkillRow{{Name: "demo", Status: "installed"}}, false)
+	err := tui.Run(context.Background(), nil, false, tui.Options{})
 	if err == nil {
 		t.Fatal("Run without a TTY succeeded, want a guard error")
 	}

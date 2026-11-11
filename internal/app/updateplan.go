@@ -162,7 +162,9 @@ func WithDiscoveryMemo(ctx context.Context) context.Context { return git.WithMem
 type UpdatePlanRequest struct {
 	Root string
 	// Repos narrows the plan to the skills of these --repo groups (spec 032).
-	Repos   []string
+	Repos []string
+	// Names narrows the plan to these skills, skipping discovery for the rest.
+	Names   []string
 	Offline bool
 	NoCache bool
 }
@@ -180,7 +182,7 @@ func (a *App) PlanUpdate(ctx context.Context, req UpdatePlanRequest) (UpdatePlan
 		return UpdatePlan{}, err
 	}
 
-	names, err := selectSkills(req.Root, lf, a.manifestOrNil(req.Root), req.Repos, nil)
+	names, err := selectSkills(req.Root, lf, a.manifestOrNil(req.Root), req.Repos, req.Names)
 	if err != nil {
 		return UpdatePlan{}, err
 	}
