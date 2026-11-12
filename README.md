@@ -151,6 +151,48 @@ Commit `skills-lock.json` — it's the only project state file GSKILL writes; it
 records both what you asked for and what was resolved, so anyone can reproduce it
 with `gskill install --frozen-lockfile`.
 
+## Use GSKILL from an AI agent
+
+GSKILL ships two skills for AI agents: `gskill-install` sets up the CLI, and `gskill` manages
+skills with it. Load the setup skill by hand, since GSKILL is not installed yet. For Claude
+Code:
+
+```sh
+mkdir -p "$HOME/.claude/skills"
+curl -sSfL https://github.com/glapsfun/gskill/archive/refs/tags/v0.13.0.tar.gz | tar -xzf - -C "$HOME/.claude/skills" --strip-components=2 gskill-0.13.0/skills/gskill-install
+```
+
+Ask your agent to "set up GSKILL". Then install the usage skill, for this project or for every
+project:
+
+```sh
+gskill add github.com/glapsfun/gskill/skills/gskill --ref v0.13.0 --agent claude
+gskill add github.com/glapsfun/gskill/skills/gskill --ref v0.13.0 --agent claude --global
+```
+
+From then on, ask in plain words. The agent runs the matching command and reports what changed:
+
+> Add the kubernetes skill from github.com/acme/skills for Claude.
+
+```sh
+gskill --no-interactive --json add github.com/acme/skills --skill kubernetes --agent claude
+```
+
+> Are any of my skills out of date?
+
+```sh
+gskill --no-interactive --json update --list
+```
+
+> Move code-review to 2.1.0.
+
+```sh
+gskill --no-interactive --json upgrade code-review --to 2.1.0
+```
+
+Other agents, more examples, and troubleshooting are in
+[Use GSKILL from an AI agent](https://glapsfun.github.io/gskill/how-to/use-gskill-from-an-agent/).
+
 ## Core workflow
 
 GSKILL's lifecycle is discover → add → install → verify → update → upgrade.

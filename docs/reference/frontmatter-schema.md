@@ -34,7 +34,7 @@ requires:                                        # optional — recorded & warne
 | `license` | no | string | SPDX or free-form. |
 | `compatibility` | no | string or object | Compatibility hint. |
 | `requires.skills` | no | list of strings | `name [constraint]`; recorded, **not** resolved transitively. |
-| `requires.commands` | no | list of strings | External command names (checked by `doctor`). |
+| `requires.commands` | no | list of strings | External command names (checked by `doctor`, never installed). The official `gskill` skill uses it; see [Use GSKILL from an AI agent](../how-to/use-gskill-from-an-agent.md#requirements-metadata). |
 | `requires.environment` | no | list of strings | Environment variable names. |
 | `requires.mcp` | no | list of strings | MCP server names. |
 

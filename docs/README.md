@@ -40,6 +40,7 @@ Problem-oriented recipes — one per feature. See the [full index](how-to/index.
 - [Gate CI on drift](how-to/gate-ci-on-drift.md)
 - [Reuse skills across projects](how-to/reuse-skills-across-projects.md)
 - [Script GSKILL with `--json`](how-to/script-with-json.md)
+- [Use GSKILL from an AI agent](how-to/use-gskill-from-an-agent.md)
 
 ## Reference
 
