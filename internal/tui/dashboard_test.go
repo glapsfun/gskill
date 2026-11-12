@@ -197,7 +197,121 @@ func TestDashboard_TableCellsCarryNoANSI(t *testing.T) {
 func TestDashboard_FooterListsActions(t *testing.T) {
 	t.Parallel()
 	m := newDash(t, &fakeService{skills: dashSkills()}, 80, 24)
-	if !strings.Contains(m.View(), "search") {
-		t.Errorf("footer does not list the search action:\n%s", m.View())
+	v := m.View()
+	for _, want := range []string{"search", "update", "version", "remove"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("footer does not list the %q action:\n%s", want, v)
+		}
+	}
+}
+
+// --- US3: remove confirmation, cancel, refresh, empty states ---
+
+func TestDashboard_RemoveConfirmationShowsSkillSourceInstallations(t *testing.T) {
+	t.Parallel()
+	fs := &fakeService{
+		skills: dashSkills(),
+		plan:   ProposedChange{FromRev: "1.0.1", Installations: []string{"claude: .claude/skills/tui-design"}},
+	}
+	m := newDash(t, fs, 80, 24) // tui-design selected
+	m = dashDrive(t, m, dashKey("r"))
+	if m.mode != modeConfirm {
+		t.Fatalf("remove did not open confirmation: mode=%d", m.mode)
+	}
+	v := m.View()
+	for _, want := range []string{"Remove tui-design", "acme/skills", "claude: .claude/skills/tui-design"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("remove confirmation missing %q:\n%s", want, v)
+		}
+	}
+}
+
+func TestDashboard_RemoveCancelIsNoOp(t *testing.T) {
+	t.Parallel()
+	fs := &fakeService{skills: dashSkills()}
+	m := newDash(t, fs, 80, 24)
+	m = dashDrive(t, m, dashKey("r"))
+	m = dashDrive(t, m, dashKey("esc"))
+	if m.mode != modeBrowse {
+		t.Errorf("cancel did not return to browse: mode=%d", m.mode)
+	}
+	if fs.applyName != "" {
+		t.Errorf("cancel still applied a removal: %q", fs.applyName)
+	}
+}
+
+func TestDashboard_RemoveRefreshesCursorToValidRow(t *testing.T) {
+	t.Parallel()
+	fs := &fakeService{
+		skills:   dashSkills(),
+		applyOut: []ActionOutcome{{Name: "deploy", Kind: ChangeRemove, Result: "removed"}},
+	}
+	m := newDash(t, fs, 80, 24)
+	m = dashUpdate(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select deploy
+	m = dashDrive(t, m, dashKey("r"))
+	m = dashDrive(t, m, dashKey("enter")) // confirm removal + refresh
+	m = dashDrive(t, m, dashKey("x"))     // dismiss results
+	if m.mode != modeBrowse {
+		t.Fatalf("not back in browse after removal: mode=%d", m.mode)
+	}
+	if len(m.visible) != 1 || m.selected != "tui-design" {
+		t.Errorf("cursor did not rest on a valid remaining row: selected=%q visible=%d", m.selected, len(m.visible))
+	}
+}
+
+func TestDashboard_RemoveLastVisibleUnderSearch(t *testing.T) {
+	t.Parallel()
+	fs := &fakeService{
+		skills:   dashSkills(),
+		applyOut: []ActionOutcome{{Name: "deploy", Kind: ChangeRemove, Result: "removed"}},
+	}
+	m := newDash(t, fs, 80, 24)
+	m = dashUpdate(t, m, dashKey("/"), dashKey("d"), dashKey("e"), dashKey("p")) // search deploy
+	m = dashUpdate(t, m, tea.KeyMsg{Type: tea.KeyEnter})                         // keep filter, back to browse
+	m = dashDrive(t, m, dashKey("r"))
+	m = dashDrive(t, m, dashKey("enter"))
+	m = dashDrive(t, m, dashKey("x"))
+	if !strings.Contains(m.View(), "No skills match") {
+		t.Errorf("last visible under search did not show the no-matches state:\n%s", m.View())
+	}
+}
+
+func TestDashboard_RemoveLastInstalledSkill(t *testing.T) {
+	t.Parallel()
+	fs := &fakeService{
+		skills:   []DashboardSkill{dashSkills()[0]},
+		applyOut: []ActionOutcome{{Name: "tui-design", Kind: ChangeRemove, Result: "removed"}},
+	}
+	m := newDash(t, fs, 80, 24)
+	m = dashDrive(t, m, dashKey("r"))
+	m = dashDrive(t, m, dashKey("enter"))
+	m = dashDrive(t, m, dashKey("x"))
+	if !strings.Contains(m.View(), "No skills installed") {
+		t.Errorf("removing the last skill did not show the empty-inventory state:\n%s", m.View())
+	}
+}
+
+func TestDashboard_RemoveLastSkillShowsResultBeforeEmptyState(t *testing.T) {
+	t.Parallel()
+	fs := &fakeService{
+		skills:   []DashboardSkill{dashSkills()[0]},
+		applyOut: []ActionOutcome{{Name: "tui-design", Kind: ChangeRemove, Result: "removed"}},
+	}
+	m := newDash(t, fs, 80, 24)
+	m = dashDrive(t, m, dashKey("r"))
+	m = dashDrive(t, m, dashKey("enter")) // confirm removal; the refresh empties the inventory
+	if m.mode != modeResults {
+		t.Fatalf("not on the results screen after removing the last skill: mode=%d", m.mode)
+	}
+	v := m.View()
+	if !strings.Contains(v, "removed") {
+		t.Errorf("results screen pre-empted by the empty-inventory state:\n%s", v)
+	}
+	if strings.Contains(v, "No skills installed") {
+		t.Errorf("empty-inventory state shown before the result was acknowledged:\n%s", v)
+	}
+	m = dashDrive(t, m, dashKey("x")) // dismiss; now the empty state is expected
+	if !strings.Contains(m.View(), "No skills installed") {
+		t.Errorf("empty-inventory state not shown after dismissing results:\n%s", m.View())
 	}
 }
