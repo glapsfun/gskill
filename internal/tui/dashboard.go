@@ -22,8 +22,14 @@ func Run(ctx context.Context, svc DashboardService, isTTY bool, opts Options) er
 		return fmt.Errorf("%w: the TUI requires a TTY; use 'gskill list' or 'gskill info <name>' instead",
 			errs.ErrUsage)
 	}
-	if _, err := tea.NewProgram(newModel(ctx, svc, opts), tea.WithAltScreen()).Run(); err != nil {
+	final, err := tea.NewProgram(newModel(ctx, svc, opts), tea.WithAltScreen()).Run()
+	if err != nil {
 		return fmt.Errorf("tui: %w", err)
+	}
+	// The dashboard shows its own results; the session returns one error, mapped
+	// once to an exit code by cli/tui.go (FR-025).
+	if m, ok := final.(model); ok {
+		return m.sessionErr
 	}
 	return nil
 }
@@ -33,13 +39,17 @@ func Run(ctx context.Context, svc DashboardService, isTTY bool, opts Options) er
 const previewMinHeight = 20
 
 // dashMode is the dashboard's current interaction mode. Browse and search are
-// the read-only modes; the mutating modes (confirm, versionPick, busy,
-// resultsView) are added with the update/version/remove stories.
+// the read-only modes; confirm, versionPick, busy, and results carry the
+// update/version/remove stories.
 type dashMode int
 
 const (
 	modeBrowse dashMode = iota
 	modeSearch
+	modeConfirm     // reviewing a planned action before the single confirmation
+	modeVersionPick // picking the target of a version change
+	modeBusy        // an apply is in flight; action keys are ignored
+	modeResults     // the per-skill outcomes of the finished action
 )
 
 // model is the dashboard state: a themed, repository-grouped skills table
@@ -76,6 +86,39 @@ type model struct {
 	query   lineInput
 	loaded  bool
 	loadErr string
+
+	// Action state. actionName and actionKind name the skill (or repository
+	// key, for a group update) the pending confirm/version flow targets, held
+	// by identity so a search change or refresh never retargets it (FR-017).
+	// proposed is the reviewed, not-yet-applied change; nothing is written
+	// before the confirm -> busy edge. inflight is the identity of the apply
+	// running, which blocks a duplicate or conflicting submission (FR-018).
+	actionName string
+	actionKind ChangeKind
+	// actionFrom is the selected skill's installed-version label captured when
+	// the action began. The stale guard compares it against the current label at
+	// confirm time (FR-019); both come from the same List/displayVersion source,
+	// so a branch skill (label "main") is not mistaken for changed against a
+	// plan's commit-shaped revision.
+	actionFrom  string
+	proposed    *ProposedChange
+	planLoading bool
+	planErr     string
+	inflight    string
+	results     []ActionOutcome
+	resultErr   string
+
+	// Version picker state: the candidate labels, the cursor, and a typed
+	// target for an explicit version the list does not offer.
+	versions   []string
+	verCursor  int
+	verInput   lineInput
+	verLoading bool
+	verErr     string
+
+	// sessionErr is the one error returned to cli/tui.go on quit, mapped once
+	// to an exit code (FR-025); a ctrl+c quit sets it to ErrCancelled (code 130).
+	sessionErr error
 }
 
 // inventoryMsg carries a loaded (or refreshed) inventory into the model.
@@ -234,7 +277,6 @@ func (m *model) layout() {
 	} else {
 		m.vp.Height = 1
 	}
-	clear(m.previewCache) // renders are width-specific
 	m.refreshPreview()
 }
 
@@ -265,9 +307,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		clear(m.previewCache) // cached renders are width-specific
 		m.layout()
 		return m, nil
 	case inventoryMsg:
+		clear(m.previewCache) // a refreshed skill's SKILL.md may have changed
 		m.setInventory(msg.skills)
 		m.layout()
 		return m, nil
@@ -275,6 +319,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loaded = true
 		m.loadErr = msg.err.Error()
 		return m, nil
+	case planMsg:
+		return m.onPlan(msg), nil
+	case versionsMsg:
+		return m.onVersions(msg), nil
+	case applyMsg:
+		return m.onApply(msg)
 	case tea.KeyMsg:
 		return m.onKey(msg)
 	}
@@ -282,17 +332,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // onKey dispatches a key by mode. In search mode, printable keys are text
-// input and never trigger actions (FR-006).
+// input and never trigger actions (FR-006); the mutating modes route to their
+// own handlers so esc stays contextual (interaction contract).
 func (m model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.mode == modeSearch {
+	switch m.mode {
+	case modeSearch:
 		return m.onSearchKey(msg)
+	case modeConfirm:
+		return m.onConfirmKey(msg)
+	case modeVersionPick:
+		return m.onVersionKey(msg)
+	case modeBusy:
+		return m.onBusyKey(msg)
+	case modeResults:
+		return m.onResultsKey(msg)
+	case modeBrowse:
+		return m.onBrowseKey(msg)
 	}
+	return m.onBrowseKey(msg)
+}
+
+// onBrowseKey handles the inventory screen: navigation, search, preview focus,
+// the three skill actions, the group update, and quit.
+func (m model) onBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", keyCtrlC:
 		return m, tea.Quit
 	case keyEsc:
-		// In browse, esc quits; it gains contextual meaning once the mutating
-		// modes exist.
+		// In browse, esc quits; in the mutating modes it cancels that step.
 		return m, tea.Quit
 	case "/":
 		if len(m.skills) > 0 {
@@ -302,6 +369,14 @@ func (m model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		m.focusPreview = !m.focusPreview && m.showPreview()
 		return m, nil
+	case "u":
+		return m.startUpdate()
+	case "v":
+		return m.startVersionChange()
+	case "r":
+		return m.startRemove()
+	case "g":
+		return m.startGroupUpdate()
 	}
 	if m.focusPreview {
 		var cmd tea.Cmd
@@ -347,6 +422,14 @@ func (m model) moveCursor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// atEmptyInventory reports whether the inventory is empty while a read-only
+// screen owns the view, so the empty-inventory state renders. During an action
+// (confirm/version/busy/results) the action screen owns the view even when a
+// removal has just emptied the inventory, so its result is not pre-empted.
+func (m model) atEmptyInventory() bool {
+	return len(m.skills) == 0 && (m.mode == modeBrowse || m.mode == modeSearch)
+}
+
 // View implements tea.Model.
 func (m model) View() string {
 	var b strings.Builder
@@ -360,11 +443,27 @@ func (m model) View() string {
 		b.WriteString(m.st.Error.Render("Could not load skills: "+m.loadErr) + "\n")
 		b.WriteString(m.st.Hint.Render("q quit") + "\n")
 		return b.String()
-	case len(m.skills) == 0:
+	case m.atEmptyInventory():
 		b.WriteString("No skills installed.\n\n")
 		b.WriteString(m.st.Subtitle.Render("Run 'gskill add <source>' to install your first skill.") + "\n")
 		b.WriteString(m.st.Hint.Render("q quit") + "\n")
 		return b.String()
+	}
+
+	switch m.mode {
+	case modeConfirm:
+		b.WriteString(m.confirmView())
+		return b.String()
+	case modeVersionPick:
+		b.WriteString(m.versionPickView())
+		return b.String()
+	case modeBusy:
+		b.WriteString(m.busyView())
+		return b.String()
+	case modeResults:
+		b.WriteString(m.resultsView())
+		return b.String()
+	case modeBrowse, modeSearch:
 	}
 
 	b.WriteString(m.searchLine())
@@ -417,10 +516,12 @@ func (m model) detailsLine() string {
 	return m.st.Hint.Render(" " + strings.Join(parts, " · "))
 }
 
-// footer renders the key help for the current mode.
+// footer renders the key help for the current mode. Browse lists the three
+// skill actions and the group update so every action is visible (FR-005); an
+// unavailable update's reason is shown in the details line.
 func (m model) footer() string {
 	pos := fmt.Sprintf("%d/%d", m.tbl.Cursor()+1, len(m.visible))
-	hint := " ↑/↓ move · / search · tab focus · q quit"
+	hint := " ↑/↓ move · / search · u update · v version · r remove · g group · q quit"
 	if m.mode == modeSearch {
 		hint = " type to filter · esc clear · enter list"
 	}
