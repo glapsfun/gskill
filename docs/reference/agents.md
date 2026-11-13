@@ -66,6 +66,32 @@ can find the same skill twice. Both copies have identical content.
 - **Global** (`--global`): skills install as verified copies into each agent's user-global location
   (the last column above), outside the repo-owned model.
 
+## Official GSKILL skills
+
+GSKILL publishes two skills that let an agent install and drive GSKILL: `gskill-install` and
+`gskill` (see [Use GSKILL from an AI agent](../how-to/use-gskill-from-an-agent.md)). Each agent
+loads them from the folders below. "Checked" says whether loading and running them was tried on
+the real agent, or follows from the adapter rules on this page.
+
+| Agent | Loads from (project / global) | Load step | Checked |
+| --- | --- | --- | --- |
+| Claude Code | `.claude/skills/` / `~/.claude/skills/` | Start a new session. | Real agent: Claude Code 2.1.322, 2026-11-12 |
+| Codex | `.codex/skills/` / `~/.codex/skills/` | Start a new session. | Real agent: codex-cli 0.167.0, 2026-11-12 |
+| Cursor | `.cursor/skills/` / `~/.cursor/skills/` | Start a new session. | Adapter rules only |
+| Antigravity CLI | `.agents/skills/` / `~/.gemini/antigravity-cli/skills/` | Start a new session. | Adapter rules only |
+| OpenCode | `.agents/skills/` / `~/.config/opencode/skills/` | Start a new session. | Adapter rules only |
+| OpenClaw | `.agents/skills/` / `~/.openclaw/skills/` | Project skills load only when the repository is the workspace. | Adapter rules only |
+| Hermes Agent | `.agents/skills/` / `~/.hermes/skills/` | `hermes skills trust` once per project. | Adapter rules only |
+
+The real-agent checks installed both skills in a project for `claude` and `codex` from a build of
+this repository, then ran each agent non-interactively (`claude -p`, `codex exec`):
+
+1. **Load**: asked for the skills it has whose names start with `gskill`. Both agents named
+   `gskill` and `gskill-install`.
+2. **Run**: asked it to use the `gskill` skill to list the project's skills. Both agents ran
+   `gskill --json version` (Codex added `--no-interactive`), then
+   `gskill --no-interactive --json list`, and reported both skills.
+
 ## See also
 
 - [Target specific agents](../how-to/target-specific-agents.md)

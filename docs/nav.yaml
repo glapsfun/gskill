@@ -50,6 +50,7 @@ groups:
       - how-to/run-doctor.md
       - how-to/use-the-tui.md
       - how-to/script-with-json.md
+      - how-to/use-gskill-from-an-agent.md
       - how-to/run-in-a-container.md
 
   - group: Reference

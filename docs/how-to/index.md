@@ -45,6 +45,8 @@ GSKILL? Start with the [tutorial](../tutorials/getting-started.md) first.
 ## Scripting
 
 - [Script GSKILL with `--json`](script-with-json.md).
+- [Use GSKILL from an AI agent](use-gskill-from-an-agent.md): give your agent the official skills
+  that install GSKILL and manage skills with it.
 
 ---
 
