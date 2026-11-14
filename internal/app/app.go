@@ -21,11 +21,12 @@ import (
 	"github.com/glapsfun/gskill/internal/selfupdate"
 )
 
-// RepoLister lists a GitHub owner's repositories, so `find --owner` can fan out
-// across them. The default implementation calls the GitHub REST API; tests
-// inject a fake.
+// RepoLister lists the repositories in a discovery scope (a GitHub owner, a
+// GitLab group, or a Bitbucket workspace), so `search --owner` can fan out
+// across them. The default implementation calls the providers' REST APIs;
+// tests inject a fake.
 type RepoLister interface {
-	ListOwnerRepos(ctx context.Context, owner string) ([]registry.RepoRef, error)
+	ListRepos(ctx context.Context, scope registry.Scope) (registry.Listing, error)
 }
 
 // App holds the injected dependencies shared by every use-case. Business logic
@@ -95,7 +96,7 @@ func New(opts Options) *App {
 	gitRunner = git.Memoize(gitRunner)
 	repos := opts.Repos
 	if repos == nil {
-		repos = registry.New()
+		repos = registry.NewLister(os.Getenv)
 	}
 	notice := opts.Notice
 	if notice == nil {

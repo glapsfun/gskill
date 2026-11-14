@@ -153,10 +153,12 @@ func TestRenderAligned_AnsiAwareWidths(t *testing.T) {
 func TestRenderFindStyled_Table(t *testing.T) {
 	t.Parallel()
 	got := renderFindStyled([]app.SearchHit{
-		{ID: "deploy", Source: "acme/skills", RepoPath: "ops", Installed: true},
-		{ID: "docs", Source: "acme/skills", RepoPath: ""},
+		{ID: "deploy", Source: "https://gitlab.com/acme/platform/skills.git", Repository: "gitlab.com/acme/platform/skills", RepoPath: "ops", Installed: true},
+		{ID: "docs", Source: "acme/skills", Repository: "github.com/acme/skills", RepoPath: ""},
 	})
-	for _, want := range []string{"ID", "SOURCE", "PATH", "deploy", "● installed", "."} {
+	// The source column is what `gskill add` accepts: for a nested GitLab
+	// project, the clone address, never the ambiguous repository label.
+	for _, want := range []string{"ID", "SOURCE", "PATH", "deploy", "https://gitlab.com/acme/platform/skills.git", "● installed", "."} {
 		if !strings.Contains(got, want) {
 			t.Errorf("styled find missing %q:\n%s", want, got)
 		}

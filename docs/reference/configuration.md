@@ -66,6 +66,20 @@ These mirror the manifest `[defaults]` block and the global flags:
 > `gskill config list` reports but does not change what any command does. Use `--offline` and
 > `--no-cache` until this is fixed.
 
+## Discovery tokens
+
+`gskill search --owner` reads a provider token from the environment only, never from a config file,
+and sends it only to that provider's API:
+
+| Provider | Variables, in order |
+| --- | --- |
+| GitHub | `GITHUB_TOKEN`, then `GH_TOKEN` |
+| GitLab | `GITLAB_TOKEN` |
+| Bitbucket Cloud | `BITBUCKET_TOKEN`, with `BITBUCKET_EMAIL` for an Atlassian account API token |
+
+Git operations (`add`, `install`, `update`, `upgrade`, `project verify`) never use these; they use
+your Git credentials. Permissions are in the [sources reference](sources.md#tokens).
+
 ## Removed keys
 
 The pre-022 global-store keys — `store.scope`, `store.verify_on_use`, `store.gc_grace_period`,

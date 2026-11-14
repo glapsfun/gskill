@@ -23,7 +23,7 @@ func (SystemRunner) LsRemoteTags(ctx context.Context, url string) ([]TagRef, err
 	if err := checkOperands(url); err != nil {
 		return nil, err
 	}
-	out, err := runGit(ctx, "", "ls-remote", "--tags", url)
+	out, err := runGit(ctx, url, "", "ls-remote", "--tags", url)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (SystemRunner) LsRemoteHeads(ctx context.Context, url string) ([]BranchRef,
 	if err := checkOperands(url); err != nil {
 		return nil, err
 	}
-	out, err := runGit(ctx, "", "ls-remote", "--heads", url)
+	out, err := runGit(ctx, url, "", "ls-remote", "--heads", url)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func (SystemRunner) ResolveRef(ctx context.Context, url, ref string) (string, er
 		return "", err
 	}
 
-	out, err := runGit(ctx, "", "ls-remote", url, ref)
+	out, err := runGit(ctx, url, "", "ls-remote", url, ref)
 	if err != nil {
 		return "", err
 	}
@@ -160,10 +160,10 @@ func (SystemRunner) FetchCommit(ctx context.Context, url, commit, dest string) e
 	if err := os.MkdirAll(dest, 0o750); err != nil {
 		return fmt.Errorf("create fetch dir: %w", err)
 	}
-	if _, err := runGit(ctx, "", "init", "--quiet", dest); err != nil {
+	if _, err := runGit(ctx, "", "", "init", "--quiet", dest); err != nil {
 		return err
 	}
-	if _, err := runGit(ctx, dest, "remote", "add", "origin", url); err != nil {
+	if _, err := runGit(ctx, "", dest, "remote", "add", "origin", url); err != nil {
 		return err
 	}
 
@@ -173,19 +173,24 @@ func (SystemRunner) FetchCommit(ctx context.Context, url, commit, dest string) e
 	fetch := func(args ...string) error {
 		sink := progress.FromContext(ctx)
 		if sink == nil {
-			_, err := runGit(ctx, dest, append([]string{"fetch", "--quiet"}, args...)...)
+			_, err := runGit(ctx, url, dest, append([]string{"fetch", "--quiet"}, args...)...)
 			return err
 		}
-		_, err := runGitProgress(ctx, dest, sink, append([]string{"fetch", "--progress"}, args...)...)
+		_, err := runGitProgress(ctx, url, dest, sink, append([]string{"fetch", "--progress"}, args...)...)
 		return err
 	}
 	if err := fetch("--depth", "1", "origin", commit); err != nil {
 		// Some servers disallow fetching an arbitrary SHA shallowly; fall back.
+		// A credential, host-key, visibility, network, or cancellation
+		// failure would only repeat.
+		if isFinal(err) {
+			return err
+		}
 		if ferr := fetch("origin"); ferr != nil {
 			return ferr
 		}
 	}
-	if _, err := runGit(ctx, dest, "checkout", "--quiet", "--detach", commit); err != nil {
+	if _, err := runGit(ctx, "", dest, "checkout", "--quiet", "--detach", commit); err != nil {
 		return err
 	}
 

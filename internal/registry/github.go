@@ -2,98 +2,69 @@ package registry
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"time"
+	"net/url"
+	"strings"
 
-	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/source"
 )
 
-// maxResponseBytes caps how much of an API response is read, since the response
-// is untrusted input.
-const maxResponseBytes = 8 << 20 // 8 MiB
+// listGitHub lists a GitHub user's or organization's repositories. The
+// owner's type picks the endpoint: an organization lists everything the
+// token's account can see; the token's own account lists its private
+// repositories too; any other user lists public ones (GitHub documents
+// /users/{name}/repos as public only).
+func listGitHub(ctx context.Context, c *client, scope Scope) ([]RepoRef, []string, error) {
+	base := strings.TrimRight(c.origin.String(), "/")
+	name := url.PathEscape(scope.Path)
+	what := scope.String()
 
-// RepoRef identifies a discovered repository.
-type RepoRef struct {
-	Name          string
-	CloneURL      string
-	DefaultBranch string
+	var owner struct {
+		Type string `json:"type"`
+	}
+	if _, err := c.getJSON(ctx, base+"/users/"+name, what, &owner); err != nil {
+		return nil, nil, err
+	}
+	first := base + "/users/" + name + "/repos?per_page=100"
+	switch {
+	case owner.Type == "Organization":
+		first = base + "/orgs/" + name + "/repos?type=all&per_page=100"
+	case c.cred.header != "" && isTokenAccount(ctx, c, base, scope.Path):
+		first = base + "/user/repos?affiliation=owner&per_page=100"
+	}
+	return c.collect(ctx, first, func(ctx context.Context, pageURL string) ([]RepoRef, []string, string, error) {
+		var page []struct {
+			FullName      string `json:"full_name"`
+			CloneURL      string `json:"clone_url"`
+			SSHURL        string `json:"ssh_url"`
+			Private       bool   `json:"private"`
+			DefaultBranch string `json:"default_branch"`
+		}
+		h, err := c.getJSON(ctx, pageURL, what, &page)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		repos := make([]RepoRef, 0, len(page))
+		var warnings []string
+		for _, r := range page {
+			ref, warn := newRepoRef(source.ProviderGitHub, r.FullName, r.DefaultBranch, r.Private, r.CloneURL, r.SSHURL)
+			if warn != "" {
+				warnings = append(warnings, warn)
+				continue
+			}
+			repos = append(repos, ref)
+		}
+		return repos, warnings, nextLink(h), nil
+	})
 }
 
-// Client lists a GitHub owner's repositories via the REST API.
-type Client struct {
-	http    *http.Client
-	baseURL string
-	token   string
-}
-
-// New returns a Client targeting api.github.com, using GITHUB_TOKEN when set.
-func New() *Client {
-	return &Client{
-		http:    &http.Client{Timeout: 15 * time.Second},
-		baseURL: "https://api.github.com",
-		token:   os.Getenv("GITHUB_TOKEN"),
+// isTokenAccount reports whether name is the token's own account. Any failure,
+// such as an installation token that cannot read /user, means "no".
+func isTokenAccount(ctx context.Context, c *client, base, name string) bool {
+	var me struct {
+		Login string `json:"login"`
 	}
-}
-
-// NewWithBase returns a Client targeting a custom base URL (for tests).
-func NewWithBase(base string) *Client {
-	return &Client{http: &http.Client{Timeout: 15 * time.Second}, baseURL: base}
-}
-
-// ListOwnerRepos returns the public repositories of a GitHub user or org. It
-// tries the user endpoint first, then the org endpoint. Responses are treated
-// as untrusted input.
-func (c *Client) ListOwnerRepos(ctx context.Context, owner string) ([]RepoRef, error) {
-	repos, err := c.get(ctx, fmt.Sprintf("%s/users/%s/repos?per_page=100", c.baseURL, owner))
-	if err == nil {
-		return repos, nil
+	if _, err := c.getJSON(ctx, base+"/user", "the token's account", &me); err != nil {
+		return false
 	}
-	repos, orgErr := c.get(ctx, fmt.Sprintf("%s/orgs/%s/repos?per_page=100", c.baseURL, owner))
-	if orgErr != nil {
-		// Surface the fallback (org) failure: the user-endpoint error is
-		// typically just a 404 because the owner is an org, not a user.
-		return nil, fmt.Errorf("%w: list repos for %q: %w", errs.ErrSourceUnavailable, owner, orgErr)
-	}
-	return repos, nil
-}
-
-// get fetches and decodes one page of repositories.
-func (c *Client) get(ctx context.Context, url string) ([]RepoRef, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errs.ErrSourceUnavailable, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: github returned %d", errs.ErrSourceUnavailable, resp.StatusCode)
-	}
-
-	var raw []struct {
-		Name          string `json:"name"`
-		CloneURL      string `json:"clone_url"`
-		DefaultBranch string `json:"default_branch"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("decode github response: %w", err)
-	}
-
-	repos := make([]RepoRef, 0, len(raw))
-	for _, r := range raw {
-		repos = append(repos, RepoRef{Name: r.Name, CloneURL: r.CloneURL, DefaultBranch: r.DefaultBranch})
-	}
-	return repos, nil
+	return strings.EqualFold(me.Login, name)
 }

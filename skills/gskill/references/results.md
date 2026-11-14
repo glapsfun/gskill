@@ -14,13 +14,13 @@ Some failures still print JSON on stdout, such as `project verify` (exit 6),
 | 2 | Usage error: a bad flag or argument, or a skill that is not installed. | Fix the command. Never retry with `--force` to get past it. |
 | 3 | The lockfile is missing or invalid, or `add` named a skill that is already declared. | Missing: `install` and `project sync` need it. Check that this is the project root and the lockfile is checked out; in a new project, `add` a first skill. Already declared: report it and offer `update`; pass `--force` only if the user wants to replace the declaration. Invalid: show the error; do not delete the file. |
 | 4 | A frozen restore would change the lockfile. | Report the mismatch. Running `install` without `--frozen-lockfile` rewrites the lock, so ask first. |
-| 5 | Source unavailable or network failure. | Check the source spelling and network access. `--offline` uses only the cache. |
+| 5 | Source unavailable: the repository was not found or is not visible to the current credentials, the network failed, or a provider rate limit was reached. | Check the source spelling, the user's access, and network access. Providers hide private repositories, so do not say the repository does not exist. `--offline` uses only the cache. |
 | 6 | Integrity failure: installed content does not match the lockfile. | Stop and report the skills named. `gskill --no-interactive project repair` restores lock-true content and discards local edits, so ask first. Never use `install --force` unasked. |
 | 7 | Drift detected (`project check --fail-on-drift`). | Report the skills from `gskill --no-interactive --json project check`. Offer `project repair` or `project sync`, after asking. |
 | 8 | An update is available (`outdated --exit-code`), or `self upgrade` printed an upgrade command instead of upgrading. | Report the versions or the printed command. Nothing was changed. |
 | 9 | An agent ID GSKILL does not support was named. | Ask which agent to target and pass `--agent <id>`. IDs: `claude`, `codex`, `cursor`, `antigravity`, `opencode`, `openclaw`, `hermes`. |
 | 10 | Partial installation: some skills failed. | List which skills succeeded and which failed, from the JSON. Retry only the failed ones after fixing their cause. |
-| 11 | Authentication failure. | The user must set up git credentials for that host. Do not ask for tokens in the chat. |
+| 11 | Authentication failure: credentials missing, expired, or not allowed, or an unknown SSH host key. | The user must set up Git access for that host (SSH key or credential helper), or verify the SSH host key. Do not ask for tokens in the chat. |
 | 12 | Cache or lock failure, including another gskill run holding the lock. | Wait for the other run to finish, then retry once. |
 | 130 | Cancelled before approval; nothing was written. | Ask the user how to proceed. |
 

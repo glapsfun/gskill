@@ -574,7 +574,7 @@ func (a *App) planAdd(lf *skillslock.State, external map[string]bool, id string,
 	if existing.Source.Original != req.Source {
 		return addPlan{}, &ConflictError{Skill: id, Kind: ConflictCrossSource, err: fmt.Errorf(
 			"%w: skill %q is already declared from a different source %q (name collision); use a different name or 'gskill remove %s' first",
-			errs.ErrInvalidLock, id, existing.Source.Original, id,
+			errs.ErrInvalidLock, id, source.Redact(existing.Source.Original), id,
 		)}
 	}
 
@@ -744,7 +744,11 @@ type skillIntent struct {
 
 // installOne installs a single declared skill and updates lf in place.
 func (a *App) installOne(ctx context.Context, p *project, lf *skillslock.State, name string, in skillIntent, req InstallRequest) (SkillChange, error) {
-	ref, err := source.Parse(in.Source)
+	var recorded *skillslock.Source
+	if prior, ok := lf.Skills[name]; ok {
+		recorded = &prior.Source
+	}
+	ref, err := parseSource(in.Source, recorded)
 	if err != nil {
 		return SkillChange{}, err
 	}
@@ -1148,7 +1152,7 @@ func effectiveSourceRef(decl manifest.Skill, src skillslock.Source) source.Ref {
 	if decl.Source == "" {
 		return refFromLock(src)
 	}
-	ref, err := source.Parse(decl.Source)
+	ref, err := parseSource(decl.Source, &src)
 	if err != nil {
 		return refFromLock(src)
 	}
@@ -1159,11 +1163,11 @@ func effectiveSourceRef(decl manifest.Skill, src skillslock.Source) source.Ref {
 // diagnostics that tell the user which repository was searched.
 func effectiveSourceLabel(decl manifest.Skill, src skillslock.Source) string {
 	if decl.Source != "" {
-		if _, err := source.Parse(decl.Source); err == nil {
-			return decl.Source
+		if _, err := parseSource(decl.Source, &src); err == nil {
+			return source.Redact(decl.Source)
 		}
 	}
-	return src.Original
+	return source.Redact(src.Original)
 }
 
 // revFromLock reconstructs a resolver.Revision from a locked resolution record.

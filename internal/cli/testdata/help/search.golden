@@ -6,24 +6,31 @@ Examples:
 
     gskill search kubernetes
     gskill search deploy --owner acme
+    gskill search deploy --owner gitlab.com/acme/platform
+    gskill search deploy --owner bitbucket.org/acme --transport ssh
     gskill search helper --source github.com/owner/repo
 
 Arguments:
   <query>    Keyword to search for (matches name and description).
 
 Flags:
-  -h, --help              Show context-sensitive help.
-      --json              Emit machine-readable JSON on stdout.
-      --quiet             Suppress diagnostics on stderr.
-      --no-interactive    Disable prompts and colored output.
-      --yes               Assume yes for confirmation prompts.
-      --offline           Operate without network access.
-      --no-cache          Bypass the content cache.
-      --dry-run           Report actions without applying them.
-      --config=STRING     Path to a TOML config file; overrides the user config
-                          file. Must exist.
-  -v, --verbose           Enable verbose diagnostics.
-  -C, --dir=STRING        Run as if gskill started in this directory.
+  -h, --help                 Show context-sensitive help.
+      --json                 Emit machine-readable JSON on stdout.
+      --quiet                Suppress diagnostics on stderr.
+      --no-interactive       Disable prompts and colored output.
+      --yes                  Assume yes for confirmation prompts.
+      --offline              Operate without network access.
+      --no-cache             Bypass the content cache.
+      --dry-run              Report actions without applying them.
+      --config=STRING        Path to a TOML config file; overrides the user
+                             config file. Must exist.
+  -v, --verbose              Enable verbose diagnostics.
+  -C, --dir=STRING           Run as if gskill started in this directory.
 
-      --source=STRING     Search within one source.
-      --owner=STRING      Search a GitHub user/org's repositories.
+      --source=STRING        Search within one source.
+      --owner=STRING         Search a GitHub user or organization
+                             (acme or github.com/acme), a GitLab group
+                             (gitlab.com/acme/platform), or a Bitbucket
+                             workspace (bitbucket.org/acme).
+      --transport="https"    Clone address used for repositories found with
+                             --owner: https or ssh.

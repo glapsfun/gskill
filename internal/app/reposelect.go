@@ -21,7 +21,7 @@ func repoFor(root string, decl manifest.Skill, rec skillslock.Record) (source.Re
 	if raw == "" {
 		raw = rec.Source.URL
 	}
-	ref, err := source.Parse(raw)
+	ref, err := parseSource(raw, &rec.Source)
 	if err != nil {
 		return source.Repo{Kind: source.RepoInvalid, Key: raw, Label: raw}, ""
 	}
