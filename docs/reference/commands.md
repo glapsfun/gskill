@@ -209,8 +209,9 @@ Search for skills in a source, a GitHub owner, or configured repositories.
 
 | Flag | Type | Description |
 | --- | --- | --- |
-| `--owner` | string | Search a GitHub user/org's repositories. |
+| `--owner` | string | Search a GitHub user or organization (acme or github.com/acme), a GitLab group (gitlab.com/acme/platform), or a Bitbucket workspace (bitbucket.org/acme). |
 | `--source` | string | Search within one source. |
+| `--transport` | string | Clone address used for repositories found with --owner: https or ssh. |
 
 
 ## `self`

@@ -11,12 +11,12 @@ Every `gskill` command exits with one of these codes. Scripts and CI can branch 
 | 2 | usage error (bad flags or arguments) |
 | 3 | invalid or missing skills-lock.json |
 | 4 | lockfile mismatch (`--frozen-lockfile` would change) |
-| 5 | source unavailable or network failure |
+| 5 | source unavailable: repository not found or not accessible, network failure, or provider rate limit |
 | 6 | integrity failure (checksum mismatch) |
 | 7 | drift detected (`--fail-on-drift`) |
 | 8 | update available (`outdated --exit-code`, or `self upgrade` that can only print the upgrade command) |
 | 9 | unsupported or undetected agent |
 | 10 | partial installation |
-| 11 | authentication failure |
+| 11 | authentication failure: credentials missing, expired, or not allowed, or an unknown SSH host key |
 | 12 | cache or lock failure (incl. lock-acquire timeout) |
 | 130 | cancelled by the user before approval (guided flow; nothing written) |

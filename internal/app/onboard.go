@@ -128,12 +128,11 @@ func (a *App) DiscoverSource(ctx context.Context, req DiscoverRequest) (Discover
 // reason while "latest" stays selectable and a typed exact ref is still
 // accepted downstream (FR-012).
 func (a *App) ListVersions(ctx context.Context, root, src string, offline bool) (VersionList, error) {
-	ref, err := source.Parse(src)
+	ref, err := parseProjectSource(root, src)
 	if err != nil {
 		return VersionList{}, err
 	}
 	ref = promoteLocalGit(ref)
-	_ = root // reserved for cache-backed offline listings
 
 	latest := VersionCandidate{Kind: VersionLatest, Label: "latest"}
 	if ref.Type != source.TypeGit {

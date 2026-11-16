@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/glapsfun/gskill/internal/progress"
 )
@@ -181,22 +182,64 @@ func sanitizedEnv() []string {
 	return filtered
 }
 
+// nonInteractiveEnv adds the defaults that make git fail instead of waiting
+// for a password, passphrase, browser login, or host-key confirmation
+// (spec 035 FR-018). Each applies only when the user has not set it, so an
+// explicit choice to prompt wins. sshCommandSet is consulted only when
+// neither GIT_SSH nor GIT_SSH_COMMAND is set: a core.sshCommand in Git
+// config is the user's SSH choice too, and the environment variable would
+// override it. BatchMode keeps host-key checking on; an unknown key fails.
+func nonInteractiveEnv(env []string, sshCommandSet func() bool) []string {
+	has := func(key string) bool {
+		for _, kv := range env {
+			if strings.HasPrefix(kv, key+"=") {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("GIT_TERMINAL_PROMPT") {
+		env = append(env, "GIT_TERMINAL_PROMPT=0")
+	}
+	if !has("GCM_INTERACTIVE") {
+		env = append(env, "GCM_INTERACTIVE=never")
+	}
+	if !has("GIT_SSH") && !has("GIT_SSH_COMMAND") && !sshCommandSet() {
+		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	}
+	return env
+}
+
+// sshCommandConfigured reports whether Git config sets core.sshCommand. It is
+// read once per process, outside any repository: fetches run in a fresh cache
+// directory that never sees the working directory's repository config, so a
+// setting there must not suppress the BatchMode default. The variable lets
+// tests substitute it.
+var sshCommandConfigured = sync.OnceValue(func() bool {
+	cmd := exec.Command("git", "config", "--get", "core.sshCommand")
+	cmd.Dir = os.TempDir()
+	cmd.Env = sanitizedEnv()
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+})
+
 // runGitProgress executes git with args, streaming stderr through the
 // progress parser. Error handling (classification, credential redaction)
 // matches the historical exec path; LC_ALL=C pins git's output to the
-// English the parser and classifier both match on.
-func runGitProgress(ctx context.Context, dir string, onEvent progress.Sink, args ...string) (string, error) {
+// English the parser and classifier both match on. remote is the source URL
+// the command talks to, for failure messages ("" for a local command).
+func runGitProgress(ctx context.Context, remote, dir string, onEvent progress.Sink, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // the binary is always git
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(sanitizedEnv(), "LC_ALL=C")
+	cmd.Env = append(nonInteractiveEnv(sanitizedEnv(), sshCommandConfigured), "LC_ALL=C")
 	var out bytes.Buffer
 	errw := newProgressWriter(onEvent)
 	cmd.Stdout = &out
 	cmd.Stderr = errw
 	if err := cmd.Run(); err != nil {
-		return "", classify(err, errw.String())
+		return "", classify(ctx, err, errw.String(), remote)
 	}
 	return strings.TrimRight(out.String(), "\n"), nil
 }

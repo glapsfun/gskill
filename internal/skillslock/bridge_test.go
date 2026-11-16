@@ -189,3 +189,27 @@ func TestBridgeLocalSource(t *testing.T) {
 		t.Errorf("local round trip mismatch:\n got %+v\nwant %+v", got, ls)
 	}
 }
+
+// TestRoundTripKeepsTransportAndNamespace: a nested namespace and an SSH
+// clone address with a user and port survive the shared format unchanged,
+// under the sourceType older releases install (spec 035 FR-012, FR-013).
+func TestRoundTripKeepsTransportAndNamespace(t *testing.T) {
+	t.Parallel()
+
+	rec := fullLegacy()
+	rec.Source = skillslock.Source{
+		Type:     "git",
+		Original: "ssh://deploy@git.example.com:2222/team/sub/skills.git//tools/lint",
+		URL:      "ssh://deploy@git.example.com:2222/team/sub/skills.git",
+		Owner:    "team/sub",
+		Repo:     "skills",
+		Path:     "tools/lint",
+	}
+	e := skillslock.FromRecord(rec)
+	if e.SourceType != "git" {
+		t.Errorf("sourceType = %q, want git", e.SourceType)
+	}
+	if got := skillslock.ToRecord("lint", e).Source; got != rec.Source {
+		t.Errorf("round trip source = %+v, want %+v", got, rec.Source)
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/discovery"
 	"github.com/glapsfun/gskill/internal/errs"
+	"github.com/glapsfun/gskill/internal/source"
 	"github.com/glapsfun/gskill/internal/testutil"
 )
 
@@ -1023,5 +1024,23 @@ func TestAgentChoices_EmptyResolutionFailsActionably(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "none detected") {
 		t.Errorf("error = %v, want the actionable none-detected wording", err)
+	}
+}
+
+// The interactive add flow parses sources the way the CLI does: an unmarked
+// nested GitLab path is refused before any git process runs (spec 035
+// FR-033).
+func TestDiscoverSource_RefusesAmbiguousGitLabPath(t *testing.T) {
+	t.Parallel()
+
+	_, err := onboardApp().DiscoverSource(context.Background(), app.DiscoverRequest{
+		Root:   t.TempDir(),
+		Source: "gitlab.com/acme/platform/skills",
+	})
+	if !errors.Is(err, source.ErrAmbiguousSource) {
+		t.Fatalf("DiscoverSource = %v, want ErrAmbiguousSource", err)
+	}
+	if !strings.Contains(err.Error(), "gitlab.com/acme/platform/skills.git") {
+		t.Errorf("error %q does not show the .git spelling", err)
 	}
 }

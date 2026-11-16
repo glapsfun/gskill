@@ -180,7 +180,7 @@ func TestProgressWriter_FlushesTrailingPartialLine(t *testing.T) {
 func TestRunGitProgress_FailureClassifies(t *testing.T) {
 	t.Parallel()
 
-	_, err := runGitProgress(context.Background(), t.TempDir(), nil,
+	_, err := runGitProgress(context.Background(), "", t.TempDir(), nil,
 		"fetch", "--progress", "this-remote-does-not-exist")
 	if err == nil {
 		t.Fatal("expected an error from fetching a nonexistent remote")

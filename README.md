@@ -278,6 +278,17 @@ gskill add github.com/example/skills --skill security-review --agent claude
 gskill add github.com/example/skills --skill security-review --agent claude,codex
 ```
 
+**Use GitLab, Bitbucket, or a private repository:**
+
+```bash
+gskill add git@gitlab.com:acme/platform/skills.git --skill lint --agent claude
+gskill add https://bitbucket.org/acme/skills.git --skill lint --agent claude
+gskill search deploy --owner gitlab.com/acme/platform
+```
+
+GSKILL uses your Git credentials (SSH keys or a credential helper) and never stores them. See
+[Use private and non-GitHub repositories](docs/how-to/use-private-repositories.md).
+
 **Restore a cloned project:**
 
 ```bash

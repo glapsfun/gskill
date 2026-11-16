@@ -1257,7 +1257,7 @@ func (a *App) stageLockEntry(ctx context.Context, inst *installer.Installer, req
 	found, ok := skillAtRepoPath(scan, skillDir)
 	if !ok {
 		return installer.Request{}, "", fmt.Errorf("%w: skillPath %q not found in source %s",
-			errs.ErrInvalidLock, path.Join(skillDir, integrity.SkillFileName), ref.Original)
+			errs.ErrInvalidLock, path.Join(skillDir, integrity.SkillFileName), source.Redact(ref.Original))
 	}
 	em.phase(InstallPhaseHashing)
 	// Hash what would actually ship, not the raw extract: the lock's
@@ -1460,7 +1460,8 @@ func (a *App) resolveLockEntry(ctx context.Context, root string, lf *skillslock.
 // ref's current head instead of refetching the old revision.
 func (a *App) freshResolveLockEntry(ctx context.Context, e skillslock.Entry, usePins bool) (source.Ref, resolver.Revision, error) {
 	srcStr, reqRef := entrySourceRef(e)
-	ref, err := source.Parse(srcStr)
+	locked := skillslock.ToRecord("", e).Source
+	ref, err := parseSource(srcStr, &locked)
 	if err != nil {
 		return source.Ref{}, resolver.Revision{}, err
 	}
@@ -1539,7 +1540,8 @@ func (a *App) resolveDeclaration(ctx context.Context, root, name string, e skill
 			req = declared
 		}
 	}
-	ref, err := source.Parse(srcStr)
+	locked := skillslock.ToRecord(name, e).Source
+	ref, err := parseSource(srcStr, &locked)
 	if err != nil {
 		return source.Ref{}, resolver.Revision{}, err
 	}

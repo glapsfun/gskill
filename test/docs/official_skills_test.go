@@ -435,3 +435,26 @@ func TestValidateBundleRejectsNameMismatch(t *testing.T) {
 		t.Errorf("problems = %q, want one name mismatch", problems)
 	}
 }
+
+// TestProviderDocsCommandsParse: every gskill command in the source and
+// private-repository guides parses against the shipped grammar (spec 035
+// contracts/documentation.md).
+func TestProviderDocsCommandsParse(t *testing.T) {
+	t.Parallel()
+
+	total := 0
+	for _, rel := range []string{
+		"docs/reference/sources.md",
+		"docs/how-to/use-private-repositories.md",
+		"docs/how-to/add-a-git-skill.md",
+	} {
+		problems, checked := checkInvocations(rel, readRepoFile(t, rel))
+		total += checked
+		for _, p := range problems {
+			t.Error(p)
+		}
+	}
+	if total == 0 {
+		t.Fatal("no gskill commands found in the provider guides")
+	}
+}

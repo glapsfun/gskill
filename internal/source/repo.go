@@ -1,6 +1,7 @@
 package source
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -53,7 +54,7 @@ func (e *RepoPathError) Error() string {
 func RepoOf(ref Ref, root string) Repo {
 	switch ref.Type {
 	case TypeGit:
-		host := strings.ToLower(hostFromURL(ref.URL))
+		host := ref.Host()
 		if host == "" {
 			// A git URL that is a filesystem path (a promoted local repo).
 			return localRepo(ref.URL, root)
@@ -70,20 +71,15 @@ func RepoOf(ref Ref, root string) Repo {
 
 // ParseRepo parses a --repo value. It accepts every spelling Parse accepts
 // for a repository and rejects one that names a path inside it with a
-// *RepoPathError; other parse errors are returned unchanged.
+// *RepoPathError; other parse errors are returned unchanged. A --repo value
+// never names a folder, so a GitLab path Parse calls ambiguous is the whole
+// repository here: the labels GSKILL prints for nested groups read back.
 func ParseRepo(raw, root string) (Repo, error) {
-	trimmed := strings.TrimSpace(raw)
-	if strings.HasPrefix(trimmed, "git@") {
-		// parseSSH drops an in-repository path, so check for one here.
-		if _, rest, ok := strings.Cut(trimmed, ":"); ok && len(splitPath(rest)) > 2 {
-			ref, err := Parse(trimmed)
-			if err != nil {
-				return Repo{}, err
-			}
-			return Repo{}, &RepoPathError{Value: raw, Repo: RepoOf(ref, root).Label}
-		}
+	trimmed := lowerURLHost(strings.TrimSpace(raw))
+	ref, err := Parse(trimmed)
+	if errors.Is(err, ErrAmbiguousSource) {
+		ref, err = Parse(strings.TrimRight(trimmed, "/") + ".git")
 	}
-	ref, err := Parse(lowerURLHost(trimmed))
 	if err != nil {
 		return Repo{}, err
 	}

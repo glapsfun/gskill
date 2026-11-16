@@ -9,16 +9,24 @@ import (
 	"github.com/glapsfun/gskill/internal/agent"
 	"github.com/glapsfun/gskill/internal/app"
 	"github.com/glapsfun/gskill/internal/config"
+	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/registry"
+	"github.com/glapsfun/gskill/internal/source"
 )
 
 type fakeLister struct {
-	repos []registry.RepoRef
-	err   error
+	repos    []registry.RepoRef
+	warnings []string
+	err      error
+	// got records the scope the search asked for.
+	got *registry.Scope
 }
 
-func (f fakeLister) ListOwnerRepos(_ context.Context, _ string) ([]registry.RepoRef, error) {
-	return f.repos, f.err
+func (f fakeLister) ListRepos(_ context.Context, scope registry.Scope) (registry.Listing, error) {
+	if f.got != nil {
+		*f.got = scope
+	}
+	return registry.Listing{Repos: f.repos, Warnings: f.warnings}, f.err
 }
 
 func findApp(t *testing.T, repos []string, lister app.RepoLister) *app.App {
@@ -82,12 +90,72 @@ func TestFind_UnreachableRepoWarnsNotFatal(t *testing.T) {
 func TestFind_OwnerScope(t *testing.T) {
 	t.Parallel()
 	src := sourceTree(t, "skills/code-review")
-	lister := fakeLister{repos: []registry.RepoRef{{Name: "skills", CloneURL: src, DefaultBranch: "main"}}}
+	lister := fakeLister{repos: []registry.RepoRef{{FullPath: "glapsfun/skills", HTTPSURL: src, DefaultBranch: "main"}}}
 	hits, _, err := findApp(t, nil, lister).Find(context.Background(), "code-review", app.FindScope{Owner: "glapsfun"})
 	if err != nil {
 		t.Fatalf("Find: %v", err)
 	}
 	if len(hits) != 1 || hits[0].ID != "code-review" {
 		t.Errorf("owner-scope hits = %+v, want code-review", hits)
+	}
+}
+
+// A host-qualified scope reaches the lister parsed, the chosen transport picks
+// the clone address scanned, and hits name their provider and repository
+// (spec 035 FR-022, FR-029, FR-030).
+func TestFind_ProviderScopeAndTransport(t *testing.T) {
+	t.Parallel()
+	https := sourceTree(t, "skills/code-review")
+	ssh := sourceTree(t, "skills/lint")
+	var got registry.Scope
+	lister := fakeLister{
+		repos:    []registry.RepoRef{{Provider: source.ProviderGitLab, FullPath: "acme/platform/skills", HTTPSURL: https, SSHURL: ssh}},
+		warnings: []string{"listing public repositories only; set GITLAB_TOKEN to include private ones"},
+		got:      &got,
+	}
+	hits, warnings, err := findApp(t, nil, lister).Find(context.Background(), "",
+		app.FindScope{Owner: "gitlab.com/acme/platform", Transport: "ssh"})
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	if got.Provider != source.ProviderGitLab || got.Path != "acme/platform" || got.Transport != registry.TransportSSH {
+		t.Errorf("lister got scope %+v, want gitlab acme/platform over ssh", got)
+	}
+	if len(hits) != 1 || hits[0].ID != "lint" || hits[0].Source != ssh {
+		t.Errorf("hits = %+v, want lint from the SSH address", hits)
+	}
+	if len(warnings) != 1 {
+		t.Errorf("warnings = %v, want the lister's public-only warning", warnings)
+	}
+}
+
+func TestFind_HitsNameProviderAndRepository(t *testing.T) {
+	t.Parallel()
+	src := sourceTree(t, "skills/code-review")
+	hits, _, err := findApp(t, nil, nil).Find(context.Background(), "", app.FindScope{Source: src})
+	if err != nil || len(hits) != 1 {
+		t.Fatalf("Find = %+v, %v", hits, err)
+	}
+	if hits[0].Provider != "local" || hits[0].Repository == "" {
+		t.Errorf("hit provider %q repository %q, want local and the directory", hits[0].Provider, hits[0].Repository)
+	}
+}
+
+// A scope that cannot be listed fails the search with the lister's error
+// instead of reporting no matches.
+func TestFind_ListingFailureIsFatal(t *testing.T) {
+	t.Parallel()
+	denied := errs.New(errs.CodeAuth, "GitLab rejected the token in GITLAB_TOKEN (expired or invalid)")
+	_, _, err := findApp(t, nil, fakeLister{err: denied}).Find(context.Background(), "x", app.FindScope{Owner: "gitlab.com/acme"})
+	if errs.ExitCode(err) != int(errs.CodeAuth) {
+		t.Errorf("Find error = %v (exit %d), want the lister's auth failure", err, errs.ExitCode(err))
+	}
+}
+
+func TestFind_UnsupportedScopeHost(t *testing.T) {
+	t.Parallel()
+	_, _, err := findApp(t, nil, fakeLister{}).Find(context.Background(), "x", app.FindScope{Owner: "git.example.com/acme"})
+	if errs.ExitCode(err) != int(errs.CodeUsage) {
+		t.Errorf("Find error = %v, want a usage error naming the supported providers", err)
 	}
 }

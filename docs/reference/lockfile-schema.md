@@ -43,15 +43,16 @@ Format: JSON, 2-space indent, trailing newline, stable key order (new entries ap
 | Group | Field | Notes |
 | --- | --- | --- |
 | top | `version` | int; must be `1` — anything else is refused with a clear message. |
-| core | `source` | Where the skill came from: `owner/repo` for GitHub, a path for local sources. |
+| core | `source` | Where the skill came from, as written: `owner/repo` for GitHub, any [source spelling](sources.md) for Git, a path for local sources. |
 | core | `ref` | Optional branch/tag used for installation. |
-| core | `sourceType` | `github` \| `local` are installable by gskill; unknown types fail that entry clearly. |
+| core | `sourceType` | `github` \| `git` \| `local` are installable by gskill; unknown types fail that entry clearly. GSKILL writes `git` for every Git source, including GitLab and Bitbucket. |
 | core | `skillPath` | Path to the skill's `SKILL.md` inside the source; validated against traversal. |
 | core | `computedHash` | SHA-256 over the skill folder's files (path + raw bytes, locale-sorted), hex, no prefix — identical to the external tool's hash and verified before every install. Only `install --force` may rewrite it. |
-| `gskill` | `sourceUrl` / `ref` / `commit` / `version` | The resolved, immutable identity gskill pinned to; `commit` is also the clone-cache key for restores. |
+| `gskill` | `sourceUrl` / `ref` / `commit` / `version` | The resolved, immutable identity gskill pinned to; `commit` is also the clone-cache key for restores. `sourceUrl` keeps the transport, user name, and port of the source (`git@gitlab.com:acme/skills.git` stays SSH) and never holds a secret. |
 | `gskill` | `agents` / `installMode` | How and where the skill is installed. |
 | `gskill` | `contentHash` / `skillFileHash` | gskill's own canonical checksums (`sha256:`-prefixed). `contentHash` is the full-content identity of the committed skill copy: it covers symlinks that the shared `computedHash` skips, so restores and `verify` check against it. File permissions are not part of it, so a checkout on a filesystem that cannot store them (a Windows drive under WSL) verifies like any other. |
 | `gskill` | `installedAt` / `updatedAt` | Audit timestamps; excluded from reproducibility. |
+| `gskill` | `state.sourceOwner` / `state.sourceRepo` / `state.sourcePath` | The repository's namespace (which may be a nested GitLab group such as `acme/platform`), its last segment, and the skill's folder inside it. |
 | `gskill` | `state` | Residual machine state (per-agent targets and modes, frontmatter metadata) that keeps every existing command working. A per-agent mode is `symlink`, `copy`, or `shared`; `shared` marks an agent that reads the committed `.agents/skills/<name>` entry directly, so its target is that entry. `installMode` is never `shared`. |
 
 Pre-022 entries may still carry `scope` and `storeHash`. They parse cleanly, are never written

@@ -30,6 +30,7 @@ groups:
         label: All how-to guides
       - how-to/install-a-local-skill.md
       - how-to/add-a-git-skill.md
+      - how-to/use-private-repositories.md
       - how-to/target-specific-agents.md
       - how-to/copy-vs-symlink.md
       - how-to/customize-a-skill.md
@@ -56,6 +57,7 @@ groups:
   - group: Reference
     pages:
       - reference/commands.md
+      - reference/sources.md
       - reference/exit-codes.md
       - reference/configuration.md
       - reference/manifest.md
@@ -77,6 +79,7 @@ groups:
     pages:
       - contributing/development.md
       - contributing/website.md
+      - contributing/provider-validation.md
       - ci-cd.md
       - how-to/releasing.md
       - explanation/cli-styling.md

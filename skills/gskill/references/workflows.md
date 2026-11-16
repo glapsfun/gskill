@@ -18,13 +18,18 @@ Conventions for every command:
 
 ```sh
 gskill --no-interactive --json search kubernetes --owner acme
+gskill --no-interactive --json search kubernetes --owner gitlab.com/acme/platform
+gskill --no-interactive --json search kubernetes --owner bitbucket.org/acme --transport ssh
 gskill --no-interactive --json search kubernetes --source github.com/acme/skills
 ```
 
 - **Changes**: nothing.
-- **Result**: a JSON array; each item has `id`, `description`, `source`, `repo_path`, and
-  `installed`. Without `--owner` or `--source`, `search` looks in the repositories configured
-  for this user.
+- **Result**: a JSON array; each item has `id`, `description`, `source`, `repo_path`,
+  `installed`, `provider`, and `repository`. A bare `--owner` is a GitHub owner; prefix
+  `gitlab.com/` for a GitLab group or `bitbucket.org/` for a Bitbucket workspace. Without
+  `--owner` or `--source`, `search` looks in the repositories configured for this user.
+- **Private scopes**: listing private repositories needs `GITHUB_TOKEN`, `GITLAB_TOKEN`, or
+  `BITBUCKET_TOKEN` in the environment. Never ask the user to paste a token into the chat.
 
 ## List the skills in a source
 

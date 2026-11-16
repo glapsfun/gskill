@@ -10,6 +10,7 @@ import (
 
 	"github.com/glapsfun/gskill/internal/errs"
 	"github.com/glapsfun/gskill/internal/integrity"
+	"github.com/glapsfun/gskill/internal/source"
 )
 
 // ListedSkill is one row of `gskill list`. It carries every field `gskill
@@ -77,7 +78,7 @@ func (a *App) List(_ context.Context, root string) ([]ListedSkill, error) {
 		out = append(out, ListedSkill{
 			Name:        name,
 			Status:      string(classifySkill(root, name, lf)),
-			Source:      locked.Source.Original,
+			Source:      source.Redact(locked.Source.Original),
 			Version:     displayVersion(locked.Resolved),
 			Agents:      locked.Installation.Agents,
 			Commit:      locked.Resolved.Commit,
@@ -123,7 +124,7 @@ func (a *App) Info(_ context.Context, root, name string) (SkillInfo, error) {
 	}
 	return SkillInfo{
 		Name:        name,
-		Source:      locked.Source.Original,
+		Source:      source.Redact(locked.Source.Original),
 		Version:     displayVersion(locked.Resolved),
 		Commit:      locked.Resolved.Commit,
 		ContentHash: locked.Resolved.ContentHash,
